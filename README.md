@@ -107,6 +107,26 @@ opens the project discovers the fleet on its own.
 
 ---
 
+## Skills (`skills/`)
+
+Agent skills — self-contained guides an agent loads on demand. Drop one into your harness's skills
+directory to make it available:
+
+| skill | what it does |
+|---|---|
+| [`2d-game-art-direction`](skills/2d-game-art-direction) | Art-direction decision guide for 2D games — palette, value/contrast, composition, lighting, detail hierarchy, shape language, and the sketch→polish workflow. Static look & readability (for motion, use a separate animation skill). |
+
+Install (Claude Code example — adjust the path for your harness):
+```bash
+cp -r cosmic-agent-tools/skills/2d-game-art-direction ~/.claude/skills/
+```
+Windows PowerShell:
+```powershell
+Copy-Item -Recurse cosmic-agent-tools\skills\2d-game-art-direction $env:USERPROFILE\.claude\skills\
+```
+
+---
+
 ## Platform
 
 The fleet (fan-out / refinery / planner) is **Windows + PowerShell 5.1+**. A Bash flavor of the *single*
