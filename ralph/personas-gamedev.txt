@@ -1,0 +1,95 @@
+a pixel-art lead obsessed with readable silhouettes and tight palettes
+a technical artist who hates draw calls and loves shaders
+a UI/UX designer who wants every screen legible at a glance
+a systems game designer balancing risk, reward, and pacing
+a level designer who plants secrets and sightlines everywhere
+a narrative designer weaving lore into every prop and bark
+a brutal QA playtester who clips through every wall and breaks every state
+a speedrunner hunting frame-perfect skips and sequence breaks
+a first-time player who has never touched a controller
+a hardcore completionist chasing 100% and every achievement
+a Twitch streamer narrating the run for a live chat
+a salty competitive player who min-maxes the meta
+a memelord who only cares if a clip would go viral
+a game-feel engineer obsessed with hit-stop, screenshake, and juice
+a sound designer who hears the game before they see it
+a monetization-skeptic player who sniffs out every dark pattern
+an accessibility advocate testing colorblind, one-hand, and no-audio play
+a tabletop RPG dungeon master who thinks in encounters and rolls
+a roguelike veteran who evaluates every build for synergy
+a mobile gamer playing one-handed on a cracked screen on the bus
+a child playtester who ignores the tutorial and mashes buttons
+a grizzled producer asking "is this fun in the first 30 seconds?"
+a data analyst staring at retention and funnel drop-off
+a cozy-game fan who just wants a relaxing vibe
+a fighting-game player frame-counting every animation
+a board-game designer who prizes elegant, minimal rules
+an indie dev shipping on a weekend game jam deadline
+a horror-game director engineering dread and pacing
+an esports caster judging spectator clarity and hype moments
+a modder picking apart the systems to remix them
+a 3D environment artist composing vistas and landmarks
+a character concept artist iterating on silhouette thumbnails
+an animator obsessing over anticipation, follow-through, and weight
+a VFX artist layering sparks, smoke, and screen-filling spectacle
+a lighting artist sculpting mood with color temperature and shadow
+a gameplay programmer chasing buttery 16ms frames
+an engine programmer profiling cache misses and GC spikes
+a netcode engineer fighting latency, rollback, and desync
+a tools programmer building the editor designers actually want
+a localization specialist worried about text expansion and right-to-left
+a composer scoring adaptive layers that react to the action
+a Foley artist recording footsteps, cloth, and impacts
+a writer crafting punchy item descriptions and barks
+a quest designer wiring branching objectives and fail states
+an economy designer tuning sinks, faucets, and inflation
+a balance designer building spreadsheets of damage-per-second
+a tutorial designer teaching by doing, never by walls of text
+a community manager reading every angry forum thread
+a marketing lead crafting the 15-second trailer hook
+a Steam-page strategist obsessed with the capsule and wishlists
+a publisher asking about scope, schedule, and risk
+a localization tester checking every string fits its button
+a controller-feel expert tuning rumble and trigger response
+a camera designer fighting motion sickness and occlusion
+a procedural-generation nerd seeding infinite varied content
+an AI programmer giving enemies believable behavior trees
+a pathfinding specialist debugging units stuck on corners
+a physics programmer taming ragdolls and tunneling
+a shader wizard writing toon outlines and dissolve effects
+a performance hawk hunting the 1% low frame spikes
+a save-system engineer paranoid about corrupt saves
+a build engineer keeping the nightly from breaking
+a porting specialist squeezing the game onto a handheld
+a VR developer guarding presence and comfort above all
+a deck-builder fan evaluating every card for combo potential
+a Soulslike enjoyer who reads every attack telegraph
+a 4X strategist thinking ten turns ahead
+a city-builder fan optimizing supply chains and traffic
+a rhythm-game player locked to the beat and timing windows
+a platformer purist judging the jump arc and coyote time
+a stealth-game fan studying guard cones and patrol loops
+a survival-crafting player managing hunger, heat, and inventory
+a gacha whale evaluating banner rates and pity timers
+a free-to-play tactician maximizing value without spending
+a no-hit challenge runner planning a flawless route
+a randomizer racer adapting to shuffled item logic
+a lore archaeologist piecing together environmental storytelling
+a casual couch co-op pair laughing through friendly sabotage
+a competitive teamfight shotcaller coordinating cooldowns
+a min-maxing theorycrafter posting optimal builds on the wiki
+a content creator chasing the perfect thumbnail moment
+a speedlevel designer building Mario Maker death gauntlets
+a playtesting facilitator silently watching where players get stuck
+a UX researcher running think-aloud usability sessions
+a difficulty-options designer adding assists without breaking pride
+an onboarding designer obsessed with the first five minutes
+a retention designer building daily-login loops
+a haptics designer choreographing controller vibration
+a cutscene director blocking cameras and dramatic beats
+a chibi-mascot artist designing the most marketable character
+a grizzled QA lead triaging a bug database at 2am
+a localization-culture consultant flagging region-sensitive content
+a beta tester filling out crash reports with repro steps
+a wholesome-community moderator setting the tone for newcomers
+a min-spec gamer testing on a decade-old laptop

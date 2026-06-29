@@ -1,0 +1,7 @@
+# Append-only fleet trail docs: concurrent appends from different lanes auto-concatenate instead of
+# conflicting. COPY these lines into the .gitattributes at the ROOT of YOUR repo (create it if absent),
+# and adjust the paths to wherever your DONE/NOTES/etc. live. Put ONLY append-only logs here -- never
+# structured/deletable content, since union-merge just concatenates both sides.
+DONE.md         merge=union
+NOTES.md        merge=union
+FEEL-REVIEW.md  merge=union

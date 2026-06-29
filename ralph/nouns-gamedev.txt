@@ -1,0 +1,143 @@
+arcades
+boss fights
+loot
+checkpoints
+combos
+power-ups
+speedruns
+pixel art
+particles
+soundtracks
+dungeons
+inventory
+skill trees
+hitboxes
+camera shake
+tutorials
+co-op
+permadeath
+crafting
+leaderboards
+easter eggs
+procedural maps
+respawns
+status effects
+mini-maps
+dialogue trees
+parry windows
+fog of war
+loot tables
+day-night cycles
+boss telegraphs
+combo meters
+hit-stop
+screen wipes
+parallax layers
+tile sets
+sprite sheets
+particle emitters
+shaders
+normal maps
+ragdolls
+physics joints
+nav meshes
+behavior trees
+aggro radius
+spawn waves
+difficulty curves
+experience curves
+loot rarity
+drop rates
+crit chance
+damage formulas
+cooldowns
+mana pools
+stamina bars
+hot bars
+quick saves
+checkpoint flags
+fast travel
+world maps
+biome generation
+weather systems
+water shaders
+volumetric fog
+god rays
+bloom
+depth of field
+chromatic aberration
+ambient occlusion
+level streaming
+asset bundles
+texture atlases
+mip maps
+draw calls
+frame pacing
+input buffering
+coyote time
+double jumps
+wall slides
+dash attacks
+parry counters
+dodge rolls
+stealth kills
+guard patrols
+patrol routes
+loot chests
+treasure vaults
+secret rooms
+hidden passages
+unlockables
+achievements
+trophy cases
+new game plus
+boss rushes
+horde modes
+wave survival
+escort missions
+fetch quests
+branching dialogue
+karma systems
+reputation meters
+crafting recipes
+gathering nodes
+resource sinks
+in-game economies
+trading posts
+auction houses
+season passes
+battle passes
+cosmetic skins
+emote wheels
+character creators
+class systems
+talent points
+prestige levels
+respec tokens
+status ailments
+elemental weaknesses
+combo finishers
+ultimate abilities
+charge attacks
+projectile spreads
+homing missiles
+area denial
+crowd control
+tower defenses
+spawn timers
+enemy variants
+elite modifiers
+procedural dungeons
+seed sharing
+daily challenges
+ranked ladders
+matchmaking queues
+spectator modes
+replay systems
+photo modes
+sandbox tools
+level editors
+mod loaders
+controller rumble
+adaptive triggers
+haptic feedback

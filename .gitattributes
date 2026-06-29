@@ -1,0 +1,3 @@
+# Keep shell scripts LF so they run on bash; let PowerShell scripts use native CRLF on Windows.
+*.sh   text eol=lf
+*.ps1  text eol=crlf

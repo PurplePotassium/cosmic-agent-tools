@@ -1,0 +1,16 @@
+# Fleet lane manifest -- single source of truth for the parallel-Ralph fan-out.
+# Consumed by ralph-fleet.ps1 (spawn) + refinery.ps1 / integrate.ps1 (merge) + plan.ps1 (planner).
+#
+# THE ONE RULE: each lane must own a DISJOINT set of files no other lane edits. That disjoint
+# ownership -- not conflict resolution -- is what keeps the fleet from thrashing. Each lane needs a
+# `lane-<name>.md` scoping header (copy lane-template.md). Default agent comes from fleet.config.ps1.
+#
+# format:   <name> [agent=claude|agy] [model=<id>] [header=<file>]
+#
+# --- EXAMPLE (replace with your own lanes) ---------------------------------------------------------
+api  agent=claude
+ui   agent=claude
+# docs agent=claude model=claude-haiku-4-5-20251001
+#
+# For a HYBRID run, point implementation lanes at agy (Antigravity/Gemini) and keep the refinery +
+# planner on claude:   api agent=agy model=gemini-3.5-flash
