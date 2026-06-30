@@ -3,8 +3,13 @@
 Reusable tooling for running coding agents autonomously, for long stretches, without a human at the
 keyboard.
 
-The first tool here is the **fleet orchestrator** (`ralph/`) — a parallel "Ralph Wiggum" loop: a dumb
-`while` loop around a smart coding agent, scaled out across many lanes.
+Two tools live here, both built on the same "Ralph Wiggum" loop (a dumb `while` loop around a smart
+coding agent):
+
+- the **fleet orchestrator** (`ralph/`) — that loop scaled out across many parallel lanes with a merge
+  queue, for grinding a big backlog fast;
+- the **Workshop** (`workshop/`) — a single agent with a live web UI, for steering one agent on one
+  branch toward a goal you curate by hand.
 
 ---
 
@@ -104,6 +109,30 @@ opens the project discovers the fleet on its own.
 | `SETUP.md` / `README.md` / `HYBRID.md` | setup checklist / single-loop docs / full fleet rationale |
 | `lanes.txt`, `lane-*.md`, `*.example.md` | lane manifest + scoping headers + prompt templates |
 | `personas*.txt`, `nouns*.txt` | anti-circling pools |
+
+---
+
+## Workshop (`workshop/`)
+
+The **single-agent** counterpart to the fleet — "Solo Ralph." One agent at a time (no worktrees, lanes,
+refinery, or planner), fresh context each pass, draining an **operator-curated backlog** toward a
+north-star `GOAL.md`. It ships a **self-contained, zero-dependency web UI** to watch and steer it live:
+edit the goal, queue/reorder tasks, switch the model for the next pass, and see what the current pass is
+doing.
+
+Use the Workshop when you want to **hand-curate** what one agent works on next (and watch it); use the
+fleet when you want **many** agents grinding a partitioned backlog in parallel.
+
+```powershell
+cd workshop
+# edit workshop.config.ps1 (Root = your repo, UiPort, ...)
+Copy-Item PROMPT.example.md PROMPT.md ; Copy-Item GOAL.example.md GOAL.md
+Copy-Item backlog.example.json backlog.json ; Copy-Item completions.example.json completions.json
+node ui/server.js            # → http://localhost:4455  (Start the loop from the UI)
+```
+
+Full walkthrough + the agent-driver caveats: **[`workshop/README.md`](workshop/README.md)** and
+**[`workshop/AGENTS.md`](workshop/AGENTS.md)**.
 
 ---
 

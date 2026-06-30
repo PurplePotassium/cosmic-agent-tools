@@ -1,0 +1,8 @@
+# Live operator state + runtime artifacts (ship only the .example seeds).
+PROMPT.md
+GOAL.md
+backlog.json
+completions.json
+agent.json
+progress.json
+logs/
