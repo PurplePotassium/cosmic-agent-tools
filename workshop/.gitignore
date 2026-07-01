@@ -1,8 +1,8 @@
-# Live operator state + runtime artifacts (ship only the .example seeds).
-PROMPT.md
-GOAL.md
-backlog.json
-completions.json
-agent.json
-progress.json
-logs/
+# Go build output (binary built in the module root)
+/workshop
+/workshop.exe
+
+# Embedded-UI build dependencies (web/dist IS committed so `go build` / `go install`
+# always embed a working UI; node_modules is not).
+web/node_modules/
+web/.vite/
