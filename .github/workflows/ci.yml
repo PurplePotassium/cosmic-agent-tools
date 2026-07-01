@@ -1,0 +1,45 @@
+name: workshop-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["workshop/**", ".github/workflows/ci.yml"]
+  pull_request:
+    paths: ["workshop/**", ".github/workflows/ci.yml"]
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: workshop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build embedded UI
+        working-directory: workshop/web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: workshop/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...

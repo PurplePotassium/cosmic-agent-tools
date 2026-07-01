@@ -1,101 +1,163 @@
-# Workshop — the single-agent loop (a.k.a. "Solo Ralph")
+# Workshop — a single-agent coding loop as one installable binary
 
-The **Workshop** is the one-agent counterpart to the [fleet](../ralph). Instead of fanning many agents
-across worktrees, it runs **one** coding agent (`claude -p` or Antigravity/Gemini `agy`) back-to-back on
-the same prompt: each pass starts with a **fresh context**, reads your goal + an operator-curated
-backlog, makes **one small verified increment**, commits it, and exits. The loop runs it again.
+The **Workshop** runs **one** coding agent (`claude -p` or Antigravity/Gemini `agy`)
+back-to-back on the same prompt: each pass starts with a **fresh context**, reads your
+north-star goal + an operator-curated backlog, makes **one small verified increment**,
+commits it, and exits. The loop runs it again. The "Ralph Wiggum" technique: a dumb
+while-loop around a smart agent.
 
-It ships with a **self-contained web UI** so you can watch and steer it live — edit the north-star goal,
-queue/reorder tasks, switch the model for the next pass, and see what the current pass is doing — with
-no Launcher, no framework, and no `node_modules`.
+It ships as **one self-contained Go binary** with an embedded web dashboard — the
+reference silhouette is **Syncthing**: Go backend + embedded UI + single binary, all
+local. You install nothing else: run `workshop` in any git repo, a browser opens to a
+live dashboard, and the loop runs.
 
 ```
-   GOAL.md  +  backlog.json   ──►   workshop.ps1 (one agent, fresh context)
-   (you, via the UI)                  read → 1 increment → verify → commit → exit
-        ▲                                              │
-        └────────── completions.json / progress.json ◄─┘   (the UI polls these)
+  workshop            ← single binary; brew / scoop / curl install, no runtime needed
+     │  starts, opens http://127.0.0.1:4455
+     ▼
+  Local service (Go: net/http + chi)
+    REST /api/*   commands: project CRUD, start/stop, backlog/goal/prompt, model
+    SSE  /events  PUSH log/progress/commit/status, tagged by projectId (no polling)
+    Supervisor → one Engine loop per ACTIVE project (goroutine + context; no worktrees)
+    Store (modernc SQLite, pure-Go) + per-project state dir OUTSIDE the repo tree
+    Embedded React SPA (web/dist via go:embed)
 ```
 
-**Workshop vs. fleet** — no worktrees, lanes, refinery, planner, or trunk-merge. One agent, one branch,
-one backlog. If you want parallel agents with a merge queue, use [`../ralph`](../ralph) instead.
+**Workshop vs. the fleet** ([`../ralph`](../ralph)) — no worktrees, lanes, refinery,
+planner, or trunk-merge. One agent, one working directory, one backlog. Multiple agents
+run only by running **multiple projects**, each bound to a **distinct working directory**
+— so concurrent agents never contend on the same files. "Project" is the first-class unit.
+
+---
+
+## Install
+
+Once a release is cut (see [Distribution](#distribution)):
+
+```sh
+brew install PurplePotassium/tap/workshop      # macOS / Linux
+scoop bucket add pp https://github.com/PurplePotassium/scoop-bucket; scoop install workshop   # Windows
+```
+
+Or grab a binary from GitHub Releases, or build from source (below).
 
 ---
 
 ## Quick start
 
-1. **Edit `workshop.config.ps1`** — the only file with project-specifics:
+```sh
+cd /path/to/your/repo      # any git repo
+workshop                   # opens http://127.0.0.1:4455
+```
 
-   | knob | what |
-   |---|---|
-   | `Root` | absolute path to the repo the agent works in (the loop's git working dir) |
-   | `Branch` | branch to commit onto (`''` = current branch; a dedicated one is recommended) |
-   | `Agent` / `Model` | first-pass agent (`claude`/`agy`/`auto`) + model |
-   | `Personas` / `Nouns` | anti-circling pools (`*-gamedev.txt` for games) |
-   | `UiPort` | port the web UI listens on (default `4455`) |
-   | `PreviewUrl` / `PreviewPath` | optional live project preview shown in the UI |
+On first launch Workshop:
+- detects the current directory as a **project** (reusing it on later runs),
+- scaffolds `GOAL.md` + `PROMPT.md` in a **per-project state dir outside your repo**
+  (so the loop's `git add -A` never commits Workshop's own state),
+- opens the dashboard.
 
-2. **Seed the operator files:**
-   ```powershell
-   Copy-Item PROMPT.example.md        PROMPT.md
-   Copy-Item GOAL.example.md          GOAL.md
-   Copy-Item backlog.example.json     backlog.json
-   Copy-Item completions.example.json completions.json
-   ```
-   Then edit `PROMPT.md` (the bracketed `[…]` placeholders — your README, your verify command) and
-   `GOAL.md` (your north star). The UI's "General Goal" box also writes `GOAL.md`.
+In the dashboard: set the **goal**, add a few **backlog** tasks, pick a **model**, and
+hit **Start**. Watch the live log, commit feed, and the agent's current-pass self-report.
 
-3. **Run the UI** and open it:
-   ```powershell
-   node ui/server.js          # → http://localhost:4455
-   ```
-   Set the goal, add a few backlog tasks, pick a model, and hit **Start Loop**.
+Prefer a bounded smoke run from the CLI (no browser)?
 
-   Prefer the CLI? Skip the UI:
-   ```powershell
-   ./start-workshop.ps1                 # infinite (stop via stop-workshop.ps1)
-   ./start-workshop.ps1 -Iterations 3   # bounded smoke run
-   ./stop-workshop.ps1
-   ```
+```sh
+workshop --iterations 2    # drive the detected project 2 passes, then exit
+```
 
----
+Key flags (all optional — zero-config works): `--port`, `--repo`, `--agent`, `--model`,
+`--branch`, `--personas gamedev|plain`, `--sleep`, `--max-concurrent`, `--open=false`,
+`--base-dir`. Settings also load from `WORKSHOP_*` env vars and an optional
+`<base-dir>/workshop.json`. `workshop --version` prints build info.
 
-## What's here
+### Where state lives
 
-| file | what |
+Everything Workshop writes lives in an OS data dir keyed to each repo — **never in your
+repo tree**:
+
+| OS | base dir |
 |---|---|
-| `workshop.ps1` | the single-agent engine (the loop itself) |
-| `start-workshop.ps1` / `stop-workshop.ps1` | launch the loop detached / kill it + the in-flight pass |
-| `workshop-status.ps1` | one-shot JSON status the UI polls (process-tree liveness, not log mtime) |
-| `workshop.config.ps1` | **the project knobs** |
-| `ui/server.js` / `ui/index.html` | the zero-dependency web UI |
-| `PROMPT.example.md` / `GOAL.example.md` | per-pass prompt + north-star templates (copy → `.md`) |
-| `backlog.example.json` / `completions.example.json` | empty seeds (copy → `.json`) |
-| `personas*.txt` / `nouns*.txt` | anti-circling pools |
-| `AGENTS.md` | **read before touching agent/model wiring** — how the two drivers behave headless |
+| Windows | `%LOCALAPPDATA%\workshop` |
+| macOS | `~/Library/Application Support/workshop` |
+| Linux | `$XDG_STATE_HOME/workshop` (or `~/.local/state/workshop`) |
 
-The live operator files (`PROMPT.md`, `GOAL.md`, `backlog.json`, `completions.json`, `agent.json`,
-`progress.json`, `logs/`) are gitignored — they're your machine's state, not part of the tool.
+`<base>/workshop.db` is the SQLite registry (projects, backlog, completions, run/iteration
+history). `<base>/projects/<slug>/` holds each project's `GOAL.md`, `PROMPT.md`, `logs/`,
+and the materialized `backlog.json` / `completions.json` / `progress.json` the agent reads.
 
 ---
 
 ## How the pieces talk
 
-- **`agent.json`** `{agent,model}` is the live selection. The loop re-reads it at the **top of each
-  pass** (`-AgentControlFile`), so the UI's model switch lands on the **next** pass with no restart.
-  `auto` classifies the top backlog item per pass (light→agy, heavy→opus, else→sonnet).
-- **`backlog.json`** is drained **top-first**; the agent removes the item it finished and appends to
-  **`completions.json`**. Both use fresh read-modify-write so a UI edit mid-pass isn't clobbered.
-- **`progress.json`** is the agent's self-report (`phase/task/plan/note`), written at pass start and
-  end. It is the **only window into an `agy` pass**, whose stdout is uncapturable headless — see
-  [`AGENTS.md`](AGENTS.md).
-- **Liveness** comes from the **process tree + CPU + git dirty tree** (`workshop-status.ps1`), never the
-  log mtime — a frozen log is usually mid-pass, not stopped.
+- **The engine materializes → reconciles.** Before each pass it writes `backlog.json` /
+  `completions.json` from the DB (the agent's file-based contract); after the pass it reads
+  them back with a **diff**, so the agent's edits (drain the top item, append follow-ups)
+  and any UI edit that landed in the DB **mid-pass** are both preserved. This replaces the
+  old JSON read-modify-write races.
+- **Live selection is re-read each pass.** Switching the model in the UI applies to the
+  **next** pass — the in-flight pass keeps its model, no restart. `auto` classifies the top
+  backlog item per pass: light/presentation → agy, heavy/structural → claude/opus, else
+  claude/sonnet.
+- **`progress.json`** is the agent's self-report (`phase/task/plan/note`), the **only
+  window into an `agy` pass** (whose stdout is uncapturable headless — see
+  [`AGENTS.md`](AGENTS.md)).
+- **SSE pushes everything.** Log lines, commits, progress, and status ticks stream over
+  `/events` — the dashboard never polls.
+- **Anti-circling** injects a persona or recoding-decoding lens each pass so a long run
+  keeps exploring instead of looping on the same idea.
+
+---
+
+## Build from source
+
+Requires Go 1.26+ and Node 20+ (Node only to *build* the embedded UI).
+
+```sh
+cd workshop
+npm --prefix web ci && npm --prefix web run build   # → web/dist (embedded)
+go build -o workshop ./cmd/workshop
+go test ./...
+```
+
+The module layout:
+
+```
+cmd/workshop/       CLI entry: flags, config, detect project, start server, open browser
+internal/supervisor one engine loop per active project; bounded concurrency; start/stop
+internal/engine     per-project loop (the port of the old workshop.ps1)
+internal/agent      claude/agy driver abstraction + auto-routing classifier
+internal/project    project model + state-dir/slug derivation + scaffold
+internal/server     chi REST + SSE broker; serves the embedded SPA
+internal/store      modernc.org/sqlite registry + history
+internal/gitx       git CLI wrapper (commit, status, feed, stale-lock cleanup)
+internal/procctl    cross-platform process-group kill (build-tagged)
+internal/events     SSE fan-out broker
+internal/config     layered config (defaults → file → env → flags)
+internal/assets     embedded default GOAL/PROMPT templates + persona/noun pools
+web/                Vite + React source → web/dist (embedded via go:embed)
+```
+
+---
+
+## Distribution
+
+`goreleaser` (see [`../.goreleaser.yaml`](../.goreleaser.yaml)) builds every platform from
+one Linux CI job (all deps are pure-Go, so `CGO_ENABLED=0` cross-compiles cleanly) and
+publishes on a `v*` git tag via [`release.yml`](../.github/workflows/release.yml):
+cross-platform archives, `.deb`/`.rpm`, a Homebrew tap, and a Scoop bucket. **No Docker
+image** — the tool needs the *host's* repo, agent CLIs, and local credentials, so a
+container adds friction without fitting the local-first model.
+
+To enable the Homebrew/Scoop publishers, create `PurplePotassium/homebrew-tap` and
+`PurplePotassium/scoop-bucket` repos and add a `HOMEBREW_TAP_GITHUB_TOKEN` secret (a PAT
+with `repo` scope).
 
 ---
 
 ## ⚠️ Unattended execution
 
-By default the loop passes `--dangerously-skip-permissions`: the agent edits, runs, and deletes files in
-`Root` on its own, for as many iterations as you set. **Only run this where you can fully revert via
-git.** Start bounded (`-Iterations`), watch the first passes, and commit onto a branch you can reset.
-Disable unattended mode with `-SkipPermissions:$false` (claude only).
+By default the loop passes `--dangerously-skip-permissions`: the agent edits, runs, and
+deletes files in your repo on its own. **Only run this where you can fully revert via git.**
+Start bounded (`--iterations`), watch the first passes, and commit onto a branch you can
+reset (`--branch`). The server binds `127.0.0.1` only — it spawns agent commands and must
+never be exposed without auth.

@@ -116,23 +116,24 @@ opens the project discovers the fleet on its own.
 
 The **single-agent** counterpart to the fleet — "Solo Ralph." One agent at a time (no worktrees, lanes,
 refinery, or planner), fresh context each pass, draining an **operator-curated backlog** toward a
-north-star `GOAL.md`. It ships a **self-contained, zero-dependency web UI** to watch and steer it live:
-edit the goal, queue/reorder tasks, switch the model for the next pass, and see what the current pass is
-doing.
+north-star `GOAL.md`. It is a **single cross-platform Go binary** with an embedded web UI (Syncthing-style:
+Go backend + baked-in React SPA + one file) — install it, run `workshop` in any git repo, and a browser
+opens to a live dashboard: edit the goal/prompt, queue/reorder tasks, switch the model for the next pass,
+and watch the current pass over SSE. Multiple agents run only by running **multiple projects**, each in
+its own working directory — no worktrees.
 
 Use the Workshop when you want to **hand-curate** what one agent works on next (and watch it); use the
 fleet when you want **many** agents grinding a partitioned backlog in parallel.
 
-```powershell
-cd workshop
-# edit workshop.config.ps1 (Root = your repo, UiPort, ...)
-Copy-Item PROMPT.example.md PROMPT.md ; Copy-Item GOAL.example.md GOAL.md
-Copy-Item backlog.example.json backlog.json ; Copy-Item completions.example.json completions.json
-node ui/server.js            # → http://localhost:4455  (Start the loop from the UI)
+```sh
+cd /path/to/your/repo      # any git repo
+workshop                   # → http://127.0.0.1:4455  (Start the loop from the UI)
+workshop --iterations 2    # or a bounded, browser-less smoke run
 ```
 
-Full walkthrough + the agent-driver caveats: **[`workshop/README.md`](workshop/README.md)** and
-**[`workshop/AGENTS.md`](workshop/AGENTS.md)**.
+Cross-platform (Windows / macOS / Linux); the old PowerShell engine + Node UI have been replaced by the
+Go binary. Full walkthrough, build-from-source, distribution, and the agent-driver caveats:
+**[`workshop/README.md`](workshop/README.md)** and **[`workshop/AGENTS.md`](workshop/AGENTS.md)**.
 
 ---
 

@@ -1,0 +1,96 @@
+# goreleaser config for the Workshop single binary.
+# The Go module lives in ./workshop; the embedded React UI must be built FIRST so
+# //go:embed picks up web/dist. Everything is pure-Go (modernc sqlite), so all targets
+# cross-compile from one Linux CI job with CGO disabled. No Docker image — Workshop
+# needs the host's repo, agent CLIs, and local credentials, so a container adds friction.
+version: 2
+project_name: workshop
+
+before:
+  hooks:
+    - bash -c "cd workshop/web && npm ci && npm run build"
+    - bash -c "cd workshop && go mod download"
+
+builds:
+  - id: workshop
+    dir: workshop
+    main: ./cmd/workshop
+    binary: workshop
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .CommitDate }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - src: workshop/README.md
+        strip_parent: true
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# Linux packages.
+nfpms:
+  - id: workshop
+    package_name: workshop
+    homepage: https://github.com/PurplePotassium/cosmic-agent-tools
+    description: Single-agent coding loop with an embedded local web dashboard.
+    maintainer: PurplePotassium
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    dependencies:
+      - git
+
+# Homebrew tap — REQUIRES a repo `PurplePotassium/homebrew-tap` and a PAT in the
+# HOMEBREW_TAP_GITHUB_TOKEN secret (see .github/workflows/release.yml).
+brews:
+  - name: workshop
+    repository:
+      owner: PurplePotassium
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/PurplePotassium/cosmic-agent-tools
+    description: Single-agent coding loop with an embedded local web dashboard.
+    license: MIT
+    dependencies:
+      - name: git
+    test: |
+      system "#{bin}/workshop", "--version"
+
+# Scoop bucket — REQUIRES a repo `PurplePotassium/scoop-bucket` and the same PAT.
+scoops:
+  - repository:
+      owner: PurplePotassium
+      name: scoop-bucket
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/PurplePotassium/cosmic-agent-tools
+    description: Single-agent coding loop with an embedded local web dashboard.
+    license: MIT
+
+release:
+  draft: false
+  prerelease: auto
