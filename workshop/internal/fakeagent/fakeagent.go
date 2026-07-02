@@ -14,10 +14,14 @@
 package fakeagent
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
@@ -37,6 +41,40 @@ type Scenario struct {
 	Proposals []domain.Proposal `json:"proposals"` // written to proposals.json on happy passes
 	WriteFile string            `json:"writeFile"` // repo-relative file to touch (default fake-work.txt)
 	NoEdit    bool              `json:"noEdit"`    // happy pass without any repo edit
+}
+
+// resolveConflicts rewrites files containing conflict markers with both
+// sides' lines (markers stripped) and stages everything.
+func resolveConflicts(repoDir string) error {
+	err := filepath.WalkDir(repoDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			if d != nil && d.IsDir() && d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || !bytes.Contains(data, []byte("<<<<<<< ")) {
+			return nil
+		}
+		var out []string
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "<<<<<<< ") || strings.HasPrefix(line, "=======") || strings.HasPrefix(line, ">>>>>>> ") {
+				continue
+			}
+			out = append(out, line)
+		}
+		return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
+	})
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("git", "add", "-A")
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git add: %v: %s", err, out)
+	}
+	return nil
 }
 
 // Main runs one fake pass; returns the process exit code.
@@ -105,6 +143,16 @@ func Main() int {
 		writeProgress(domain.Progress{Phase: "working", Task: title, Plan: "attempting"})
 		writeProgress(domain.Progress{Phase: sc.Behavior, Task: title, Note: "scripted " + sc.Behavior})
 		return 0
+	case "resolve":
+		// Merge-conflict resolution: rewrite every conflicted file with a
+		// merged body, stage it, report done. The engine verifies for real.
+		writeProgress(domain.Progress{Phase: "working", Task: title, Plan: "resolving conflicts"})
+		if err := resolveConflicts(repoDir); err != nil {
+			fmt.Fprintln(os.Stderr, "fakeagent:", err)
+			return 1
+		}
+		writeProgress(domain.Progress{Phase: "done", Task: title, Result: "combined both sides mechanically"})
+		return 0
 	}
 
 	// happy path
@@ -112,7 +160,9 @@ func Main() int {
 	if !sc.NoEdit {
 		name := sc.WriteFile
 		if name == "" {
-			name = "fake-work.txt"
+			// Per-workdir default so parallel lanes don't artificially
+			// collide on one filename.
+			name = "fake-" + filepath.Base(repoDir) + ".txt"
 		}
 		path := filepath.Join(repoDir, name)
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)

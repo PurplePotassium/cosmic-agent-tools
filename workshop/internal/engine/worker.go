@@ -14,7 +14,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/backlog"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/bus"
@@ -79,6 +82,17 @@ type WorkerConfig struct {
 	Personas     []string
 	Nouns        []string
 	Rng          *rand.Rand
+
+	// Multi-pipeline coordination (set by the supervisor):
+	//   SyncTrunk — worktree mode: merge this (gated-green) trunk into the
+	//     lane at pass start so agents build on integrated work.
+	//   TreeMu — no-worktree multi-pipeline mode: passes serialize on the
+	//     shared working tree (never concurrent on one tree).
+	//   Sem — global cap on simultaneously RUNNING agents; held only
+	//     around the agent-execution window.
+	SyncTrunk string
+	TreeMu    *sync.Mutex
+	Sem       *semaphore.Weighted
 }
 
 func (c *WorkerConfig) fillDefaults() {
@@ -227,6 +241,10 @@ func (w *Worker) Loop(ctx context.Context, iterations int, untilDrained bool) er
 
 // RunPass executes one pass of the state machine.
 func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
+	if w.cfg.TreeMu != nil {
+		w.cfg.TreeMu.Lock()
+		defer w.cfg.TreeMu.Unlock()
+	}
 	name := w.cfg.Pipeline.Name
 
 	if reason, err := w.st.HaltedReason(ctx, name); err != nil {
@@ -239,6 +257,21 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 	// everything downstream.
 	if _, err := gitx.CleanStaleLock(ctx, w.cfg.RepoDir, time.Minute); err == nil {
 		_ = gitx.MergeAbort(ctx, w.cfg.RepoDir)
+	}
+
+	// Worktree mode: pull the gated-green trunk into the lane before
+	// working. A sync conflict skips the pass — it resurfaces at
+	// integration, where the conflict-task machinery lives.
+	if w.cfg.SyncTrunk != "" {
+		if dirty, err := gitx.IsDirty(ctx, w.cfg.RepoDir); err == nil && !dirty {
+			if n, err := gitx.AheadCount(ctx, w.cfg.RepoDir, w.cfg.Pipeline.Branch, w.cfg.SyncTrunk); err == nil && n > 0 {
+				if conflict, err := gitx.Merge(ctx, w.cfg.RepoDir, w.cfg.SyncTrunk, false); err == nil && conflict {
+					_ = gitx.MergeAbort(ctx, w.cfg.RepoDir)
+					w.event(ctx, "integration.sync_conflict", name, 0, map[string]any{"trunk": w.cfg.SyncTrunk})
+					return PassIdle, nil
+				}
+			}
+		}
 	}
 
 	// CLAIM. Classify untyped shared tasks first so type-filtered claims
@@ -271,6 +304,13 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		w.failSetup(ctx, pass, task, err)
 		return PassRan, err
 	}
+
+	// Merge-conflict tasks run a dedicated resolution flow in an
+	// ephemeral worktree — never in this pipeline's own tree.
+	if task != nil && task.Type == "merge-conflict" && task.Meta["laneTip"] != "" {
+		return w.runConflictPass(ctx, pass, task, res)
+	}
+
 	full, spice, err := w.preparePass(ctx, task)
 	if err != nil {
 		w.failSetup(ctx, pass, task, err)
@@ -295,7 +335,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		"n": pass.N, "task": passTaskTitle(task), "spice": spice.Mode,
 		"agent": res.bundle.Agent, "model": res.bundle.Model, "effort": res.bundle.Effort,
 	})
-	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, logPath, logFile)
+	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, w.cfg.RepoDir, logPath, logFile)
 	if ctx.Err() != nil {
 		// Hard stop: release the claim untouched; the kill already happened.
 		if task != nil {
@@ -362,8 +402,16 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 	return full, spice, nil
 }
 
-// spawn runs the agent process and streams/captures its output.
-func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fullPrompt, logPath string, logFile *os.File) (exitCode int, tail []string, timedOut bool, err error) {
+// spawn runs the agent process in dir and streams/captures its output.
+func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fullPrompt, dir, logPath string, logFile *os.File) (exitCode int, tail []string, timedOut bool, err error) {
+	// The concurrency cap applies only to the agent-execution window, so N
+	// pipelines can exist with M running agents.
+	if w.cfg.Sem != nil {
+		if err := w.cfg.Sem.Acquire(ctx, 1); err != nil {
+			return -1, nil, false, err
+		}
+		defer w.cfg.Sem.Release(1)
+	}
 	if res.bundle.Effort != "" && !res.caps.Effort {
 		w.event(ctx, "driver.effort_ignored", w.cfg.Pipeline.Name, pass.ID, map[string]any{
 			"agent": res.drv.Name(), "effort": res.bundle.Effort,
@@ -388,10 +436,10 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fu
 		defer cancel()
 	}
 	cmd := exec.CommandContext(passCtx, plan.Exe, plan.Args...)
-	cmd.Dir = w.cfg.RepoDir
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"WORKSHOP_PASS_STATE_DIR="+w.cfg.StateDir,
-		"WORKSHOP_PASS_REPO_DIR="+w.cfg.RepoDir,
+		"WORKSHOP_PASS_REPO_DIR="+dir,
 		fmt.Sprintf("WORKSHOP_PASS_N=%d", pass.N),
 	)
 	cmd.Cancel = func() error {

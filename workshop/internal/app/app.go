@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/bus"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/config"
@@ -86,9 +89,16 @@ func (a *App) EnabledPipelines() []domain.Pipeline {
 	return out
 }
 
-// BuildWorker wires one pipeline's worker (simple mode: works in the repo
-// dir; worktree mode arrives with the integrator).
-func (a *App) BuildWorker(p domain.Pipeline, multi bool) (*engine.Worker, error) {
+// WorkerOpts carries the supervisor-level wiring for one worker.
+type WorkerOpts struct {
+	Dir       string // working dir override ("" = repo dir)
+	SyncTrunk string // worktree mode: trunk merged into the lane at pass start
+	TreeMu    *sync.Mutex
+	Sem       *semaphore.Weighted
+}
+
+// BuildWorker wires one pipeline's worker.
+func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engine.Worker, error) {
 	// Validate the pipeline's default agent early; per-task routing may
 	// still bring in other drivers at pass time.
 	if _, err := driver.New(p.Bundle.Agent); err != nil {
@@ -111,10 +121,14 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool) (*engine.Worker, error)
 		known[pl.Name] = true
 	}
 
+	workDir := opts.Dir
+	if workDir == "" {
+		workDir = a.RepoDir
+	}
 	wc := engine.WorkerConfig{
 		Pipeline:        p,
 		Multi:           multi,
-		RepoDir:         a.RepoDir,
+		RepoDir:         workDir,
 		StateDir:        statedir.PipelineDir(a.StateDir, p.Name),
 		LogDir:          filepath.Join(a.StateDir, "logs", p.Name),
 		GoalPath:        config.GoalFile(a.RepoDir),
@@ -130,6 +144,9 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool) (*engine.Worker, error)
 		SpiceEnabled:    cfg.Spice.Enabled,
 		Personas:        personas,
 		Nouns:           nouns,
+		SyncTrunk:       opts.SyncTrunk,
+		TreeMu:          opts.TreeMu,
+		Sem:             opts.Sem,
 	}
 	return engine.NewWorker(wc, a.Store, a.Bus), nil
 }
@@ -146,30 +163,107 @@ func (a *App) resolvePool(nameOrPath string) string {
 	return filepath.Join(a.RepoDir, config.RepoConfigDir, nameOrPath)
 }
 
-// RunHeadless drives the first enabled pipeline for a bounded run (the
-// `workshop run` smoke mode). Multi-pipeline concurrency lands with the
-// supervisor.
+// RunHeadless drives every enabled pipeline (concurrently, with worktrees +
+// the merge queue when enabled) until the iteration bound, drain, or ctx
+// cancel. It is the engine behind both `workshop run` and `workshop up`.
 func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained bool) error {
 	pipelines := a.EnabledPipelines()
 	if len(pipelines) == 0 {
 		return fmt.Errorf("no enabled pipelines")
 	}
-	p := pipelines[0]
-	if len(pipelines) > 1 {
-		fmt.Fprintf(os.Stderr, "note: %d pipelines enabled; headless run drives only %q for now\n", len(pipelines), p.Name)
+	cfg := a.Res.Config
+
+	trunk := cfg.Project.Trunk
+	if trunk == "" {
+		var err error
+		if trunk, err = gitx.CurrentBranch(ctx, a.RepoDir); err != nil || trunk == "" {
+			return fmt.Errorf("cannot determine trunk branch (set project.trunk, or check out a branch): %v", err)
+		}
 	}
-	if trunk := a.Res.Config.Project.Trunk; trunk != "" && gitx.BranchExists(ctx, a.RepoDir, trunk) {
+	if !gitx.BranchExists(ctx, a.RepoDir, trunk) {
+		return fmt.Errorf("trunk branch %q does not exist", trunk)
+	}
+
+	// Worktree mode is all-or-nothing: the integrator owns the main
+	// checkout, so no worker may share it while lanes exist.
+	worktrees := cfg.WorktreesEnabled()
+	for _, p := range pipelines {
+		if p.Worktree != nil && *p.Worktree {
+			worktrees = true
+		}
+	}
+
+	multi := len(pipelines) > 1
+	maxConc := cfg.Safety.MaxConcurrent
+	if maxConc < 1 {
+		maxConc = 1
+	}
+	sem := semaphore.NewWeighted(int64(maxConc))
+
+	var workers []*engine.Worker
+	var lanes []domain.Pipeline
+
+	if worktrees {
+		_ = gitx.PruneWorktrees(ctx, a.RepoDir)
+		for i := range pipelines {
+			p := &pipelines[i]
+			p.Branch = cfg.Git.BranchPrefix + p.Name
+			p.Dir = a.RepoDir + "-wt-" + p.Name
+			if err := gitx.AddWorktree(ctx, a.RepoDir, p.Dir, p.Branch, trunk); err != nil {
+				return fmt.Errorf("worktree for %s: %w", p.Name, err)
+			}
+			w, err := a.BuildWorker(*p, multi, WorkerOpts{Dir: p.Dir, SyncTrunk: trunk, Sem: sem})
+			if err != nil {
+				return err
+			}
+			workers = append(workers, w)
+			lanes = append(lanes, *p)
+		}
+	} else {
 		if cur, _ := gitx.CurrentBranch(ctx, a.RepoDir); cur != trunk {
 			if err := gitx.CheckoutBranch(ctx, a.RepoDir, trunk); err != nil {
 				return fmt.Errorf("checkout %s: %w", trunk, err)
 			}
 		}
+		var treeMu *sync.Mutex
+		if multi {
+			// Plural pipelines on one tree: serialized passes, never
+			// concurrent (safe but slower — worktrees are the fix).
+			treeMu = &sync.Mutex{}
+		}
+		for i := range pipelines {
+			p := &pipelines[i]
+			p.Branch = trunk
+			p.Dir = a.RepoDir
+			w, err := a.BuildWorker(*p, multi, WorkerOpts{TreeMu: treeMu, Sem: sem})
+			if err != nil {
+				return err
+			}
+			workers = append(workers, w)
+		}
 	}
-	w, err := a.BuildWorker(p, len(pipelines) > 1)
-	if err != nil {
-		return err
+
+	var integ *engine.Integrator
+	if len(lanes) > 0 {
+		_, hasConflictRoute := cfg.Types["merge-conflict"]
+		integ = engine.NewIntegrator(engine.IntegratorConfig{
+			RepoDir:       a.RepoDir,
+			Trunk:         trunk,
+			Lanes:         lanes,
+			GateCmd:       cfg.Project.Verify,
+			GateDir:       cfg.Project.VerifyDir,
+			ConflictTasks: hasConflictRoute,
+			BranchPrefix:  cfg.Git.BranchPrefix,
+			Interval:      45 * time.Second,
+		}, a.Store, a.Bus)
 	}
-	return w.Loop(ctx, iterations, untilDrained)
+
+	return engine.NewSupervisor(a.Store, a.Bus).Run(ctx, engine.RunSpec{
+		Workers:      workers,
+		Integrator:   integ,
+		Iterations:   iterations,
+		UntilDrained: untilDrained,
+	})
 }
 
 // PipelineStatus is one pipeline's live snapshot.
