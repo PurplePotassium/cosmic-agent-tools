@@ -154,6 +154,29 @@ func (s *Store) GetPass(ctx context.Context, id int64) (*domain.Pass, error) {
 	return p, err
 }
 
+// CleanupOrphanPasses closes pass rows left "running" by a crashed process.
+// Call once at startup — within a live process the engine always closes its
+// own passes.
+func (s *Store) CleanupOrphanPasses(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE passes SET state = 'failed', outcome = 'failed', failure = 'setup', ended = ?
+		WHERE ended = 0`, toMillis(time.Now().UTC()))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// RunningPass returns the open pass for a pipeline, if any.
+func (s *Store) RunningPass(ctx context.Context, pipeline string) (*domain.Pass, error) {
+	p, err := scanPass(s.db.QueryRowContext(ctx,
+		`SELECT `+passCols+` FROM passes WHERE pipeline = ? AND ended = 0 ORDER BY id DESC LIMIT 1`, pipeline))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return p, err
+}
+
 // SetHalted records (or clears, with "") a pipeline halt reason.
 func (s *Store) SetHalted(ctx context.Context, pipeline, reason string) error {
 	_, err := s.db.ExecContext(ctx, `

@@ -219,7 +219,15 @@ func (w *Worker) Loop(ctx context.Context, iterations int, untilDrained bool) er
 		}
 		switch res {
 		case PassHalted:
-			return ErrHalted
+			// Bounded runs report the halt; a live (unbounded) worker
+			// parks instead, so clearing the halt (operator resume, auth
+			// fixed) picks the loop back up without a restart.
+			if bounded || untilDrained {
+				return ErrHalted
+			}
+			if !sleepCtx(ctx, w.cfg.IdlePoll) {
+				return ctx.Err()
+			}
 		case PassIdle:
 			if bounded || untilDrained {
 				return nil

@@ -66,6 +66,9 @@ func Open(ctx context.Context, repoOverride string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A previous crash may have left pass rows open; close them so
+	// liveness is derived from truth.
+	_, _ = st.CleanupOrphanPasses(ctx)
 	return &App{
 		RepoDir:  root,
 		StateDir: stateDir,
@@ -274,6 +277,7 @@ type PipelineStatus struct {
 	Model           string          `json:"model,omitempty"`
 	Effort          string          `json:"effort,omitempty"`
 	Halted          string          `json:"halted,omitempty"`
+	Running         *domain.Pass    `json:"running,omitempty"` // the in-flight pass
 	LastPass        *domain.Pass    `json:"lastPass,omitempty"`
 	Progress        domain.Progress `json:"progress"`
 	ProgressAgeSec  int64           `json:"progressAgeSec"`
@@ -314,6 +318,7 @@ func (a *App) Snapshot(ctx context.Context) (*Status, error) {
 			BacklogExclusive: counts[p.Name],
 		}
 		ps.Halted, _ = a.Store.HaltedReason(ctx, p.Name)
+		ps.Running, _ = a.Store.RunningPass(ctx, p.Name)
 		if passes, err := a.Store.RecentPasses(ctx, p.Name, 1); err == nil && len(passes) > 0 {
 			ps.LastPass = passes[0]
 		}
