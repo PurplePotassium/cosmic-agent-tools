@@ -209,6 +209,21 @@ func (s *Store) PutIntegration(ctx context.Context, li *domain.LaneIntegration) 
 	return err
 }
 
+// AddCompletion records a completion that has no backing task row (e.g. an
+// invented/freeform pass).
+func (s *Store) AddCompletion(ctx context.Context, c *domain.Completion) error {
+	if c.ID == "" {
+		c.ID = NewID()
+	}
+	if c.Completed.IsZero() {
+		c.Completed = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO completions (id, task_id, pipeline, title, result, completed) VALUES (?,?,?,?,?,?)`,
+		c.ID, c.TaskID, c.Pipeline, c.Title, c.Result, toMillis(c.Completed))
+	return err
+}
+
 // ListCompletions returns the newest completions first.
 func (s *Store) ListCompletions(ctx context.Context, limit int) ([]*domain.Completion, error) {
 	rows, err := s.db.QueryContext(ctx,

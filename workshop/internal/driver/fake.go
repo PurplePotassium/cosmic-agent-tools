@@ -36,5 +36,6 @@ func (f *Fake) Plan(spec InvokeSpec) (ExecPlan, error) {
 		return ExecPlan{}, fmt.Errorf("driver: fake agent needs WORKSHOP_FAKE_BIN")
 	}
 	caps, _ := f.Probe(context.Background())
-	return ExecPlan{Exe: exe, Args: spec.ExtraArgs, StdinPrompt: true, Mode: caps.SpawnMode()}, nil
+	args := append([]string{"_fake-agent"}, spec.ExtraArgs...)
+	return ExecPlan{Exe: exe, Args: args, StdinPrompt: true, Mode: caps.SpawnMode()}, nil
 }

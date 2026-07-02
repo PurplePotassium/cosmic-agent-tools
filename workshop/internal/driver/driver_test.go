@@ -94,11 +94,11 @@ func TestFakeDriver(t *testing.T) {
 	if err != nil || caps.Capture != CaptureStreaming {
 		t.Fatalf("caps: %+v, %v", caps, err)
 	}
-	plan, err := f.Plan(InvokeSpec{ExtraArgs: []string{"_fake-agent", "--scenario", "s.json"}})
+	plan, err := f.Plan(InvokeSpec{ExtraArgs: []string{"--extra"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Exe != os.Args[0] || !slices.Equal(plan.Args, []string{"_fake-agent", "--scenario", "s.json"}) {
+	if plan.Exe != os.Args[0] || !slices.Equal(plan.Args, []string{"_fake-agent", "--extra"}) {
 		t.Fatalf("plan: %+v", plan)
 	}
 }
