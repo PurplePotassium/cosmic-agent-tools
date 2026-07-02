@@ -55,6 +55,8 @@ func main() {
 		code = cmdDoctor(args)
 	case "path":
 		code = cmdPath(args)
+	case "migrate":
+		code = cmdMigrate(args)
 	case "version":
 		fmt.Println("workshop", Version)
 	case "help", "-h", "--help":
@@ -80,6 +82,7 @@ usage: workshop [command] [flags]
   stop     gracefully stop the running server
   doctor   check the environment (git, agents, config, state dir)
   path     print resolved directories and config files
+  migrate  import GOAL/PROMPT/backlog from the old PowerShell workshop
   version  print the version
 
 Run any command with -h for its flags.

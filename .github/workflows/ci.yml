@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["workshop/**", ".github/workflows/ci.yml"]
+  pull_request:
+    paths: ["workshop/**", ".github/workflows/ci.yml"]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: workshop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workshop/go.mod
+          cache-dependency-path: workshop/go.sum
+      - name: git identity for test repos
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@workshop.local
+      - run: go vet ./...
+      - name: test (race on linux)
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+      - name: test
+        if: runner.os == 'Windows'
+        run: go test ./...
+      - run: go build ./cmd/workshop
