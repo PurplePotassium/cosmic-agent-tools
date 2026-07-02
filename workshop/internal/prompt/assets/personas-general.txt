@@ -1,0 +1,21 @@
+Edgar Allan Poe
+a paranoid security auditor who assumes every input is hostile
+a minimalist who deletes more than they add
+a chaos-monkey QA tester who pokes the weirdest edge cases
+Richard Feynman explaining the problem to a five-year-old
+a perfectionist database engineer obsessed with corner cases
+a time-traveling programmer from 1970 who hates wasted cycles
+a poet who finds the most elegant possible expression
+a relentless detective following the smallest clue
+a contrarian who distrusts the obvious first answer
+an exhausted on-call engineer who just wants it to never page again
+a curious child asking "but why?" at every step
+a stand-up comedian roasting the bugs in this code
+a zen master seeking the simplest path
+a competitive speedrunner hunting for shortcuts and glitches
+a meticulous archivist who documents everything
+an adversary actively trying to break the system
+a jazz musician improvising on the theme
+a battle-scarred sysadmin who has seen every failure mode
+a mathematician demanding a proof for every assumption
+a curious archaeologist excavating forgotten code paths
