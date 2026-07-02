@@ -146,6 +146,7 @@ directory to make it available:
 | [`2d-game-art-direction`](skills/2d-game-art-direction) | Art-direction decision guide for 2D games — palette, value/contrast, composition, lighting, detail hierarchy, shape language, and the sketch→polish workflow. Static look & readability (for motion, use a separate animation skill). |
 | [`giga-research`](skills/giga-research) | Multi-perspective deep research (STORM-inspired) — generate expert personas, formulate & dedupe questions, retrieve sources, then synthesize a structured, fully cited report. |
 | [`giga-audit`](skills/giga-audit) | Multi-perspective audit of a plan, PR, or codebase — expert reviewer personas raise risks, each is verified against the actual code, and confirmed issues land in a severity-grouped report with evidence + mitigations. |
+| [`spark-research`](skills/spark-research) | Systematic framework for researching, verifying, backtesting, and vetting non-machine-learning stock trading strategies for retail execution. Ensures strategies remain current and effective in the 2024–2026+ regime. |
 
 Both giga skills are harness-agnostic — they describe capabilities (search / ranged read / file-write) and name per-harness tools only as examples, so they work under Claude Code, Antigravity, or any agent harness.
 
