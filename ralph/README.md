@@ -5,13 +5,27 @@ with a **fresh context**, reads the repo + your prompt, makes one increment of p
 commits, and exits. The loop runs it again. Named after the "Ralph Wiggum" technique — let a coding
 agent grind on a task autonomously for a long time.
 
-This package is **project-agnostic**. New here? Read **[SETUP.md](SETUP.md)** first — it's the bring-up
-checklist (config + prompt + lanes). The single knob file is `fleet.config.ps1`.
+## Install into a project
 
-> **Scaling past one loop?** See **[HYBRID.md](HYBRID.md)** — many lanes run in parallel worktrees,
-> a **refinery** merges their branches under a gate, and a **planner** keeps the backlog file-disjoint.
-> Lanes are declared in `lanes.txt`; fan-out via `ralph-fleet.ps1`; one-command launch via
-> `start-fleet.ps1`.
+This package is **project-agnostic** — drop this `ralph/` folder into the repo you want agents to work on:
+
+```bash
+git clone https://github.com/PurplePotassium/cosmic-agent-tools
+cp -r cosmic-agent-tools/ralph /path/to/your-project/ralph
+```
+Windows PowerShell:
+```powershell
+git clone https://github.com/PurplePotassium/cosmic-agent-tools
+Copy-Item -Recurse cosmic-agent-tools\ralph C:\path\to\your-project\ralph
+```
+
+New here? Read **[SETUP.md](SETUP.md)** next — it's the bring-up checklist (config + prompt + lanes). The
+single knob file is `fleet.config.ps1`. Tip: copy `repo-root-AGENTS.md` / `repo-root-CLAUDE.md` to your
+project root so any agent that opens the project discovers the loop on its own.
+
+> **Scaling past one loop?** Jump to **[the fleet](#scaling-past-one-loop-the-fleet)** below — many lanes
+> run in parallel worktrees, a **refinery** merges their branches under a gate, and a **planner** keeps
+> the backlog file-disjoint.
 
 Two flavors of the single loop:
 
@@ -95,6 +109,63 @@ fingerprint; interactive claude never sets it) whose ancestor is the loop's Powe
 | `-Model <id>` | `-m <id>` | model override |
 | `-Agent claude\|agy` | — | which coding-agent CLI drives each pass (PS only) |
 | `-SkipPermissions:$false` | `--no-skip` | disable unattended mode (prompt for perms) |
+
+## Scaling past one loop: the fleet
+
+The **fleet** fans the single loop out. Several loops run at once, each in its own git worktree on its
+own branch, each hard-scoped to a disjoint set of files. A **refinery** (a Bors-style merge queue) polls
+the lane branches, merges the ones that advanced, runs your gate on the combined result, and **bisects
+out anything that regresses** instead of corrupting the trunk. A **planner** keeps the backlog full and
+carved into per-lane sections whose open items touch non-overlapping files, so the lanes never collide.
+
+```
+  planner ──► TODO.md on trunk ──► lane: api      lane: ui     lane: docs   (parallel worktrees)
+ (strong model)                      src/api/      src/ui/      docs/        each: 1 increment → gate → commit
+                                         └─────────────┼─────────────┘
+                                                       ▼
+                                                  refinery  ── poll → merge → gate → bisect-on-red
+                                                       ▼
+                                                  trunk (always green)
+```
+
+Why it holds together:
+- **The gate is the whole safety story.** Your build/test command gates both each lane's own pass and
+  the refinery's merge. Nothing lands on the trunk that turns it red.
+- **Disjoint file ownership beats conflict resolution.** Lanes own non-overlapping files; the planner
+  enforces the partition and the refinery flags whatever slips through. No machine-guessed merges.
+- **Bail-safe by design.** The refinery never force-pushes; conflicts are aborted + flagged, every merge
+  is `--no-ff` so a bad lane peels off with one `reset HEAD^`, and a flagged lane isn't retried until it
+  advances. The opposite of the "auto-merge red into main, then force-push to recover" trap.
+- **Engine-agnostic.** Lanes can be driven by Claude Code or `agy` (or a mix) — the refinery merges
+  commits and doesn't care who produced them. The merge/plan side runs on Claude Code.
+
+Bring-up is the **[SETUP.md](SETUP.md)** checklist (config + trunk branch + prompt + lanes); the
+load-bearing rationale, run order, monitoring, and concurrency hardening are in
+**[HYBRID.md](HYBRID.md)**. In short:
+
+```powershell
+.\start-fleet.ps1 -LaneIterations 3 -RefineryIterations 12   # bounded test run (caps spend)
+.\start-fleet.ps1 -WithPlanner                               # open-ended fleet
+.\watch-fleet.ps1                                            # live dashboard
+```
+
+## What's in `ralph/`
+
+| | |
+|---|---|
+| `ralph.ps1` / `ralph.sh` | the single Ralph loop (PowerShell / Bash) |
+| `ralph-gamedev.*` | same loop, game-dev persona/noun pools, `-Random` always on |
+| `ralph-fleet.ps1` | spawn one loop per lane, each in its own worktree |
+| `refinery.ps1` | the merge queue: poll → merge → gate → bisect-on-red |
+| `plan.ps1` | the planner: keep `TODO.md` full + file-disjoint |
+| `integrate.ps1` | one-shot merge of all lanes (instead of the refinery loop) |
+| `start-fleet.ps1` / `stop-fleet.ps1` | bring the whole fleet up / down |
+| `watch-fleet.ps1` / `ralph-status.ps1` | live dashboard / reliable liveness check |
+| `fleet.config.ps1` | **the project knobs** |
+| `SETUP.md` / `HYBRID.md` | setup checklist / full fleet rationale |
+| `lanes.txt`, `lane-*.md`, `*.example.md` | lane manifest + scoping headers + prompt templates |
+| `personas*.txt`, `nouns*.txt` | anti-circling pools |
+| `repo-root-AGENTS.md` / `repo-root-CLAUDE.md` | drop-in root files so agents discover the loop |
 
 ## ⚠️ For agents testing this loop
 
