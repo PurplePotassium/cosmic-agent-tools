@@ -45,6 +45,8 @@ func main() {
 		code = cmdRun(args)
 	case "init":
 		code = cmdInit(args)
+	case "task":
+		code = cmdTask(args)
 	case "status":
 		code = cmdStatus(args)
 	case "stop":
@@ -73,6 +75,7 @@ usage: workshop [command] [flags]
   up       start the server + enabled pipelines in the foreground (default)
   run      headless bounded run (CI/smoke): --iterations N, --until-drained
   init     scaffold .workshop/ (config.toml + GOAL.md) into this repo
+  task     backlog operations: add, list, tag, pin, mv, rm
   status   one-shot snapshot (--json for machines)
   stop     gracefully stop the running server
   doctor   check the environment (git, agents, config, state dir)

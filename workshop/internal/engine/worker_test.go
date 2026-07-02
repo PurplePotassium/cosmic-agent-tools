@@ -12,7 +12,6 @@ import (
 
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/bus"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/driver"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/fakeagent"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
@@ -94,11 +93,7 @@ func newRig(t *testing.T, scenario fakeagent.Scenario, tweak func(*WorkerConfig)
 	if tweak != nil {
 		tweak(&cfg)
 	}
-	drv, err := driver.New("fake")
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := NewWorker(cfg, drv, st, bus.New(st))
+	w := NewWorker(cfg, st, bus.New(st))
 	return &testRig{t: t, repo: repo, state: stateRoot, st: st, worker: w, cfg: cfg}
 }
 
@@ -323,6 +318,99 @@ func TestInventPassRecordsCompletion(t *testing.T) {
 	}
 	if got := r.commits(); len(got) != 2 {
 		t.Fatalf("commits: %v", got)
+	}
+}
+
+// Routing: a per-task pin must reach the spawned pass (visible in the log
+// header) and the resolved agent must stamp the commit subject.
+func TestRoutingPinReachesPass(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy"}, func(cfg *WorkerConfig) {
+		cfg.Types = map[string]domain.Bundle{
+			"code": {Agent: "fake", Model: "routed-code-model", Effort: "high"},
+		}
+		cfg.Vocabulary = map[string]bool{"code": true}
+	})
+	ctx := context.Background()
+	// Untyped, but the classifier should type it "code" from the title.
+	r.addTask("fix the crash in the loader")
+
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	logDir := r.cfg.LogDir
+	data, err := os.ReadFile(filepath.Join(logDir, "iter-000001.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "model  : routed-code-model") {
+		t.Fatalf("routed model missing from log header:\n%s", data)
+	}
+	// The task was classified before claiming.
+	comps, _ := r.st.ListCompletions(ctx, 5)
+	if len(comps) != 1 {
+		t.Fatalf("completions: %+v", comps)
+	}
+}
+
+// A pinned bundle beats the routing table.
+func TestPinnedTaskBeatsTypeRoute(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy"}, func(cfg *WorkerConfig) {
+		cfg.Types = map[string]domain.Bundle{
+			"code": {Agent: "fake", Model: "table-model"},
+		}
+		cfg.Vocabulary = map[string]bool{"code": true}
+	})
+	ctx := context.Background()
+	if _, err := r.st.AddTask(ctx, &domain.Task{
+		Title: "fix the bug",
+		Type:  "code",
+		Pin:   domain.Bundle{Model: "pinned-model"},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(r.cfg.LogDir, "iter-000001.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "model  : pinned-model") {
+		t.Fatalf("pin lost:\n%s", data)
+	}
+}
+
+// Blind drivers: repeated failures with no self-report raise the
+// suspected-auth alert (auth is otherwise invisible).
+func TestBlindDriverSuspectAuth(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "crash"}, func(cfg *WorkerConfig) {
+		cfg.Pipeline.Invent = true
+		cfg.BreakerLimit = 5
+		cfg.SuspectAuthAfter = 2
+	})
+	t.Setenv("WORKSHOP_FAKE_BLIND", "1")
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		if res, err := r.worker.RunPass(ctx); err != nil || res != PassRan {
+			t.Fatalf("pass %d: res=%v err=%v", i+1, res, err)
+		}
+	}
+	evs, err := r.st.EventsSince(ctx, 0, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ev := range evs {
+		if ev.Type == "auth.suspected" {
+			found = true
+		}
+		if ev.Type == "auth.halt" {
+			t.Fatal("blind driver must never hard-halt on auth keywords")
+		}
+	}
+	if !found {
+		t.Fatal("auth.suspected event missing")
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/engine"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/prompt"
+	"github.com/gw1108/cosmic-agent-tools/workshop/internal/route"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
 )
@@ -88,11 +89,13 @@ func (a *App) EnabledPipelines() []domain.Pipeline {
 // BuildWorker wires one pipeline's worker (simple mode: works in the repo
 // dir; worktree mode arrives with the integrator).
 func (a *App) BuildWorker(p domain.Pipeline, multi bool) (*engine.Worker, error) {
-	drv, err := driver.New(p.Bundle.Agent)
-	if err != nil {
+	// Validate the pipeline's default agent early; per-task routing may
+	// still bring in other drivers at pass time.
+	if _, err := driver.New(p.Bundle.Agent); err != nil {
 		return nil, err
 	}
 	cfg := a.Res.Config
+	var err error
 
 	var personas, nouns []string
 	if cfg.Spice.Enabled {
@@ -121,11 +124,14 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool) (*engine.Worker, error)
 		SkipPermissions: cfg.Safety.SkipPermissions,
 		KnownPipelines:  known,
 		BreakerLimit:    cfg.Safety.BreakerFailures,
+		Types:           cfg.Types,
+		ClassifierMode:  cfg.Classifier.Mode,
+		Vocabulary:      route.Vocabulary(cfg.Types, cfg.ResolvedPipelines()),
 		SpiceEnabled:    cfg.Spice.Enabled,
 		Personas:        personas,
 		Nouns:           nouns,
 	}
-	return engine.NewWorker(wc, drv, a.Store, a.Bus), nil
+	return engine.NewWorker(wc, a.Store, a.Bus), nil
 }
 
 // resolvePool resolves custom pool paths relative to the repo config dir.

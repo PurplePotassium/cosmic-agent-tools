@@ -21,6 +21,14 @@ func (f *Fake) Probe(context.Context) (Capabilities, error) {
 	if os.Getenv("WORKSHOP_FAKE_BIN") == "" {
 		return Capabilities{}, fmt.Errorf("driver: fake agent needs WORKSHOP_FAKE_BIN")
 	}
+	if os.Getenv("WORKSHOP_FAKE_BLIND") == "1" {
+		// Simulate a blind driver (agy-shaped) for engine tests.
+		return Capabilities{
+			PromptVia:   PromptArg,
+			Capture:     CaptureNone,
+			ModelSelect: true,
+		}, nil
+	}
 	return Capabilities{
 		PromptVia:   PromptStdin,
 		Capture:     CaptureStreaming,
@@ -37,5 +45,10 @@ func (f *Fake) Plan(spec InvokeSpec) (ExecPlan, error) {
 	}
 	caps, _ := f.Probe(context.Background())
 	args := append([]string{"_fake-agent"}, spec.ExtraArgs...)
-	return ExecPlan{Exe: exe, Args: args, StdinPrompt: true, Mode: caps.SpawnMode()}, nil
+	return ExecPlan{
+		Exe:         exe,
+		Args:        args,
+		StdinPrompt: caps.PromptVia == PromptStdin,
+		Mode:        caps.SpawnMode(),
+	}, nil
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/proc"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/prompt"
+	"github.com/gw1108/cosmic-agent-tools/workshop/internal/route"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
 	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
 )
@@ -61,6 +62,13 @@ type WorkerConfig struct {
 
 	KnownPipelines map[string]bool // valid proposal targets
 
+	// Routing: per-task bundle resolution (pin > Types table > pipeline
+	// bundle) and the classifier that types untyped shared-backlog tasks.
+	Types            map[string]domain.Bundle
+	ClassifierMode   string          // "off" | "heuristic" | "agent" (agent falls back to heuristic for now)
+	Vocabulary       map[string]bool // known task types
+	SuspectAuthAfter int             // blind-driver no-report failures before an auth alert (default 3)
+
 	BreakerLimit    int           // consecutive failed passes before halt (default 5)
 	MaxTaskAttempts int           // blocked/failed attempts before a task is stuck (default 3)
 	RetryBackoff    time.Duration // task retry backoff (default 1m)
@@ -86,6 +94,9 @@ func (c *WorkerConfig) fillDefaults() {
 	if c.IdlePoll <= 0 {
 		c.IdlePoll = 3 * time.Second
 	}
+	if c.SuspectAuthAfter <= 0 {
+		c.SuspectAuthAfter = 3
+	}
 	if c.Rng == nil {
 		c.Rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
@@ -96,19 +107,77 @@ func (c *WorkerConfig) fillDefaults() {
 
 // Worker drives one pipeline.
 type Worker struct {
-	cfg WorkerConfig
-	drv driver.Driver
-	st  *store.Store
-	bl  *backlog.Service
-	bus *bus.Bus
+	cfg     WorkerConfig
+	drivers map[string]driver.Driver // cache, keyed by agent name
+	st      *store.Store
+	bl      *backlog.Service
+	bus     *bus.Bus
 
-	consecFails int
+	consecFails    int
+	consecNoReport int // blind-driver failures with no progress start-write
 }
 
-// NewWorker builds a worker.
-func NewWorker(cfg WorkerConfig, drv driver.Driver, st *store.Store, b *bus.Bus) *Worker {
+// NewWorker builds a worker. Drivers are resolved per pass from the routed
+// bundle (a task pinned to another agent runs on that agent).
+func NewWorker(cfg WorkerConfig, st *store.Store, b *bus.Bus) *Worker {
 	cfg.fillDefaults()
-	return &Worker{cfg: cfg, drv: drv, st: st, bl: backlog.New(st), bus: b}
+	return &Worker{cfg: cfg, drivers: map[string]driver.Driver{}, st: st, bl: backlog.New(st), bus: b}
+}
+
+// resolved is one pass's routing outcome.
+type resolved struct {
+	bundle domain.Bundle
+	drv    driver.Driver
+	caps   driver.Capabilities
+}
+
+func (w *Worker) resolve(ctx context.Context, task *domain.Task) (*resolved, error) {
+	bundle := route.Resolve(task, w.cfg.Types, w.cfg.Pipeline.Bundle)
+	drv, ok := w.drivers[bundle.Agent]
+	if !ok {
+		var err error
+		if drv, err = driver.New(bundle.Agent); err != nil {
+			return nil, err
+		}
+		w.drivers[bundle.Agent] = drv
+	}
+	caps, err := drv.Probe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &resolved{bundle: bundle, drv: drv, caps: caps}, nil
+}
+
+// classifyUntyped assigns types to untyped open tasks on the shared backlog
+// so type-filtered pipelines can see them.
+func (w *Worker) classifyUntyped(ctx context.Context) {
+	mode := w.cfg.ClassifierMode
+	if mode == "" {
+		mode = "heuristic"
+	}
+	if mode == "off" || len(w.cfg.Vocabulary) == 0 {
+		return
+	}
+	main := domain.MainBacklog
+	open, err := w.st.ListTasks(ctx, store.TaskFilter{
+		Backlog:  &main,
+		Statuses: []domain.TaskStatus{domain.TaskOpen},
+	})
+	if err != nil {
+		return
+	}
+	for _, t := range open {
+		if t.Type != "" {
+			continue
+		}
+		if typ := route.Classify(t.Title, t.Detail, w.cfg.Vocabulary); typ != "" {
+			if _, err := w.st.UpdateTask(ctx, t.ID, store.TaskPatch{Type: &typ}); err == nil {
+				w.event(ctx, "task.classified", w.cfg.Pipeline.Name, 0, map[string]any{
+					"task": t.ID, "type": typ,
+				})
+			}
+		}
+	}
 }
 
 // PassResult classifies one RunPass call.
@@ -172,7 +241,9 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		_ = gitx.MergeAbort(ctx, w.cfg.RepoDir)
 	}
 
-	// CLAIM.
+	// CLAIM. Classify untyped shared tasks first so type-filtered claims
+	// can see them.
+	w.classifyUntyped(ctx)
 	task, err := w.bl.Claim(ctx, w.cfg.Pipeline, 0)
 	if err != nil {
 		return PassIdle, fmt.Errorf("engine: claim: %w", err)
@@ -193,8 +264,13 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		w.event(ctx, "task.claimed", name, pass.ID, map[string]any{"task": task.ID, "title": task.Title})
 	}
 
-	// PREPARE.
+	// PREPARE: route the task to its bundle/driver, then compose.
 	w.setState(ctx, pass, domain.PassPreparing)
+	res, err := w.resolve(ctx, task)
+	if err != nil {
+		w.failSetup(ctx, pass, task, err)
+		return PassRan, err
+	}
 	full, spice, err := w.preparePass(ctx, task)
 	if err != nil {
 		w.failSetup(ctx, pass, task, err)
@@ -206,7 +282,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 
 	logPath := filepath.Join(w.cfg.LogDir, fmt.Sprintf("iter-%06d.log", pass.N))
 	w.patchPass(ctx, pass.ID, store.PassPatch{LogPath: &logPath})
-	logFile, err := w.openPassLog(logPath, pass, task, spice)
+	logFile, err := w.openPassLog(logPath, pass, task, res, spice)
 	if err != nil {
 		w.failSetup(ctx, pass, task, err)
 		return PassRan, err
@@ -217,8 +293,9 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 	w.setState(ctx, pass, domain.PassRunning)
 	w.event(ctx, "pass.started", name, pass.ID, map[string]any{
 		"n": pass.N, "task": passTaskTitle(task), "spice": spice.Mode,
+		"agent": res.bundle.Agent, "model": res.bundle.Model, "effort": res.bundle.Effort,
 	})
-	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, full, logFile)
+	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, logPath, logFile)
 	if ctx.Err() != nil {
 		// Hard stop: release the claim untouched; the kill already happened.
 		if task != nil {
@@ -230,7 +307,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 
 	// INGEST + COMMIT.
 	w.setState(ctx, pass, domain.PassIngesting)
-	return w.settlePass(ctx, pass, task, exitCode, tail, timedOut, runErr)
+	return w.settlePass(ctx, pass, task, res, exitCode, tail, timedOut, runErr)
 }
 
 // preparePass materializes state files and composes the prompt.
@@ -286,23 +363,19 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 }
 
 // spawn runs the agent process and streams/captures its output.
-func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, fullPrompt string, logFile *os.File) (exitCode int, tail []string, timedOut bool, err error) {
-	caps, err := w.drv.Probe(ctx)
-	if err != nil {
-		return -1, nil, false, err
-	}
-	bundle := w.cfg.Pipeline.Bundle
-	if bundle.Effort != "" && !caps.Effort {
+func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fullPrompt, logPath string, logFile *os.File) (exitCode int, tail []string, timedOut bool, err error) {
+	if res.bundle.Effort != "" && !res.caps.Effort {
 		w.event(ctx, "driver.effort_ignored", w.cfg.Pipeline.Name, pass.ID, map[string]any{
-			"agent": w.drv.Name(), "effort": bundle.Effort,
+			"agent": res.drv.Name(), "effort": res.bundle.Effort,
 		})
 	}
-	plan, err := w.drv.Plan(driver.InvokeSpec{
+	plan, err := res.drv.Plan(driver.InvokeSpec{
 		Prompt:          fullPrompt,
-		Model:           bundle.Model,
-		Effort:          bundle.Effort,
+		Model:           res.bundle.Model,
+		Effort:          res.bundle.Effort,
 		SkipPermissions: w.cfg.SkipPermissions,
 		ExtraArgs:       w.cfg.ExtraArgs,
+		OpLogPath:       logPath + ".op.log",
 	})
 	if err != nil {
 		return -1, nil, false, err
@@ -395,8 +468,9 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, fullPrompt string
 }
 
 // settlePass classifies the finished pass, reconciles state, and commits.
-func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain.Task, exitCode int, tail []string, timedOut bool, runErr error) (PassResult, error) {
+func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved, exitCode int, tail []string, timedOut bool, runErr error) (PassResult, error) {
 	name := w.cfg.Pipeline.Name
+	blind := res.caps.Capture == driver.CaptureNone
 
 	if runErr != nil {
 		w.failSetup(ctx, pass, task, runErr)
@@ -405,24 +479,39 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 
 	if timedOut {
 		w.event(ctx, "wedge.killed", name, pass.ID, map[string]any{"timeoutMin": int(w.cfg.Pipeline.PassTimeout.Minutes())})
-		w.commitIfDirty(ctx, pass, task) // keep pass boundaries bisectable
+		w.commitIfDirty(ctx, pass, task, res) // keep pass boundaries bisectable
 		w.failTask(ctx, task)
 		w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailTimeout, exitCode, "")
 		return w.bumpBreaker(ctx, pass)
 	}
 
 	if exitCode != 0 {
-		if isAuthFailure(tail) {
+		if res.caps.AuthProbe && isAuthFailure(tail) {
 			// Auth won't self-heal: halt the pipeline, release the task.
 			if task != nil {
 				_ = w.st.ReleaseTask(ctx, task.ID)
 			}
 			_ = w.st.SetHalted(ctx, name, HaltAuth)
-			w.event(ctx, "auth.halt", name, pass.ID, map[string]any{"agent": w.drv.Name()})
+			w.event(ctx, "auth.halt", name, pass.ID, map[string]any{"agent": res.drv.Name()})
 			w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailAuth, exitCode, "")
 			return PassHalted, nil
 		}
-		w.commitIfDirty(ctx, pass, task)
+		if blind {
+			// A blind driver can't tell us WHY it failed. A failure with
+			// no progress start-write smells like dead auth or a silently
+			// rejected model id — surface it once the pattern repeats.
+			if statedir.ReadProgress(w.cfg.StateDir).Phase == "" {
+				w.consecNoReport++
+				if w.consecNoReport == w.cfg.SuspectAuthAfter {
+					w.event(ctx, "auth.suspected", name, pass.ID, map[string]any{
+						"agent": res.drv.Name(),
+						"note": fmt.Sprintf("%d consecutive failures with no self-report — check auth interactively (run `%s` once) and verify the model id",
+							w.consecNoReport, res.drv.Name()),
+					})
+				}
+			}
+		}
+		w.commitIfDirty(ctx, pass, task, res)
 		w.failTask(ctx, task)
 		w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailExit, exitCode, "")
 		return w.bumpBreaker(ctx, pass)
@@ -467,24 +556,25 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 		}
 	}
 
-	sha := w.commitIfDirty(ctx, pass, task)
+	sha := w.commitIfDirty(ctx, pass, task, res)
 	if sha == "" && outcome == domain.OutcomeDone {
 		outcome = domain.OutcomeNoChange
 	}
 
 	w.consecFails = 0
+	w.consecNoReport = 0
 	w.finishPass(ctx, pass, domain.PassDone, outcome, domain.FailNone, exitCode, sha)
 	return PassRan, nil
 }
 
 // --- helpers ---
 
-func (w *Worker) commitIfDirty(ctx context.Context, pass *domain.Pass, task *domain.Task) string {
+func (w *Worker) commitIfDirty(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved) string {
 	dirty, err := gitx.IsDirty(ctx, w.cfg.RepoDir)
 	if err != nil || !dirty {
 		return ""
 	}
-	subject := fmt.Sprintf("ws(%s) iter %d [%s]", w.cfg.Pipeline.Name, pass.N, w.drv.Name())
+	subject := fmt.Sprintf("ws(%s) iter %d [%s]", w.cfg.Pipeline.Name, pass.N, res.drv.Name())
 	trailers := [][2]string{{"Workshop-Pass", fmt.Sprint(pass.ID)}}
 	if task != nil {
 		trailers = append(trailers, [2]string{"Workshop-Task", task.ID})
@@ -563,7 +653,7 @@ func (w *Worker) fragment(rel string) string {
 	return readTrim(filepath.Join(w.cfg.PromptsDir, rel))
 }
 
-func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, spice prompt.Spice) (*os.File, error) {
+func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, res *resolved, spice prompt.Spice) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -573,7 +663,7 @@ func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, 
 	}
 	fmt.Fprintf(f, "=== ws(%s) iter %d ===\n", w.cfg.Pipeline.Name, pass.N)
 	fmt.Fprintf(f, "agent  : %s\nmodel  : %s\neffort : %s\n",
-		w.drv.Name(), w.cfg.Pipeline.Bundle.Model, w.cfg.Pipeline.Bundle.Effort)
+		res.drv.Name(), res.bundle.Model, res.bundle.Effort)
 	fmt.Fprintf(f, "task   : %s\nspice  : %s\nstarted: %s\n%s\n",
 		passTaskTitle(task), spice.Mode, pass.Started.Format(time.RFC3339), strings.Repeat("-", 72))
 	return f, nil

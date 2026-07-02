@@ -84,9 +84,11 @@ func New(name string) (Driver, error) {
 	switch name {
 	case "claude", "":
 		return NewClaude(), nil
+	case "agy":
+		return NewAgy(), nil
 	case "fake":
 		return NewFake(), nil
 	default:
-		return nil, fmt.Errorf("driver: unknown agent %q (available: claude, fake)", name)
+		return nil, fmt.Errorf("driver: unknown agent %q (available: claude, agy, fake)", name)
 	}
 }

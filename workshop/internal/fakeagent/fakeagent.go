@@ -42,8 +42,11 @@ type Scenario struct {
 // Main runs one fake pass; returns the process exit code.
 func Main() int {
 	// A real agent consumes the prompt; drain stdin so the parent's write
-	// never blocks.
-	_, _ = io.Copy(io.Discard, os.Stdin)
+	// never blocks — but only when stdin is actually a pipe. In blind
+	// (own-console) mode stdin is the console and reading it would hang.
+	if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice == 0 {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+	}
 
 	stateDir := os.Getenv("WORKSHOP_PASS_STATE_DIR")
 	repoDir := os.Getenv("WORKSHOP_PASS_REPO_DIR")
