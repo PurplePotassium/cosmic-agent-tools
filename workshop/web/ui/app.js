@@ -117,7 +117,9 @@ function AddTask({ pipelines, types, onAdd }) {
   };
   return html`<form class="addtask" onSubmit=${submit}>
     <div class="row">
-      <input name="title" placeholder="add a task…" value=${title} onInput=${(e) => setTitle(e.target.value)} />
+      <textarea name="title" placeholder="add a task…" value=${title}
+        onInput=${(e) => setTitle(e.target.value)}
+        onKeyDown=${(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(e); } }}></textarea>
     </div>
     <div class="row">
       <select value=${type} onChange=${(e) => setType(e.target.value)} title="task type (empty = auto-classified)">

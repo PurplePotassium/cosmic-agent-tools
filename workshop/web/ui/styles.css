@@ -196,7 +196,7 @@ code, .mono { font-family: ui-monospace, Consolas, monospace; }
 
 .addtask { display: flex; flex-direction: column; gap: 6px; }
 .addtask .row { display: flex; gap: 6px; }
-.addtask input[name=title] { flex: 1; }
+.addtask textarea[name=title] { flex: 1; min-height: 32px; }
 
 .completion { padding: 4px; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
 .completion:last-child { border-bottom: none; }
