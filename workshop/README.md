@@ -224,29 +224,6 @@ fully revert you.** Start bounded (`workshop run`), watch the first passes,
 and give `verify` real teeth — the gate is the whole safety story. The
 server binds 127.0.0.1 and is never safe to expose.
 
-## Migrating from the PowerShell workshop
-
-```
-workshop migrate --from C:\path\to\old\workshop
-```
-
-copies `GOAL.md`, your `PROMPT.md` edits (→ `prompts/project.md` — trim the
-boilerplate, the contract is built in), and imports `backlog.json` /
-`completions.json`. `workshop.config.ps1` knobs map onto `config.toml`
-(`Root` → run in the repo; `Branch` → `project.trunk`; `WedgeMinutes` →
-`safety.wedge_minutes`; `UiPort` → `server.port`; personas/nouns → `[spice]`;
-`-AgentExtraArgs` → per-pipeline `extra_args`; `-SleepSeconds` →
-`safety.sleep_seconds`). `agent.json` is superseded by the routing table,
-per-task pins, and the dashboard's live model switch.
-
-Behavior changes from the old tool worth knowing:
-
-- **Wedge handling**: the old loop only showed "wedged?" in the UI; v2
-  *kills* the pass at `wedge_minutes` and counts it as a failure.
-- **`RALPH_PASS`** is not exported anymore. Repo-side hooks that keyed on it
-  should use `WORKSHOP_PASS_N` (plus `WORKSHOP_PASS_STATE_DIR` /
-  `WORKSHOP_PASS_REPO_DIR`), which every agent process gets.
-
 ## Development
 
 ```
@@ -256,6 +233,7 @@ go test -tags e2e ./e2e   # end-to-end: builds the REAL binary, drives it agains
 go build ./cmd/workshop
 go vet ./...               # also runs in CI
 golangci-lint run ./...    # static analysis — see .golangci.yml (install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest)
+go install ./cmd/workshop        # installs current local source to your GOBIN
 ```
 
 No TypeScript tooling is set up: the project has no TS/JS build step by
