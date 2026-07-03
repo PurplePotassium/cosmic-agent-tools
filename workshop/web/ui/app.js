@@ -97,7 +97,7 @@ function GoalCard({ goal, onSave }) {
   useEffect(() => { if (!dirty) setText(goal); }, [goal]);
   return html`<div class="card">
     <h2>Goal <span class="muted">(.workshop/GOAL.md — versioned)</span></h2>
-    <textarea value=${text} onInput=${(e) => { setText(e.target.value); setDirty(true); }}></textarea>
+    <textarea rows="8" value=${text} onInput=${(e) => { setText(e.target.value); setDirty(true); }}></textarea>
     ${dirty && html`<div style="margin-top:6px; display:flex; gap:6px;">
       <button class="primary" onClick=${async () => { await onSave(text); setDirty(false); }}>save</button>
       <button onClick=${() => { setText(goal); setDirty(false); }}>discard</button>
@@ -159,7 +159,7 @@ function AddTask({ pipelines, types, onAdd }) {
   };
   return html`<form class="addtask" onSubmit=${submit}>
     <div class="row">
-      <textarea name="title" placeholder="add a task… (paste or attach an image below)" value=${title}
+      <textarea name="title" rows="8" placeholder="add a task… (paste or attach an image below)" value=${title}
         onInput=${(e) => setTitle(e.target.value)}
         onPaste=${onPaste}
         onKeyDown=${(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(e); } }}></textarea>
