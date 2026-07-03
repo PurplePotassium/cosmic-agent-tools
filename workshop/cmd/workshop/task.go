@@ -400,7 +400,7 @@ func taskRm(args []string) int {
 		return 2
 	}
 	defer a.Close()
-	if err := a.Store.DeleteTask(ctx, fs.Arg(0)); err != nil {
+	if err := a.DeleteTask(ctx, fs.Arg(0)); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}

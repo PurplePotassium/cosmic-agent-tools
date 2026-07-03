@@ -113,6 +113,34 @@ func (a *App) SaveAttachment(name, dataURL string) (string, error) {
 	return path, nil
 }
 
+// attachmentRefRe matches the markdown image lines SaveAttachment's callers
+// write into a task's detail, e.g. ![name](<StateDir>/attachments/xxx.png).
+var attachmentRefRe = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
+
+// DeleteTask removes a task and best-effort unlinks any attachment files its
+// detail text references. An attachment's only owner is that markdown line —
+// once the task is gone the file would otherwise sit under
+// <StateDir>/attachments forever, so failures to remove it are logged and
+// swallowed rather than failing the delete.
+func (a *App) DeleteTask(ctx context.Context, id string) error {
+	t, err := a.Store.GetTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := a.Store.DeleteTask(ctx, id); err != nil {
+		return err
+	}
+	dir := filepath.Join(a.StateDir, "attachments")
+	for _, m := range attachmentRefRe.FindAllStringSubmatch(t.Detail, -1) {
+		path := filepath.Clean(m[1])
+		if filepath.Dir(path) != dir {
+			continue
+		}
+		_ = os.Remove(path)
+	}
+	return nil
+}
+
 // SetPipelineDesired starts/stops one pipeline's loop live via the halt
 // machinery: an unbounded worker parks on halt and resumes when cleared.
 func (a *App) SetPipelineDesired(ctx context.Context, name string, running bool) error {

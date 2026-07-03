@@ -332,7 +332,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
-	if err := s.App.Store.DeleteTask(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.App.DeleteTask(r.Context(), r.PathValue("id")); err != nil {
 		httpErr(w, err, statusFor(err))
 		return
 	}
