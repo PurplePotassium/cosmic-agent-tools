@@ -6,6 +6,15 @@ import { api, subscribe } from "/api.js";
 const html = htm.bind(h);
 const SHARED = "shared";
 
+// Mirrors internal/prompt/compose.go's InventBlock — the instruction a pass
+// gets automatically when its backlog is empty and Invent is on. Queuing it
+// as a real task via the "invent" button gives operators the same choice
+// on demand, without waiting for a pipeline to go idle.
+const INVENT_TASK_TITLE = "Invent the next task toward the goal";
+const INVENT_TASK_DETAIL = "INVENT the single highest-impact task that moves the GOAL forward, " +
+  "then do exactly that one increment. Record what you chose in progress.json's task field. " +
+  "If the last few completions are all the same KIND of work, pick a different kind.";
+
 // ---------- helpers ----------
 
 const backlogLabel = (b) => (b === "" || b === SHARED ? SHARED : b);
@@ -387,7 +396,11 @@ function App() {
         <${Alerts} alerts=${alerts} dismiss=${(id) => setAlerts((a) => a.filter((x) => x.id !== id))} />
         <${GoalCard} goal=${goal} onSave=${async (text) => { await api.setGoal(text); setGoal(text); }} />
         <div class="card">
-          <h2>Add task</h2>
+          <h2>Add task
+            <button class="primary" style="margin-left:auto"
+              title="Queue a task that tells the AI to invent and complete the next highest-impact step toward the goal — the same choice a pipeline makes automatically when its backlog is empty, triggered on demand"
+              onClick=${() => act(() => api.addTask({ title: INVENT_TASK_TITLE, detail: INVENT_TASK_DETAIL }))}>invent</button>
+          </h2>
           <${AddTask} pipelines=${pipelines} types=${cfgTypes}
             onAdd=${(t) => act(() => api.addTask(t))} />
         </div>
