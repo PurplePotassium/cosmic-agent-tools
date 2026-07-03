@@ -25,7 +25,7 @@ workshop           # dashboard opens (pipelines start stopped); set the goal, ad
 ## Install
 
 - **From source** (Go 1.26+): `go install github.com/PurplePotassium/cosmic-agent-tools/workshop/cmd/workshop@latest`
-- **From source again**: go install ./cmd/workshop # from this project path
+- **From source again**: `go install ./cmd/workshop # from this project path`
 - **Release binaries**: download from GitHub Releases and drop on your PATH
   (`%LOCALAPPDATA%\Programs\workshop\` is a good spot on Windows).
 
