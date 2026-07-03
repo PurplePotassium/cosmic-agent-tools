@@ -177,6 +177,15 @@ function BacklogBoard({ tasks, pipelines, onTop, onMove, onDelete }) {
 const EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];
 const AGENTS = ["", "claude", "agy"];
 
+// MODEL_FAMILIES mirrors internal/domain's curated prefixes (ClaudeModels,
+// AgyModels) with one representative id per family, for the model datalist
+// below. Off-list ids remain typeable — config.Validate only warns on those,
+// it never blocks, as long as they're in [agents.<agent>] extra_models.
+const MODEL_FAMILIES = {
+  claude: ["claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"],
+  agy: ["gemini-3-flash"],
+};
+
 // BundleEditor is the live agent/model dial: it writes a store-backed
 // override the worker re-reads every pass, so the NEXT pass switches with no
 // restart (the successor of the old agent.json workflow).
@@ -185,11 +194,16 @@ function BundleEditor({ p, onApply, onClear, onClose }) {
   const [agent, setAgent] = useState(o.agent || "");
   const [model, setModel] = useState(o.model || "");
   const [effort, setEffort] = useState(o.effort || "");
+  const models = MODEL_FAMILIES[agent] || [];
+  const listId = `models-${p.name}`;
   return html`<div class="bundle-editor">
     <select value=${agent} onChange=${(e) => setAgent(e.target.value)} title="agent ('' = configured)">
       ${AGENTS.map((a) => html`<option value=${a}>${a || "agent (config)"}</option>`)}
     </select>
-    <input placeholder="model (agent default)" value=${model} onInput=${(e) => setModel(e.target.value)} />
+    <input list=${listId} placeholder="model (agent default)" value=${model} onInput=${(e) => setModel(e.target.value)} />
+    ${models.length > 0 && html`<datalist id=${listId}>
+      ${models.map((m) => html`<option value=${m} />`)}
+    </datalist>`}
     <select value=${effort} onChange=${(e) => setEffort(e.target.value)} title="effort ('' = default)">
       ${EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
     </select>
