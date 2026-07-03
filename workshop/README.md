@@ -215,6 +215,14 @@ override is stored, applied from the next pass on (no restart), marked with ⚡
 on the card, and cleared back to configured routing with one click. Per-task
 pins still beat it.
 
+The card's mode chip is the same kind of live dial, for `goal`/`discover`/
+`drain` (see the `mode` example in the pipeline-config sample above): picking
+a value from the dropdown stores a live override that workers re-read every
+pass, so it takes effect on the next pass with no restart and no config edit.
+It's separate from — and while set, takes priority over — the `mode` in
+`config.toml`; click the ✕ next to the chip to clear it and fall back to the
+configured mode.
+
 ## ⚠️ Unattended execution
 
 Agents run with `--dangerously-skip-permissions` by default
