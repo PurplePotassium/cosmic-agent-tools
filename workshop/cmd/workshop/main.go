@@ -282,7 +282,7 @@ func cmdStatus(args []string) int {
 		if p.LastPass != nil {
 			last = fmt.Sprintf("iter %d %s %s", p.LastPass.N, p.LastPass.Outcome, p.LastPass.CommitSHA)
 		}
-		fmt.Printf("pipeline %-12s %-8s agent=%s own-backlog=%d last=[%s]", p.Name, state, p.Agent, p.BacklogExclusive, last)
+		fmt.Printf("pipeline %-12s %-8s mode=%s agent=%s own-backlog=%d last=[%s]", p.Name, state, p.Mode, p.Agent, p.BacklogExclusive, last)
 		if p.Progress.Phase != "" {
 			fmt.Printf(" progress=%s(%ds ago)", p.Progress.Phase, p.ProgressAgeSec)
 		}
