@@ -179,6 +179,36 @@ func (p Pipeline) Mode() string {
 	}
 }
 
+// Modes is the ordered set of recognized pipeline modes.
+var Modes = []string{"goal", "discover", "drain"}
+
+// ValidMode reports whether m is empty (no override) or a recognized mode.
+func ValidMode(m string) bool {
+	if m == "" {
+		return true
+	}
+	for _, v := range Modes {
+		if m == v {
+			return true
+		}
+	}
+	return false
+}
+
+// ModeFlags is Mode's inverse: it converts a mode name to the
+// (Invent, AcceptProposals) flags it implies. Callers only call this for a
+// non-empty, ValidMode-checked m; there is no sensible flag pair for "".
+func ModeFlags(m string) (invent, acceptProposals bool) {
+	switch m {
+	case "goal":
+		return true, true
+	case "discover":
+		return false, true
+	default: // "drain"
+		return false, false
+	}
+}
+
 // HandlesType reports whether the pipeline claims tasks of type t from the
 // main backlog. Own-backlog tasks are always claimable regardless of type.
 func (p Pipeline) HandlesType(t string) bool {

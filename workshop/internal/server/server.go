@@ -364,14 +364,21 @@ func (s *Server) patchPipeline(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Desired *string        `json:"desired"` // "running" | "stopped"
 		Bundle  *domain.Bundle `json:"bundle"`  // live agent/model/effort override; {} clears
+		Mode    *string        `json:"mode"`    // live goal/discover/drain override; "" clears
 	}
-	if err := readBody(r, &body); err != nil || (body.Desired == nil && body.Bundle == nil) {
-		httpErr(w, fmt.Errorf(`body needs {"desired":"running"|"stopped"} and/or {"bundle":{agent,model,effort}}`), http.StatusBadRequest)
+	if err := readBody(r, &body); err != nil || (body.Desired == nil && body.Bundle == nil && body.Mode == nil) {
+		httpErr(w, fmt.Errorf(`body needs {"desired":"running"|"stopped"} and/or {"bundle":{agent,model,effort}} and/or {"mode":"goal"|"discover"|"drain"|""}`), http.StatusBadRequest)
 		return
 	}
 	name := r.PathValue("name")
 	if body.Bundle != nil {
 		if err := s.App.SetPipelineBundle(r.Context(), name, *body.Bundle); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	if body.Mode != nil {
+		if err := s.App.SetPipelineMode(r.Context(), name, *body.Mode); err != nil {
 			httpErr(w, err, http.StatusBadRequest)
 			return
 		}

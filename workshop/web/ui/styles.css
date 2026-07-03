@@ -101,6 +101,7 @@ code, .mono { font-family: ui-monospace, Consolas, monospace; }
 .chip.pin { color: var(--amber); border-color: #5c4a1d; }
 .chip.claimed { color: var(--accent); border-color: #2b4a7a; }
 .chip.stuck { color: var(--red); border-color: #6e2b2b; }
+select.chip { background: var(--bg); font: inherit; cursor: pointer; }
 
 .pill { border-radius: 6px; padding: 2px 8px; font-size: 0.75rem; font-weight: 600; }
 .pill.idle { background: #262c36; color: var(--dim); }

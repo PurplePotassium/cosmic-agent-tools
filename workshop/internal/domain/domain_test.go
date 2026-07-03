@@ -20,3 +20,34 @@ func TestPipelineMode(t *testing.T) {
 		}
 	}
 }
+
+// TestModeFlags pins ModeFlags as Mode's exact inverse, since the live
+// dashboard override round-trips a mode name back to flags.
+func TestModeFlags(t *testing.T) {
+	cases := []struct {
+		name            string
+		invent          bool
+		acceptProposals bool
+	}{
+		{"goal", true, true},
+		{"discover", false, true},
+		{"drain", false, false},
+	}
+	for _, c := range cases {
+		invent, acceptProposals := ModeFlags(c.name)
+		if invent != c.invent || acceptProposals != c.acceptProposals {
+			t.Errorf("ModeFlags(%q) = (%v, %v), want (%v, %v)", c.name, invent, acceptProposals, c.invent, c.acceptProposals)
+		}
+	}
+}
+
+func TestValidMode(t *testing.T) {
+	for _, m := range []string{"", "goal", "discover", "drain"} {
+		if !ValidMode(m) {
+			t.Errorf("ValidMode(%q) = false, want true", m)
+		}
+	}
+	if ValidMode("bogus") {
+		t.Error("ValidMode(\"bogus\") = true, want false")
+	}
+}

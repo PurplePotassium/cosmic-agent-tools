@@ -269,7 +269,11 @@ function BundleEditor({ p, onApply, onClear, onClose }) {
   </div>`;
 }
 
-function PipelineCard({ p, log, onDesired, onBundle }) {
+// MODES mirrors domain.Modes: goal invents idle work and accepts proposed
+// follow-ups; discover only accepts follow-ups; drain only drains the backlog.
+const MODES = ["goal", "discover", "drain"];
+
+function PipelineCard({ p, log, onDesired, onBundle, onMode }) {
   const [editBundle, setEditBundle] = useState(false);
   const running = !!p.running;
   const stopped = p.halted === "operator";
@@ -289,7 +293,11 @@ function PipelineCard({ p, log, onDesired, onBundle }) {
       ${pill}
       <span class="chip" title=${p.override ? "live override active — applies from the next pass" : "configured bundle"}>
         ${bundle}${p.override ? " ⚡" : ""}</span>
-      <span class="chip" title="invent/accept-proposals mode">${p.mode}</span>
+      <select class="chip" value=${p.mode} onChange=${(e) => onMode(p.name, e.target.value)}
+        title=${"invent/accept-proposals mode" + (p.modeOverride ? " — live override, applies from the next pass" : " — click to override the configured mode")}>
+        ${MODES.map((m) => html`<option value=${m}>${m}</option>`)}
+      </select>
+      ${p.modeOverride && html`<button title="clear override, back to the configured mode" onClick=${() => onMode(p.name, "")}>✕</button>`}
       ${p.backlogExclusive > 0 && html`<span class="chip">own backlog: ${p.backlogExclusive}</span>`}
       <span class="spacer"></span>
       <button title="switch agent/model for the next pass" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
@@ -484,7 +492,8 @@ function App() {
       <div>
         ${pipelines.map((p) => html`<${PipelineCard} key=${p.name} p=${p}
           log=${logs[p.name]} onDesired=${(name, desired) => act(() => api.setPipeline(name, desired))}
-          onBundle=${(name, bundle) => act(() => api.setPipelineBundle(name, bundle))} />`)}
+          onBundle=${(name, bundle) => act(() => api.setPipelineBundle(name, bundle))}
+          onMode=${(name, mode) => act(() => api.setPipelineMode(name, mode))} />`)}
         ${pipelines.length === 0 && html`<div class="card muted">no pipelines configured</div>`}
       </div>
       <div>

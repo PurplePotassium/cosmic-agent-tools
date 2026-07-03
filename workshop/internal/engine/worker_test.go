@@ -534,3 +534,59 @@ func TestLiveBundleOverrideAppliesNextPass(t *testing.T) {
 		t.Fatalf("override not cleared: %+v err=%v", b, err)
 	}
 }
+
+// TestLiveModeOverrideAppliesNextPass is the mode dial's counterpart to
+// TestLiveBundleOverrideAppliesNextPass: a dashboard-set goal/discover/drain
+// override must flip Invent and AcceptProposals on the very next pass, no
+// restart, and clearing it must restore the configured mode.
+func TestLiveModeOverrideAppliesNextPass(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", Proposals: []domain.Proposal{
+		{Title: "shiny idea", Type: "code"},
+	}}, func(cfg *WorkerConfig) {
+		cfg.Pipeline.Invent = false
+		cfg.Pipeline.AcceptProposals = false // configured "drain"
+	})
+	ctx := context.Background()
+
+	// Empty backlog + configured drain => idle, no agent spawned.
+	if res, err := r.worker.RunPass(ctx); err != nil || res != PassIdle {
+		t.Fatalf("pass 1 (configured drain): res=%v err=%v", res, err)
+	}
+
+	if err := r.st.SetPipelineMode(ctx, "main", "goal"); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := r.worker.RunPass(ctx); err != nil || res != PassRan {
+		t.Fatalf("pass 2 (live goal override): res=%v err=%v", res, err)
+	}
+	comps, _ := r.st.ListCompletions(ctx, 5)
+	if len(comps) != 1 || !strings.Contains(comps[0].Title, "invented") {
+		t.Fatalf("goal override should invent: completions=%+v", comps)
+	}
+	open, _ := r.st.ListTasks(ctx, store.TaskFilter{Statuses: []domain.TaskStatus{domain.TaskOpen}})
+	var proposed *domain.Task
+	for _, task := range open {
+		if task.Title == "shiny idea" {
+			proposed = task
+		}
+	}
+	if proposed == nil {
+		t.Fatalf("goal override should also accept proposals: %+v", open)
+	}
+	// Remove the ingested proposal so pass 3's backlog is genuinely empty —
+	// otherwise the drain fallback would still claim it and run.
+	if err := r.st.DeleteTask(ctx, proposed.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Clearing restores the configured (drain) mode.
+	if err := r.st.SetPipelineMode(ctx, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	if mode, err := r.st.PipelineMode(ctx, "main"); err != nil || mode != "" {
+		t.Fatalf("override not cleared: %q err=%v", mode, err)
+	}
+	if res, err := r.worker.RunPass(ctx); err != nil || res != PassIdle {
+		t.Fatalf("pass 3 (cleared, back to configured drain): res=%v err=%v", res, err)
+	}
+}

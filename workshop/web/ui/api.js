@@ -54,6 +54,9 @@ export const api = {
   // Live agent/model/effort override for the pipeline's NEXT pass; an empty
   // bundle {} clears it back to the configured routing.
   setPipelineBundle: (name, bundle) => req("PATCH", `/api/v1/pipelines/${name}`, { bundle }),
+  // Live goal/discover/drain override for the pipeline's NEXT pass; an empty
+  // mode "" clears it back to the configured mode.
+  setPipelineMode: (name, mode) => req("PATCH", `/api/v1/pipelines/${name}`, { mode }),
   // haltServer kills every in-flight pass right now but leaves the server
   // (and every parked pipeline's ability to be resumed later) alive.
   haltServer: () => req("POST", "/api/v1/server/halt", {}),

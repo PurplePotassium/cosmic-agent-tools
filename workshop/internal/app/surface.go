@@ -175,6 +175,31 @@ func (a *App) SetPipelineBundle(ctx context.Context, name string, b domain.Bundl
 	return nil
 }
 
+// SetPipelineMode sets (or, for "", clears) the live goal/discover/drain
+// mode override for a pipeline. Workers re-read it every pass, so it takes
+// effect on the NEXT pass without a restart or a config edit.
+func (a *App) SetPipelineMode(ctx context.Context, name, mode string) error {
+	found := false
+	for _, p := range a.Res.Config.ResolvedPipelines() {
+		if p.Name == name {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("no pipeline named %q", name)
+	}
+	if !domain.ValidMode(mode) {
+		return fmt.Errorf("mode %q is not one of %v", mode, domain.Modes)
+	}
+	if err := a.Store.SetPipelineMode(ctx, name, mode); err != nil {
+		return err
+	}
+	a.Bus.Publish(ctx, domain.Event{Type: "pipeline.mode", Pipeline: name, Payload: map[string]any{
+		"mode": mode, "cleared": mode == "",
+	}})
+	return nil
+}
+
 // QueueLane is one lane's merge-queue view.
 type QueueLane struct {
 	Pipeline       string `json:"pipeline"`

@@ -365,7 +365,8 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 // the raw override when one is active.
 type PipelineStatus struct {
 	Name            string          `json:"name"`
-	Mode            string          `json:"mode"` // goal | discover | drain — see domain.Pipeline.Mode
+	Mode            string          `json:"mode"` // EFFECTIVE goal | discover | drain — config with any live override applied
+	ModeOverride    string          `json:"modeOverride,omitempty"` // raw override when one is active
 	Enabled         bool            `json:"enabled"`
 	Agent           string          `json:"agent"`
 	Model           string          `json:"model,omitempty"`
@@ -409,8 +410,13 @@ func (a *App) Snapshot(ctx context.Context) (*Status, error) {
 	for _, p := range a.Res.Config.ResolvedPipelines() {
 		override, _ := a.Store.PipelineBundle(ctx, p.Name)
 		eff := route.Effective(override, p.Bundle)
+		mode := p.Mode()
+		modeOverride, _ := a.Store.PipelineMode(ctx, p.Name)
+		if modeOverride != "" {
+			mode = modeOverride
+		}
 		ps := PipelineStatus{
-			Name: p.Name, Mode: p.Mode(), Enabled: p.Enabled,
+			Name: p.Name, Mode: mode, ModeOverride: modeOverride, Enabled: p.Enabled,
 			Agent: eff.Agent, Model: eff.Model, Effort: eff.Effort,
 			BacklogExclusive: counts[p.Name],
 		}

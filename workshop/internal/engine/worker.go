@@ -140,6 +140,19 @@ func NewWorker(cfg WorkerConfig, st *store.Store, b *bus.Bus) *Worker {
 	return &Worker{cfg: cfg, drivers: map[string]driver.Driver{}, st: st, bl: backlog.New(st), bus: b}
 }
 
+// modeFlags resolves (Invent, AcceptProposals) for this pass: the live
+// dashboard override when one is set, else the configured pipeline mode.
+// Re-read every pass so an operator's mode change takes effect on the very
+// next pass, no restart required — the mode counterpart of resolve's bundle
+// override.
+func (w *Worker) modeFlags(ctx context.Context) (invent, acceptProposals bool) {
+	mode, _ := w.st.PipelineMode(ctx, w.cfg.Pipeline.Name)
+	if mode == "" {
+		return w.cfg.Pipeline.Invent, w.cfg.Pipeline.AcceptProposals
+	}
+	return domain.ModeFlags(mode)
+}
+
 // resolved is one pass's routing outcome.
 type resolved struct {
 	bundle domain.Bundle
@@ -299,7 +312,8 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 	if err != nil {
 		return PassIdle, fmt.Errorf("engine: claim: %w", err)
 	}
-	if task == nil && !w.cfg.Pipeline.Invent {
+	invent, _ := w.modeFlags(ctx)
+	if task == nil && !invent {
 		return PassIdle, nil
 	}
 
@@ -622,7 +636,7 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 		})
 	}
 
-	if w.cfg.Pipeline.AcceptProposals {
+	if _, acceptProposals := w.modeFlags(ctx); acceptProposals {
 		if added, err := w.bl.Ingest(ctx, name, statedir.ReadProposals(w.cfg.StateDir), w.cfg.KnownPipelines, 2); err == nil {
 			for _, t := range added {
 				w.event(ctx, "task.created", name, pass.ID, map[string]any{"task": t.ID, "title": t.Title, "origin": "agent"})

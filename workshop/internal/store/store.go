@@ -213,6 +213,28 @@ func (s *Store) SetPipelineBundle(ctx context.Context, pipeline string, b domain
 	return s.SetKV(ctx, key, string(data))
 }
 
+// PipelineMode returns the live goal/discover/drain mode override for a
+// pipeline ("" when unset, meaning "use the configured mode"). Like
+// PipelineBundle, this is operator dial, not config — it takes effect
+// without a restart and is re-read every pass.
+func (s *Store) PipelineMode(ctx context.Context, pipeline string) (string, error) {
+	v, err := s.GetKV(ctx, "mode."+pipeline)
+	if errors.Is(err, ErrNotFound) {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetPipelineMode stores the live mode override; "" clears it.
+func (s *Store) SetPipelineMode(ctx context.Context, pipeline, mode string) error {
+	key := "mode." + pipeline
+	if mode == "" {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM kv WHERE k = ?`, key)
+		return err
+	}
+	return s.SetKV(ctx, key, mode)
+}
+
 // GetKV reads a kv value; ErrNotFound when absent.
 func (s *Store) GetKV(ctx context.Context, key string) (string, error) {
 	var v string
