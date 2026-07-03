@@ -229,7 +229,11 @@ func (a *App) resolvePool(nameOrPath string) string {
 // RunHeadless drives every enabled pipeline (concurrently, with worktrees +
 // the merge queue when enabled) until the iteration bound, drain, or ctx
 // cancel. It is the engine behind both `workshop run` and `workshop up`.
-func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained bool) error {
+//
+// When startStopped is set (the `up` default), every enabled pipeline is
+// parked (operator-halted) before any worker starts, so the server + dashboard
+// come up but nothing runs until the operator resumes a pipeline.
+func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, startStopped bool) error {
 	pipelines := a.EnabledPipelines()
 	if len(pipelines) == 0 {
 		return fmt.Errorf("no enabled pipelines")
@@ -248,6 +252,17 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained bool
 	_, _ = a.Store.CleanupOrphanPasses(ctx)
 	// Cap the append-only tables; an always-on loop grows them unboundedly.
 	_ = a.Store.Prune(ctx, 20000, 5000)
+	// Come up parked: seed the operator halt under the engine lock, before
+	// any worker starts, so each worker's first-pass HaltedReason check sees
+	// it and parks. Uses the same "operator" reason the dashboard's resume
+	// button clears (see SetPipelineDesired).
+	if startStopped {
+		for _, p := range pipelines {
+			if err := a.Store.SetHalted(ctx, p.Name, "operator"); err != nil {
+				return err
+			}
+		}
+	}
 	cfg := a.Res.Config
 
 	trunk := cfg.Project.Trunk

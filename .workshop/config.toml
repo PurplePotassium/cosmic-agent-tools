@@ -1,0 +1,32 @@
+# Workshop self-hosting: workshop edits workshop.
+#
+# THE GATE is the whole safety story here. It builds the binary, runs the
+# unit/integration suite, and then drives the freshly built binary end-to-end
+# against scaffolded repos (workshop/e2e) — so a green pass means the
+# orchestrator itself still works, not just its packages.
+#
+# Port 4456 so this instance never contends with a default-port (4455)
+# workshop running against another repo on this machine.
+
+[project]
+name       = "workshop-self"
+trunk      = "main"
+verify     = "go build ./cmd/workshop && go test ./... && go test -tags e2e ./e2e"
+verify_dir = "workshop"
+
+[safety]
+breaker_failures = 3
+wedge_minutes    = 45   # the gate runs the full suite inside the pass budget
+
+[server]
+port = 4456
+
+[types.code]
+agent  = "claude"
+effort = "high"
+
+[[pipelines]]
+name   = "main"
+agent  = "claude"
+effort = "high"
+invent = false   # self-editing stays on the curated backlog only

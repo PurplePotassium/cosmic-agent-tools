@@ -17,7 +17,7 @@ and merge conflicts can be resolved by an agent you route them to.
 ```
 cd your-repo
 workshop init      # optional — scaffolds .workshop/ (config + GOAL)
-workshop           # dashboard opens; set the goal, add tasks, watch it work
+workshop           # dashboard opens (pipelines start stopped); set the goal, add tasks, press resume
 ```
 
 ---
@@ -50,7 +50,7 @@ update` commits, so goal history is project history.
 ## Commands
 
 ```
-workshop            start server + pipelines in the foreground (Ctrl+C stops everything)
+workshop            start server + dashboard; pipelines start STOPPED — resume to run (--start-running to auto-run; Ctrl+C exits)
 workshop init       scaffold .workshop/  (--game for gamedev spice pools, --pipelines a,b)
 workshop run        headless bounded run: --iterations N (default 3), --until-drained, --timeout 45m
 workshop task       add | list | tag | pin | mv | rm     (see below)
@@ -110,6 +110,11 @@ sleep_seconds    = 0         # pause between passes of one pipeline
 [spice]                      # anti-circling: a persona/word-prime per pass
 personas = "gamedev"         # general | gamedev | path/to/pool.txt
 nouns    = "gamedev"
+
+[server]                     # the `workshop up` / dashboard experience only
+start_stopped = true         # come up with every pipeline stopped; resume from the dashboard
+                             # (default true; `up --start-running` overrides for one launch)
+open_browser  = true         # open the dashboard on launch (default true)
 
 # ---- task-type routing: type -> {agent, model, effort} --------------------
 # Precedence per task: pin > live dashboard override > this table > pipeline
@@ -188,6 +193,11 @@ claude; the agent's own progress report for blind drivers, which is all that
 exists) · merge queue, activity feed, and alert banners (auth halts, breaker
 trips, wedge kills, suspected agy auth loss).
 
+Pipelines come up **stopped** by default — each card shows a **resume** button
+and nothing runs until you press it, so you can review the goal and backlog
+first. Set `[server] start_stopped = false` (or launch `workshop up
+--start-running`) to auto-run on launch instead.
+
 Each pipeline card's ⚙ button switches agent/model/effort **live**: the
 override is stored, applied from the next pass on (no restart), marked with ⚡
 on the card, and cleared back to configured routing with one click. Per-task
@@ -229,9 +239,33 @@ Behavior changes from the old tool worth knowing:
 
 ```
 cd workshop
-go test ./...        # unit + integration (spawns real git repos + a scripted fake agent)
+go test ./...             # unit + integration (spawns real git repos + a scripted fake agent)
+go test -tags e2e ./e2e   # end-to-end: builds the REAL binary, drives it against scaffolded repos
 go build ./cmd/workshop
 ```
+
+The `e2e` suite is the orchestrator-level proof: it builds `cmd/workshop`,
+scaffolds throwaway git repos with `.workshop/` configs routed to the fake
+driver, seeds backlogs through the CLI, runs bounded `workshop run`s (single
+pipeline, and two worktree lanes through the merge queue), and asserts on the
+resulting git history and `workshop status --json`. It is hermetic — temp
+state dirs, temp git identity, no real agents — so it's safe to run while a
+live workshop instance is using this machine.
+
+### Self-hosting (workshop editing workshop)
+
+This repo carries its own `.workshop/` so Workshop can work on itself. Rules
+that keep that sane:
+
+- The **running binary and the edited source are different artifacts** — a
+  green gate proves the new source builds, tests, and drives end-to-end, but
+  you are always running an older build. **Adopt in small batches**: every few
+  landed commits, stop the instance, `go build ./cmd/workshop`, replace the
+  binary on PATH, and smoke it on a scratch repo before trusting it.
+- Never `go install` over a binary a running instance is using (Windows locks
+  it); stop that instance first.
+- Review `workshop:` config commits and any test-file diffs with extra
+  suspicion — the loop edits the code AND the tests that define "passing".
 
 The dashboard is buildless on purpose: vendored Preact+HTM as native ES
 modules under `web/ui/`, embedded via `go:embed`. Agent-driver behavior facts

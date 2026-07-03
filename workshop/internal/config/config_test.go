@@ -29,6 +29,9 @@ func TestDefaultsAloneWork(t *testing.T) {
 	if res.Config.Server.Port != 4455 {
 		t.Fatalf("port = %d", res.Config.Server.Port)
 	}
+	if !res.Config.Server.StartStopped {
+		t.Fatal("start_stopped should default to true")
+	}
 	pl := res.Config.ResolvedPipelines()
 	if len(pl) != 1 || pl[0].Name != DefaultPipelineName || !pl[0].DrainMain || !pl[0].Enabled || !pl[0].Invent {
 		t.Fatalf("implicit pipeline wrong: %+v", pl)
@@ -212,6 +215,29 @@ effort = "gigantic"
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings missing %q:\n%s", want, joined)
 		}
+	}
+}
+
+func TestStartStoppedLayering(t *testing.T) {
+	dir := t.TempDir()
+	// A layer that sets other [server] keys but omits start_stopped must not
+	// flip the default-true bool to false (the classic default-true footgun).
+	repo := writeFile(t, dir, "repo.toml", "[server]\nport = 6000\n")
+	res, err := Load("", repo, "", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Config.Server.StartStopped {
+		t.Fatal("start_stopped lost when [server] set only other keys")
+	}
+	// An explicit false is honored.
+	off := writeFile(t, dir, "off.toml", "[server]\nstart_stopped = false\n")
+	res, err = Load("", off, "", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Config.Server.StartStopped {
+		t.Fatal("start_stopped = false not honored")
 	}
 }
 

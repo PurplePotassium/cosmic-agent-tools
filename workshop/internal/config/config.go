@@ -81,6 +81,10 @@ type PipelineConfig struct {
 type ServerConfig struct {
 	Port        int  `toml:"port"` // binds 127.0.0.1 only — by design, not configurable
 	OpenBrowser bool `toml:"open_browser"`
+	// StartStopped launches `up` with every pipeline parked (operator-halted)
+	// so nothing runs until you resume it from the dashboard. Only affects
+	// `up`; `run` (headless CI) ignores it.
+	StartStopped bool `toml:"start_stopped"`
 }
 
 type AgentConfig struct {
@@ -108,7 +112,7 @@ func Default() Config {
 		Types: map[string]domain.Bundle{
 			"code": {}, "tests": {}, "docs": {}, "art": {}, "audio": {}, "merge-conflict": {},
 		},
-		Server:     ServerConfig{Port: 4455, OpenBrowser: true},
+		Server:     ServerConfig{Port: 4455, OpenBrowser: true, StartStopped: true},
 		Agents:     map[string]AgentConfig{},
 	}
 }

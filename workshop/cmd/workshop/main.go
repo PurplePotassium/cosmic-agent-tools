@@ -128,7 +128,7 @@ func cmdRun(args []string) int {
 	}
 	defer a.Close()
 
-	err = a.RunHeadless(ctx, *iterations, *untilDrained)
+	err = a.RunHeadless(ctx, *iterations, *untilDrained, false)
 	switch {
 	case err == nil:
 		fmt.Println("run complete")
@@ -150,6 +150,7 @@ func cmdUp(args []string) int {
 	repo := fs.String("repo", "", "repository path (default: enclosing repo of cwd)")
 	port := fs.Int("port", 0, "port override (default: config server.port)")
 	noOpen := fs.Bool("no-open", false, "don't open the browser")
+	startRunning := fs.Bool("start-running", false, "start pipelines running immediately (overrides server.start_stopped)")
 	_ = fs.Parse(args)
 
 	ctx, cancel := interruptCtx()
@@ -202,10 +203,15 @@ func cmdUp(args []string) int {
 	for _, p := range pipelines {
 		fmt.Printf(" %s(%s)", p.Name, p.Bundle.Agent)
 	}
-	fmt.Println("\n  Ctrl+C stops the loop and kills any in-flight pass.")
+	startStopped := a.Res.Config.Server.StartStopped && !*startRunning
+	if startStopped {
+		fmt.Println("\n  pipelines start stopped — resume them from the dashboard (or launch with --start-running).")
+	} else {
+		fmt.Println("\n  Ctrl+C stops the loop and kills any in-flight pass.")
+	}
 
 	loopDone := make(chan error, 1)
-	go func() { loopDone <- a.RunHeadless(ctx, a.Res.Config.Safety.MaxIterations, false) }()
+	go func() { loopDone <- a.RunHeadless(ctx, a.Res.Config.Safety.MaxIterations, false, startStopped) }()
 
 	if !*noOpen && a.Res.Config.Server.OpenBrowser {
 		openBrowser(url + "#token=" + srv.Token())
@@ -265,7 +271,9 @@ func cmdStatus(args []string) int {
 	fmt.Printf("repo:   %s\nserver: %v\nshared backlog: %d open\n", snap.Repo, serverUp, snap.SharedBacklog)
 	for _, p := range snap.Pipelines {
 		state := "idle"
-		if p.Halted != "" {
+		if p.Halted == "operator" {
+			state = "stopped"
+		} else if p.Halted != "" {
 			state = "HALTED(" + p.Halted + ")"
 		}
 		last := "-"
