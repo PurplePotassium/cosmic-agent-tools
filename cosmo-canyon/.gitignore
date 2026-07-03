@@ -1,0 +1,65 @@
+# Cosmo Canyon — commit durable control state; ignore runtime markers, logs, snapshots, generated.
+# Durable (COMMITTED): backlog.json suggestions.json rejected.json accepted.md completions.json
+
+# Runtime markers / counters (rebuilt from disk each tick; never source of truth across machines)
+control/status.json
+control/progress.json
+control/.paused
+control/.authority-consumed
+control/.lastaudit
+control/.tick.json
+control/.agy.pid
+control/.usage-*.json
+control/runid.txt
+control/.guard-alert
+control/.stalled
+control/.supervisor.pid
+control/.agy-strikes
+control/.agy-cooldown
+control/.plan-latch.json
+control/.plan-input.json
+control/.plan-result.json
+control/.tick-stats.json
+control/locks/
+
+# §15 runtime paths (claims, active tasks, asset history/trash, host mutex, latches, per-agent agy pids)
+# — rebuilt from disk; NEVER cleaned/committed. Land BEFORE any §15 endpoint/tick writes them (§15i 15.46)
+# so `clean -fd cosmo-canyon` can't wipe live runtime + a restart doesn't see a spuriously-dirty tree.
+control/claims/
+control/active.json
+control/assets/*/history/
+control/.trash/
+control/.cc-host.lock
+control/.authority-settle
+control/.authority-known-good
+control/spec-doc.md
+control/spec-index.json
+control/.asset-scan-latch.json
+control/.agy-*.pid
+control/.derive-cfg-*.json
+control/.needs-human
+control/.unsure.json
+# merge.mjs single-committer runtime markers (§15g phase 8) — written into the audited tree before every
+# runBookkeep; MUST be ignored or bookkeep's tree-wide scope guard flags them out-of-scope = spurious revert.
+control/.merge-tick.json
+control/.merge-regate-fails.json
+
+# §15 durable AUTHORITY — MUST stay committable (never ignored). No broad rule ignores these today; these
+# negations are belt-and-suspenders so a future `control/*`-style rule can't accidentally shadow the
+# authority (§15i 15.46/15.40). config.json = serial/parallel + authority; assets.json = derived index;
+# assets/<id>/meta.json = per-asset authority. Force-add if a broad rule is ever added upstream.
+!control/config.json
+!control/assets.json
+!control/assets/*/meta.json
+
+# Host + per-pass logs, auto-snapshots
+logs/
+snapshots/
+
+# Generated game — its OWN nested git repo, rebuilt/rewritten every tick. NEVER tracked by the
+# parent tool repo (cosmic-agent-tools). Was previously ignored by the C:\Vibes parent .gitignore;
+# that rule doesn't apply here, so ignore it locally.
+game/
+
+# Node deps (none at the cosmo-canyon root today; guard against accidental commits)
+node_modules/

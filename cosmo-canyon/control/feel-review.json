@@ -1,0 +1,47 @@
+[
+  {
+    "beadId": "asset-a-mr3i53a3-8s3b-r2",
+    "assetId": "a-mr3i53a3-8s3b",
+    "title": "Asset settings_menu_design.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 2,
+    "at": "2026-07-02T13:36:04.664Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr40b8b1-6r2a-r2",
+    "assetId": "a-mr40b8b1-6r2a",
+    "title": "Asset charselect_screen.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 2,
+    "at": "2026-07-02T21:43:48.184Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr40b8b1-6r2a-r3",
+    "assetId": "a-mr40b8b1-6r2a",
+    "title": "Asset charselect_screen.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 3,
+    "at": "2026-07-02T22:02:47.962Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr40b8b1-6r2a-r4",
+    "assetId": "a-mr40b8b1-6r2a",
+    "title": "Asset charselect_screen.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 4,
+    "at": "2026-07-03T04:59:00.128Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr32beju-d0l0-r14",
+    "assetId": "a-mr32beju-d0l0",
+    "title": "Asset ui_mainmenu.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 14,
+    "at": "2026-07-03T05:56:54.623Z",
+    "confirmed": false
+  }
+]

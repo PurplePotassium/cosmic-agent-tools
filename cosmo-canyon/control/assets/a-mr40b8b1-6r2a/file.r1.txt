@@ -1,0 +1,20 @@
+Character-select screen (a new screen, e.g. render/charselect.ts, reachable from the main-menu / boot flow). A night-canyon scene where the player picks one of three characters gathered around a campfire, then confirms with a Select button. PLACEHOLDER art + copy are fine — this is a first pass intended to grow into the run start.
+
+SCENE / LAYOUT:
+- Background: getTexture('ui.charsel_bg') fills the screen.
+- A campfire sits at screen CENTER: getTexture('fx.charsel_campfire') — an ANIMATED 4-frame flipbook (8fps) that FLICKERS continuously (loop the frames).
+- THREE characters stand AROUND the campfire: getTexture('player.charsel_a') to the lower-left, getTexture('player.charsel_b') upper-center behind the fire, getTexture('player.charsel_c') to the lower-right. Each roughly faces the fire.
+
+INTERACTION:
+- Each character sprite is CLICKABLE (pointerdown hit-test against its sprite bounds). Clicking a character SELECTS it: visibly highlight the selected one (e.g. an outline or a small scale-up) and de-highlight the others.
+- Selecting a character opens/updates an INFO PANEL (code-drawn box, no new texture needed) showing that character's NAME + a short placeholder description. Placeholder copy: A = "Warrior — sturdy melee bruiser", B = "Ranger — nimble ranged attacker", C = "Mage — fragile burst caster". Clicking a different character switches the selection and the panel.
+
+SELECT BUTTON:
+- A 'SELECT' button (code-drawn rectangle + label, no new texture needed) near the bottom-center.
+- It starts DISABLED (greyed out, non-interactive) while nothing is selected. Once a character is selected it becomes ENABLED and pressable.
+- Pressing SELECT does NOTHING yet — it is a PLACEHOLDER intended to later transition into gameplay. Leave a clearly-marked hook/TODO, e.g. a function onSelectConfirmed(selectedCharId) that is called on press and currently just logs / no-ops, so the gameplay transition can be wired in later.
+
+CONSTRAINTS:
+- This is a UI / feel / layout screen VERIFIED VISUALLY (no sim test).
+- Any animation (campfire flicker, highlight pulse) MUST use the frame counter / seeded Rng — NEVER Math.random / Date.now / performance.now / requestAnimationFrame in sim code (sim-purity gate).
+- Do NOT edit game/test/** or game/accept/**.

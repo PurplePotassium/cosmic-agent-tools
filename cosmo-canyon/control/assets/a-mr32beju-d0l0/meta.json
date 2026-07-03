@@ -1,0 +1,41 @@
+{
+  "id": "a-mr32beju-d0l0",
+  "kind": "spec",
+  "filename": "ui_mainmenu.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:04dcd0a786231b52478db6df47d7b3bc531f69ffa3a336c8afceb65d9825e369",
+  "instructions": "Main menu shown on boot. Title 'Realm Survivors' at the top; Play, Shop, and Settings buttons stacked and centered vertically. Play goes to character select; Settings opens the settings menu; Shop opens the shop. (render/mainmenu.ts.)",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr32beju-d0l0-r14",
+    "sha": "0b5bec0e58975e088a1f22d2800745e5dd015bb1",
+    "contentHash": "sha256:04dcd0a786231b52478db6df47d7b3bc531f69ffa3a336c8afceb65d9825e369",
+    "rev": 14
+  },
+  "implementedContentHash": "sha256:04dcd0a786231b52478db6df47d7b3bc531f69ffa3a336c8afceb65d9825e369",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr32beju-d0l0-r14",
+    "rev": 14,
+    "by": "agent",
+    "at": "2026-07-03T06:00:28.072Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-02T05:27:03.018Z",
+  "updated": "2026-07-03T06:00:28.073Z",
+  "rev": 14
+}

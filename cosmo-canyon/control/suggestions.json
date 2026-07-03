@@ -1,0 +1,18 @@
+[
+  {
+    "id": "cc-0001",
+    "title": "Shop screen scope: button.shop exists but no Ready spec authorizes a shop",
+    "body": "Ready asset button.shop (a-mr32a33t-01gk, key=button.shop, instructions 'Found in the main menu') is authority, but the only Ready SPEC is ui_mainmenu.txt = 'Game starts with the main menu'. No Ready spec defines what the shop button DOES (open a shop screen, what it sells, currency, persistence). Authoring impl beads for shop behavior now would be building un-specced design (planner forbids inventing content the Ready specs don't authorize). RECOMMEND: author a Ready shop spec asset (e.g. ui_shop.txt) in the Asset Browser describing the shop screen + open-from-menu behavior, OR remove button.",
+    "kind": "design",
+    "created": "2026-07-02T09:17:13.269Z",
+    "status": "open"
+  },
+  {
+    "id": "cc-0001",
+    "title": "Reclassify ui_mainmenu.txt acceptance: sim -> render/feel (operator FEEL-REVIEW)",
+    "body": "Blocked bead asset-a-mr32beju-d0l0-r8 (spec ui_mainmenu.txt = 'Game starts with the main menu') carries acceptanceKind='sim' + graderNeedsConfirm=true, but the behavior is a boot/RENDER concern (MainMenuUI shown at boot in main.ts), NOT reachable through the headless sim snapshot. A sim grader cannot assert it (tautological/impossible -> rejected by the 15.15/15.17 mutation check). Per 15c the correct path is the human-gated FEEL-REVIEW queue (snapshot + advisory critic, operator confirm flips Implemented) — a model/planner never lands this green. Planner cannot change acceptanceKind via a typ",
+    "kind": "design",
+    "created": "2026-07-02T09:24:08.683Z",
+    "status": "open"
+  }
+]
