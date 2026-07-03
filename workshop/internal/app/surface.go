@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,6 +64,53 @@ func (a *App) SetFragment(name, content string) error {
 		return err
 	}
 	return statedir.WriteFileAtomic(path, []byte(content))
+}
+
+var imageDataURLRe = regexp.MustCompile(`^data:image/(png|jpe?g|gif|webp);base64,(.+)$`)
+
+// attachmentNameRe strips everything but a conservative filename charset —
+// the value comes straight from a browser File object, so treat it as
+// untrusted path input.
+var attachmentNameRe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+// SaveAttachment decodes a pasted/attached image (a data: URL, as produced by
+// FileReader.readAsDataURL) and writes it under <StateDir>/attachments with
+// a random-prefixed name. It returns the absolute path so a task's detail
+// can reference it directly — the next pass's Read tool can open an image
+// by path, no separate image-serving route needed.
+func (a *App) SaveAttachment(name, dataURL string) (string, error) {
+	m := imageDataURLRe.FindStringSubmatch(dataURL)
+	if m == nil {
+		return "", fmt.Errorf("attachment must be a base64 image data URL (png/jpeg/gif/webp)")
+	}
+	raw, err := base64.StdEncoding.DecodeString(m[2])
+	if err != nil {
+		return "", fmt.Errorf("invalid base64 attachment data: %w", err)
+	}
+	dir := filepath.Join(a.StateDir, "attachments")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	base := attachmentNameRe.ReplaceAllString(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)), "-")
+	if base == "" {
+		base = "image"
+	}
+	if len(base) > 40 {
+		base = base[:40]
+	}
+	prefix := make([]byte, 8)
+	if _, err := rand.Read(prefix); err != nil {
+		return "", err
+	}
+	ext := strings.ToLower(m[1])
+	if ext == "jpg" {
+		ext = "jpeg"
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%s-%s.%s", hex.EncodeToString(prefix), base, ext))
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // SetPipelineDesired starts/stops one pipeline's loop live via the halt

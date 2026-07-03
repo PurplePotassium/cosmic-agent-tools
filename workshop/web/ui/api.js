@@ -41,6 +41,9 @@ export const api = {
   setGoal: (goal) => req("PUT", "/api/v1/goal", { goal }),
   tasks: () => req("GET", "/api/v1/tasks"),
   addTask: (t) => req("POST", "/api/v1/tasks", t),
+  // uploadAttachment saves a pasted/attached image ahead of task creation and
+  // returns its absolute path, for embedding in the task's detail.
+  uploadAttachment: (name, dataUrl) => req("POST", "/api/v1/tasks/attachments", { name, dataUrl }),
   patchTask: (id, patch) => req("PATCH", `/api/v1/tasks/${id}`, patch),
   deleteTask: (id) => req("DELETE", `/api/v1/tasks/${id}`),
   reorder: (backlog, ids) => req("POST", "/api/v1/tasks/reorder", { backlog, ids }),

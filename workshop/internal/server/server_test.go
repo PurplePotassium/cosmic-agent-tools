@@ -1,8 +1,12 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,5 +79,56 @@ func TestTokenHeaderOnly(t *testing.T) {
 	}
 	if s.authorized(httptest.NewRequest("POST", "http://127.0.0.1/api/v1/tasks", nil)) {
 		t.Error("missing token must not authorize")
+	}
+}
+
+func TestPostAttachmentSavesImageAndReturnsPath(t *testing.T) {
+	s, a := newTestServer(t)
+	body := `{"name":"my shot.png","dataUrl":"data:image/png;base64,iVBORw0KGgowMDAw"}`
+	req := httptest.NewRequest("POST", "http://127.0.0.1/api/v1/tasks/attachments", strings.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:5555"
+	req.Header.Set("X-Workshop-Token", s.token)
+	rec := httptest.NewRecorder()
+	s.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct{ Path string }
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(resp.Path, filepath.Join(a.StateDir, "attachments")) {
+		t.Fatalf("path %q not under %s/attachments", resp.Path, a.StateDir)
+	}
+	data, err := os.ReadFile(resp.Path)
+	if err != nil {
+		t.Fatalf("saved file unreadable: %v", err)
+	}
+	if string(data) != "\x89PNG\r\n\x1a\n0000" {
+		t.Fatalf("saved content = %q, want decoded PNG bytes", data)
+	}
+}
+
+func TestPostAttachmentRequiresToken(t *testing.T) {
+	s, _ := newTestServer(t)
+	req := httptest.NewRequest("POST", "http://127.0.0.1/api/v1/tasks/attachments", strings.NewReader(`{}`))
+	req.RemoteAddr = "127.0.0.1:5555"
+	rec := httptest.NewRecorder()
+	s.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized attachment upload: got %d, want 403", rec.Code)
+	}
+}
+
+func TestPostAttachmentRejectsNonImageDataURL(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := `{"name":"evil.txt","dataUrl":"data:text/plain;base64,aGk="}`
+	req := httptest.NewRequest("POST", "http://127.0.0.1/api/v1/tasks/attachments", strings.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:5555"
+	req.Header.Set("X-Workshop-Token", s.token)
+	rec := httptest.NewRecorder()
+	s.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("non-image data URL: got %d, want 400", rec.Code)
 	}
 }

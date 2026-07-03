@@ -105,22 +105,71 @@ function GoalCard({ goal, onSave }) {
   </div>`;
 }
 
+// readAsDataURL wraps FileReader in a promise so paste/attach handlers can await it.
+function readAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function AddTask({ pipelines, types, onAdd }) {
   const [title, setTitle] = useState("");
   const [type, setType] = useState("");
   const [backlog, setBacklog] = useState(SHARED);
+  const [attachments, setAttachments] = useState([]); // [{name, dataUrl}], uploaded lazily on submit
+  const fileInput = useRef(null);
+
+  const addFiles = async (files) => {
+    for (const file of [...files].filter((f) => f.type.startsWith("image/"))) {
+      const dataUrl = await readAsDataURL(file);
+      setAttachments((prev) => [...prev, { name: file.name || "pasted-image.png", dataUrl }]);
+    }
+  };
+  const onPaste = (e) => {
+    const files = [...e.clipboardData.items]
+      .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
+      .map((i) => i.getAsFile());
+    if (files.length === 0) return;
+    e.preventDefault();
+    addFiles(files);
+  };
+  const removeAttachment = (i) => setAttachments((prev) => prev.filter((_, j) => j !== i));
+
   const submit = async (e) => {
     e.preventDefault();
     if (!title.trim()) return;
-    await onAdd({ title: title.trim(), type: type || undefined, backlog });
-    setTitle("");
+    try {
+      const lines = [];
+      for (const att of attachments) {
+        const { path } = await api.uploadAttachment(att.name, att.dataUrl);
+        lines.push(`![${att.name}](${path})`);
+      }
+      await onAdd({
+        title: title.trim(), type: type || undefined, backlog,
+        detail: lines.length > 0 ? lines.join("\n") : undefined,
+      });
+      setTitle("");
+      setAttachments([]);
+    } catch (err) {
+      alert(err.message);
+    }
   };
   return html`<form class="addtask" onSubmit=${submit}>
     <div class="row">
-      <textarea name="title" placeholder="add a task…" value=${title}
+      <textarea name="title" placeholder="add a task… (paste or attach an image below)" value=${title}
         onInput=${(e) => setTitle(e.target.value)}
+        onPaste=${onPaste}
         onKeyDown=${(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(e); } }}></textarea>
     </div>
+    ${attachments.length > 0 && html`<div class="row attachments">
+      ${attachments.map((att, i) => html`<span class="attachment-chip" key=${i}>
+        <img src=${att.dataUrl} alt=${att.name} />
+        <button type="button" class="danger" title="remove" onClick=${() => removeAttachment(i)}>✕</button>
+      </span>`)}
+    </div>`}
     <div class="row">
       <select value=${type} onChange=${(e) => setType(e.target.value)} title="task type (empty = auto-classified)">
         <option value="">auto type</option>
@@ -130,6 +179,9 @@ function AddTask({ pipelines, types, onAdd }) {
         <option value=${SHARED}>${SHARED}</option>
         ${pipelines.map((p) => html`<option value=${p.name}>${p.name}</option>`)}
       </select>
+      <input type="file" accept="image/*" multiple ref=${fileInput} style="display:none"
+        onChange=${(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+      <button type="button" title="attach image" onClick=${() => fileInput.current?.click()}>📎</button>
       <button class="primary" type="submit">add</button>
     </div>
   </form>`;

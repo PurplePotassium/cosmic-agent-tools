@@ -197,6 +197,24 @@ code, .mono { font-family: ui-monospace, Consolas, monospace; }
 .addtask { display: flex; flex-direction: column; gap: 6px; }
 .addtask .row { display: flex; gap: 6px; }
 .addtask textarea[name=title] { flex: 1; min-height: 32px; }
+.addtask .row.attachments { flex-wrap: wrap; }
+.attachment-chip {
+  position: relative;
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.attachment-chip img { display: block; width: 48px; height: 48px; object-fit: cover; }
+.attachment-chip button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0 3px;
+  line-height: 1.4;
+  border: none;
+  border-radius: 0 0 0 6px;
+}
 
 .completion { padding: 4px; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
 .completion:last-child { border-bottom: none; }

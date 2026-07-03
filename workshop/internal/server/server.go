@@ -143,6 +143,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/goal", guard(s.putGoal))
 	mux.HandleFunc("PUT /api/v1/prompts/{frag...}", guard(s.putFragment))
 	mux.HandleFunc("POST /api/v1/tasks", guard(s.postTask))
+	mux.HandleFunc("POST /api/v1/tasks/attachments", guard(s.postAttachment))
 	mux.HandleFunc("PATCH /api/v1/tasks/{id}", guard(s.patchTask))
 	mux.HandleFunc("DELETE /api/v1/tasks/{id}", guard(s.deleteTask))
 	mux.HandleFunc("POST /api/v1/tasks/reorder", guard(s.reorderTasks))
@@ -265,6 +266,34 @@ func (s *Server) postTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, added)
+}
+
+type attachmentBody struct {
+	Name    *string `json:"name"`
+	DataURL *string `json:"dataUrl"`
+}
+
+// postAttachment saves a pasted/attached image so the add-task form can
+// reference it by path before the task itself exists. It bypasses readBody's
+// 1MB cap — a base64-encoded screenshot routinely exceeds that.
+func (s *Server) postAttachment(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(r.Body, 24<<20))
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	var body attachmentBody
+	if err := json.Unmarshal(data, &body); err != nil || body.Name == nil || body.DataURL == nil {
+		httpErr(w, fmt.Errorf("an attachment needs a name and a dataUrl"), http.StatusBadRequest)
+		return
+	}
+	path, err := s.App.SaveAttachment(*body.Name, *body.DataURL)
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]string{"path": path})
 }
 
 func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
