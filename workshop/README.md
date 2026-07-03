@@ -25,6 +25,7 @@ workshop           # dashboard opens (pipelines start stopped); set the goal, ad
 ## Install
 
 - **From source** (Go 1.26+): `go install github.com/PurplePotassium/cosmic-agent-tools/workshop/cmd/workshop@latest`
+- **From source again**: go install ./cmd/workshop # from this project path
 - **Release binaries**: download from GitHub Releases and drop on your PATH
   (`%LOCALAPPDATA%\Programs\workshop\` is a good spot on Windows).
 
@@ -240,8 +241,7 @@ go test ./...             # unit + integration (spawns real git repos + a script
 go test -tags e2e ./e2e   # end-to-end: builds the REAL binary, drives it against scaffolded repos
 go build ./cmd/workshop
 go vet ./...               # also runs in CI
-golangci-lint run ./...    # static analysis — see .golangci.yml (install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest)
-go install ./cmd/workshop        # installs current local source to your GOBIN
+golangci-lint run ./...    # static analysis — see .golangci.yml (install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 ```
 
 No TypeScript tooling is set up: the project has no TS/JS build step by
