@@ -314,7 +314,7 @@ function PipelineCard({ p, log, onDesired, onBundle, onMode }) {
       <span class="chip" title=${p.override ? "live override active — applies from the next pass" : "configured bundle"}>
         ${bundle}${p.override ? " ⚡" : ""}</span>
       <select class="chip" value=${p.mode} onChange=${(e) => onMode(p.name, e.target.value)}
-        title=${"invent/accept-proposals mode" + (p.modeOverride ? " — live override, applies from the next pass" : " — click to override the configured mode")}>
+        title=${"goal = invents idle work and accepts proposed follow-ups; discover = only accepts follow-ups; drain = only drains the backlog" + (p.modeOverride ? " — live override, applies from the next pass" : " — click to override the configured mode")}>
         ${MODES.map((m) => html`<option value=${m}>${m}</option>`)}
       </select>
       ${p.modeOverride && html`<button title="clear override, back to the configured mode" onClick=${() => onMode(p.name, "")}>✕</button>`}
