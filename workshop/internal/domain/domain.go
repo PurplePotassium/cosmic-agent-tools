@@ -266,6 +266,11 @@ type Pass struct {
 	TaskID   string // claimed task; freeform (invented) passes get a synthetic task
 	Spice    string // "persona:X" / "recode:noun/Stem" / "" — recorded for forensics
 
+	// SessionID is the agent runtime's own session id for this pass (set only
+	// for drivers with Capabilities.Sessions). It keys the agent's full
+	// transcript — every tool call and reasoning block — for forensics.
+	SessionID string
+
 	State   PassState
 	Started time.Time
 	Ended   time.Time
@@ -285,7 +290,11 @@ type Progress struct {
 	Plan    string `json:"plan,omitempty"`
 	Note    string `json:"note,omitempty"`
 	Result  string `json:"result,omitempty"`
-	Updated string `json:"updated,omitempty"` // ISO-8601, agent-written
+	// Decisions is the agent's optional record of judgment calls: assumptions
+	// made, alternatives rejected, deviations from the task or project docs.
+	// Preserved in the pass log for later "why did this happen?" forensics.
+	Decisions string `json:"decisions,omitempty"`
+	Updated   string `json:"updated,omitempty"` // ISO-8601, agent-written
 }
 
 // Completion is the durable record of a finished task.

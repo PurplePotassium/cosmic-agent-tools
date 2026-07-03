@@ -91,6 +91,17 @@ func WriteFileAtomic(path string, data []byte) error {
 	return nil
 }
 
+// CopyFile copies src to dst atomically (temp file + rename), creating dst's
+// parent directories as needed. Reads retry on Windows sharing violations
+// like everything else in this package.
+func CopyFile(src, dst string) error {
+	data, err := retrySharing(func() ([]byte, error) { return os.ReadFile(src) })
+	if err != nil {
+		return err
+	}
+	return WriteFileAtomic(dst, data)
+}
+
 // ReadJSON reads path into v, tolerating a UTF-8 BOM (some editors and
 // PowerShell versions write one). Returns fs.ErrNotExist if the file is
 // missing and ErrEmpty if it holds no content.

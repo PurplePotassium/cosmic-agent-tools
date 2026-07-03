@@ -70,13 +70,16 @@ function describeEvent(ev) {
 
 // ---------- components ----------
 
-function TopBar({ status, connected, onHalt, onPauseAfter }) {
+function TopBar({ status, connected, pauseAfterPending, onHalt, onPauseAfter }) {
   return html`<div class="topbar">
     <h1>Workshop</h1>
     <span class="muted mono">${status?.repo || ""}</span>
     <span class="spacer"></span>
     <span><span class=${"dot " + (connected ? "on" : "off")}></span>${connected ? "live" : "reconnecting…"}</span>
-    <button onClick=${onPauseAfter} title="Stop every pipeline from claiming new work; whatever's running now finishes">pause after</button>
+    <button class=${"pause-after" + (pauseAfterPending ? " active" : "")} onClick=${onPauseAfter}
+      title=${pauseAfterPending
+        ? "Pause after is armed — every pipeline stops claiming new work once its current pass finishes"
+        : "Stop every pipeline from claiming new work; whatever's running now finishes"}>pause after</button>
     <button class="danger" onClick=${onHalt} title="Kill every in-flight pass now — no models running, server stays up">stop</button>
   </div>`;
 }
@@ -535,6 +538,10 @@ function App() {
   }, []);
 
   const pipelines = status?.pipelines || [];
+  // Armed once a pause-after is requested (halted for "operator"), and only while
+  // some pipeline is still finishing its in-flight pass — once everything is
+  // actually idle, pausing is a done deal and the button drops back to normal.
+  const pauseAfterPending = pipelines.some((p) => p.enabled && p.halted === "operator" && p.running);
   const cfgTypes = [...new Set([
     ...(tasks.map((t) => t.type).filter(Boolean)),
     "code", "tests", "docs", "art", "audio",
@@ -543,7 +550,7 @@ function App() {
   const act = async (fn) => { try { await fn(); } catch (e) { alert(e.message); } await refresh(); };
 
   return html`<div>
-    <${TopBar} status=${status} connected=${connected}
+    <${TopBar} status=${status} connected=${connected} pauseAfterPending=${pauseAfterPending}
       onHalt=${() => act(() => api.haltServer())}
       onPauseAfter=${() => act(() => api.pauseAfter())} />
     <div class="columns">

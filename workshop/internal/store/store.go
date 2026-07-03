@@ -86,6 +86,7 @@ var schema = []string{
 		n          INTEGER NOT NULL,
 		task_id    TEXT NOT NULL DEFAULT '',
 		spice      TEXT NOT NULL DEFAULT '',
+		session_id TEXT NOT NULL DEFAULT '',
 		state      TEXT NOT NULL,
 		started    INTEGER NOT NULL,
 		ended      INTEGER NOT NULL DEFAULT 0,
@@ -146,10 +147,33 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("store: migrate: %w\nstatement: %s", err, stmt)
 		}
 	}
+	// Columns added after a table first shipped: CREATE TABLE IF NOT EXISTS
+	// won't touch an existing table, so they're grafted on here. All are
+	// defaulted, so an older binary keeps working against the widened table
+	// (the schema stays additive — no version bump).
+	if err := s.ensureColumn("passes", "session_id", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
 	_, err = s.db.Exec(
 		`INSERT INTO kv(k, v) VALUES('schema_version', ?) ON CONFLICT(k) DO NOTHING`,
 		fmt.Sprint(schemaVersion))
 	return err
+}
+
+// ensureColumn adds a column to an existing table if it is missing.
+func (s *Store) ensureColumn(table, column, ddl string) error {
+	var n int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
+		return fmt.Errorf("store: inspect %s.%s: %w", table, column, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, ddl)); err != nil {
+		return fmt.Errorf("store: add column %s.%s: %w", table, column, err)
+	}
+	return nil
 }
 
 // Prune caps the unbounded-growth tables. Events beyond keepEvents and

@@ -35,6 +35,12 @@ type App struct {
 	Res      *config.Result
 	Store    *store.Store
 	Bus      *bus.Bus
+
+	// Self-evaluator state (see inquiry.go). Zero value ready.
+	inqMu     sync.Mutex
+	inqSeq    int64
+	inqList   []*Inquiry
+	inqCancel context.CancelFunc
 }
 
 // Open resolves the repo (repoOverride or cwd), loads layered config, and

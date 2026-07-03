@@ -24,6 +24,16 @@ func BaseContract() string {
 	return strings.TrimSpace(string(b))
 }
 
+// InquiryContract returns the embedded self-evaluator (read-only forensics)
+// contract.
+func InquiryContract() string {
+	b, err := assets.ReadFile("assets/inquiry.md")
+	if err != nil {
+		panic("prompt: embedded inquiry contract missing: " + err.Error()) // build-time invariant
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // LoadPool resolves a persona/noun pool: the built-in names "general" and
 // "gamedev", or a path to a file (one entry per line, '#' comments and blank
 // lines ignored).

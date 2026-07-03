@@ -10,13 +10,13 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
-const passCols = `id, pipeline, n, task_id, spice, state, started, ended, exit_code, commit_sha, outcome, failure, log_path`
+const passCols = `id, pipeline, n, task_id, spice, session_id, state, started, ended, exit_code, commit_sha, outcome, failure, log_path`
 
 func scanPass(r rowScanner) (*domain.Pass, error) {
 	var p domain.Pass
 	var started, ended int64
 	var exit sql.NullInt64
-	err := r.Scan(&p.ID, &p.Pipeline, &p.N, &p.TaskID, &p.Spice, &p.State,
+	err := r.Scan(&p.ID, &p.Pipeline, &p.N, &p.TaskID, &p.Spice, &p.SessionID, &p.State,
 		&started, &ended, &exit, &p.CommitSHA, &p.Outcome, &p.Failure, &p.LogPath)
 	if err != nil {
 		return nil, err
@@ -65,6 +65,7 @@ func (s *Store) StartPass(ctx context.Context, pipeline string) (*domain.Pass, e
 type PassPatch struct {
 	TaskID    *string
 	Spice     *string
+	SessionID *string
 	State     *domain.PassState
 	ExitCode  *int
 	CommitSHA *string
@@ -83,6 +84,9 @@ func (s *Store) UpdatePass(ctx context.Context, id int64, p PassPatch) error {
 	}
 	if p.Spice != nil {
 		add("spice", *p.Spice)
+	}
+	if p.SessionID != nil {
+		add("session_id", *p.SessionID)
 	}
 	if p.State != nil {
 		add("state", string(*p.State))

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/backlog"
@@ -336,10 +337,19 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		return w.failSetup(ctx, pass, task, err)
 	}
 
+	// Session-capable runtimes get a workshop-minted session id so the
+	// agent's own full transcript (tool calls, reasoning) stays correlated
+	// to this pass for forensics.
+	sessionID := ""
+	if res.caps.Sessions {
+		sessionID = uuid.NewString()
+		w.patchPass(ctx, pass.ID, store.PassPatch{SessionID: &sessionID})
+	}
+
 	// Merge-conflict tasks run a dedicated resolution flow in an
 	// ephemeral worktree — never in this pipeline's own tree.
 	if task != nil && task.Type == "merge-conflict" && task.Meta["laneTip"] != "" {
-		return w.runConflictPass(ctx, pass, task, res)
+		return w.runConflictPass(ctx, pass, task, res, sessionID)
 	}
 
 	full, spice, err := w.preparePass(ctx, task)
@@ -352,7 +362,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 
 	logPath := filepath.Join(w.cfg.LogDir, fmt.Sprintf("iter-%06d.log", pass.N))
 	w.patchPass(ctx, pass.ID, store.PassPatch{LogPath: &logPath})
-	logFile, err := w.openPassLog(logPath, pass, task, res, spice)
+	logFile, err := w.openPassLog(logPath, pass, task, res, spice, sessionID)
 	if err != nil {
 		return w.failSetup(ctx, pass, task, err)
 	}
@@ -364,7 +374,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		"n": pass.N, "task": passTaskTitle(task), "spice": spice.Mode,
 		"agent": res.bundle.Agent, "model": res.bundle.Model, "effort": res.bundle.Effort,
 	})
-	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, w.cfg.RepoDir, logPath, logFile)
+	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, w.cfg.RepoDir, logPath, logFile, sessionID)
 	if ctx.Err() != nil {
 		// Hard stop: release the claim untouched; the kill already happened.
 		if task != nil {
@@ -376,7 +386,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 
 	// INGEST + COMMIT.
 	w.setState(ctx, pass, domain.PassIngesting)
-	return w.settlePass(ctx, pass, task, res, exitCode, tail, timedOut, runErr)
+	return w.settlePass(ctx, pass, task, res, logFile, exitCode, tail, timedOut, runErr)
 }
 
 // preparePass materializes state files and composes the prompt.
@@ -432,7 +442,7 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 }
 
 // spawn runs the agent process in dir and streams/captures its output.
-func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fullPrompt, dir, logPath string, logFile *os.File) (exitCode int, tail []string, timedOut bool, err error) {
+func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fullPrompt, dir, logPath string, logFile *os.File, sessionID string) (exitCode int, tail []string, timedOut bool, err error) {
 	// The concurrency cap applies only to the agent-execution window, so N
 	// pipelines can exist with M running agents.
 	if w.cfg.Sem != nil {
@@ -453,6 +463,8 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fu
 		SkipPermissions: w.cfg.SkipPermissions,
 		ExtraArgs:       w.cfg.ExtraArgs,
 		OpLogPath:       logPath + ".op.log",
+		SessionID:       sessionID,
+		WorkDir:         dir,
 	})
 	if err != nil {
 		return -1, nil, false, err
@@ -551,11 +563,24 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fu
 	if waitErr != nil && exitCode == 0 {
 		exitCode = -1
 	}
+
+	// Archive the runtime's own full transcript next to the pass log —
+	// runtimes prune their session stores, this copy is ours. Best-effort:
+	// a crash before the runtime flushed simply leaves no file to copy.
+	if plan.TranscriptPath != "" {
+		_ = statedir.CopyFile(plan.TranscriptPath, TranscriptArchivePath(logPath))
+	}
 	return exitCode, tail, timedOut, nil
 }
 
+// TranscriptArchivePath is where a pass's agent transcript is archived,
+// derived from its pass-log path (iter-000042.log -> iter-000042.transcript.jsonl).
+func TranscriptArchivePath(logPath string) string {
+	return strings.TrimSuffix(logPath, ".log") + ".transcript.jsonl"
+}
+
 // settlePass classifies the finished pass, reconciles state, and commits.
-func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved, exitCode int, tail []string, timedOut bool, runErr error) (PassResult, error) {
+func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved, logFile *os.File, exitCode int, tail []string, timedOut bool, runErr error) (PassResult, error) {
 	name := w.cfg.Pipeline.Name
 	blind := res.caps.Capture == driver.CaptureNone
 
@@ -605,6 +630,12 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 
 	// Success path: the agent's self-report drives bookkeeping.
 	progress := statedir.ReadProgress(w.cfg.StateDir)
+	// The decisions self-report (judgment calls, deviations) is per-pass
+	// forensic material; progress.json gets overwritten next pass, so the
+	// pass log is its durable home.
+	if progress.Decisions != "" && logFile != nil {
+		fmt.Fprintf(logFile, "\n--- decisions ---\n%s\n", progress.Decisions)
+	}
 	outcome := domain.OutcomeDone
 	switch progress.Phase {
 	case "done":
@@ -759,7 +790,7 @@ func (w *Worker) fragment(rel string) string {
 	return readTrim(filepath.Join(w.cfg.PromptsDir, rel))
 }
 
-func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, res *resolved, spice prompt.Spice) (*os.File, error) {
+func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, res *resolved, spice prompt.Spice, sessionID string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -770,6 +801,9 @@ func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, 
 	fmt.Fprintf(f, "=== ws(%s) iter %d ===\n", w.cfg.Pipeline.Name, pass.N)
 	fmt.Fprintf(f, "agent  : %s\nmodel  : %s\neffort : %s\n",
 		res.drv.Name(), res.bundle.Model, res.bundle.Effort)
+	if sessionID != "" {
+		fmt.Fprintf(f, "session: %s\n", sessionID)
+	}
 	fmt.Fprintf(f, "task   : %s\nspice  : %s\nstarted: %s\n%s\n",
 		passTaskTitle(task), spice.Mode, pass.Started.Format(time.RFC3339), strings.Repeat("-", 72))
 	return f, nil

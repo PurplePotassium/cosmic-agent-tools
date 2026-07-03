@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,7 @@ func (c *Claude) Probe(ctx context.Context) (Capabilities, error) {
 		Capture:     CaptureStreaming,
 		ModelSelect: true,
 		AuthProbe:   true,
+		Sessions:    true,
 	}
 	hctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -85,8 +87,41 @@ func (c *Claude) Plan(spec InvokeSpec) (ExecPlan, error) {
 	if spec.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
+	transcript := ""
+	if spec.SessionID != "" {
+		args = append(args, "--session-id", spec.SessionID)
+		if spec.WorkDir != "" {
+			transcript = claudeTranscriptPath(spec.WorkDir, spec.SessionID)
+		}
+	}
 	args = append(args, spec.ExtraArgs...)
-	return ExecPlan{Exe: c.exe, Args: args, StdinPrompt: true, Mode: c.caps.SpawnMode()}, nil
+	return ExecPlan{
+		Exe: c.exe, Args: args, StdinPrompt: true, Mode: c.caps.SpawnMode(),
+		TranscriptPath: transcript,
+	}, nil
+}
+
+// claudeTranscriptPath is where the Claude Code CLI stores the full session
+// transcript (JSONL: prompt, every tool call + result, thinking blocks) for a
+// run with --session-id in workDir: <config dir>/projects/<slug>/<id>.jsonl,
+// where the slug is the absolute workDir with every non-alphanumeric byte
+// replaced by '-'. Returns "" when no home/config dir is resolvable.
+func claudeTranscriptPath(workDir, sessionID string) string {
+	cfg := os.Getenv("CLAUDE_CONFIG_DIR")
+	if cfg == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		cfg = filepath.Join(home, ".claude")
+	}
+	slug := []byte(workDir)
+	for i, c := range slug {
+		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9') {
+			slug[i] = '-'
+		}
+	}
+	return filepath.Join(cfg, "projects", string(slug), sessionID+".jsonl")
 }
 
 func findClaude() (string, error) {

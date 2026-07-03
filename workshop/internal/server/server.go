@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -131,6 +132,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/runs/{id}/log", s.getRunLog)
 	mux.HandleFunc("GET /api/v1/events", s.getEvents) // SSE
 	mux.HandleFunc("GET /api/v1/attachments/{name}", s.getAttachment)
+	mux.HandleFunc("GET /api/v1/inquiries", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, s.App.Inquiries())
+	})
 
 	// --- mutating routes (token-gated) ---
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -156,6 +160,12 @@ func (s *Server) handler() http.Handler {
 	// startup, so the change takes effect on the next `workshop up`/`run`.
 	mux.HandleFunc("POST /api/v1/pipelines", guard(s.postPipeline))
 	mux.HandleFunc("DELETE /api/v1/pipelines/{name}", guard(s.deletePipeline))
+	// The self-evaluator: ask why the workshop did something; a read-only
+	// forensics agent answers from pass logs, transcripts, and git history.
+	mux.HandleFunc("POST /api/v1/inquiries", guard(s.postInquiry))
+	mux.HandleFunc("POST /api/v1/inquiries/stop", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]bool{"stopped": s.App.StopInquiry()})
+	}))
 	mux.HandleFunc("POST /api/v1/server/stop", guard(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]bool{"stopping": true})
 		if s.OnStop != nil {
@@ -510,6 +520,26 @@ func (s *Server) getRunLog(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = io.WriteString(w, log)
+}
+
+func (s *Server) postInquiry(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Question *string `json:"question"`
+	}
+	if err := readBody(r, &body); err != nil || body.Question == nil {
+		httpErr(w, fmt.Errorf(`body needs {"question":"..."}`), http.StatusBadRequest)
+		return
+	}
+	inq, err := s.App.AskInquiry(r.Context(), *body.Question)
+	if errors.Is(err, app.ErrInquiryBusy) {
+		httpErr(w, err, http.StatusConflict)
+		return
+	}
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, inq)
 }
 
 func (s *Server) resolveBacklog(name string) (string, error) {

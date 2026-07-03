@@ -304,3 +304,63 @@ func titles(ts []*domain.Task) []string {
 	}
 	return out
 }
+
+func TestPassSessionID(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	pass, err := s.StartPass(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := "0eca2f27-e7b7-4a96-89df-4631bee2db0e"
+	if err := s.UpdatePass(ctx, pass.ID, PassPatch{SessionID: &sid}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetPass(ctx, pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionID != sid {
+		t.Fatalf("session id: %q, want %q", got.SessionID, sid)
+	}
+}
+
+// TestMigrateAddsSessionColumn proves an existing database created before the
+// session_id column opens cleanly and gains the column.
+func TestMigrateAddsSessionColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewind the passes table to its pre-session_id shape.
+	for _, stmt := range []string{
+		`DROP TABLE passes`,
+		`CREATE TABLE passes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, pipeline TEXT NOT NULL, n INTEGER NOT NULL,
+			task_id TEXT NOT NULL DEFAULT '', spice TEXT NOT NULL DEFAULT '', state TEXT NOT NULL,
+			started INTEGER NOT NULL, ended INTEGER NOT NULL DEFAULT 0, exit_code INTEGER,
+			commit_sha TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL DEFAULT '',
+			failure TEXT NOT NULL DEFAULT '', log_path TEXT NOT NULL DEFAULT ''
+		)`,
+		`INSERT INTO passes (pipeline, n, state, started) VALUES ('main', 1, 'done', 1)`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen after downgrade: %v", err)
+	}
+	defer s2.Close()
+	passes, err := s2.RecentPasses(context.Background(), "", 10)
+	if err != nil {
+		t.Fatalf("scan migrated passes: %v", err)
+	}
+	if len(passes) != 1 || passes[0].SessionID != "" {
+		t.Fatalf("migrated pass wrong: %+v", passes)
+	}
+}

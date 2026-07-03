@@ -31,6 +31,13 @@ button {
 button:hover { border-color: var(--accent); }
 button.primary { background: #1d3a6e; border-color: #2b5cad; }
 button.danger:hover { border-color: var(--red); }
+button.pause-after.active {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: #171310;
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.35);
+}
+button.pause-after.active:hover { border-color: var(--amber); }
 input, select, textarea {
   background: var(--bg);
   color: var(--text);

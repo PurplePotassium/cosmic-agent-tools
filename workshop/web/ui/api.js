@@ -62,6 +62,12 @@ export const api = {
   // Live goal/discover/drain override for the pipeline's NEXT pass; an empty
   // mode "" clears it back to the configured mode.
   setPipelineMode: (name, mode) => req("PATCH", `/api/v1/pipelines/${name}`, { mode }),
+  // The self-evaluator: ask a read-only forensics agent WHY the workshop did
+  // something. One inquiry runs at a time (409 while busy); the answer
+  // streams as inquiry.log events and lands in the inquiries list.
+  inquiries: () => req("GET", "/api/v1/inquiries"),
+  ask: (question) => req("POST", "/api/v1/inquiries", { question }),
+  stopInquiry: () => req("POST", "/api/v1/inquiries/stop", {}),
   // haltServer kills every in-flight pass right now but leaves the server
   // (and every parked pipeline's ability to be resumed later) alive.
   haltServer: () => req("POST", "/api/v1/server/halt", {}),
@@ -87,12 +93,13 @@ export function subscribe(handlers) {
     "breaker.tripped", "auth.halt", "auth.suspected", "wedge.killed",
     "gate.red", "driver.effort_ignored", "pass.setup_failed",
     "pipeline.bundle", "integration.merge_failed",
+    "inquiry.log", "inquiry.asked", "inquiry.answered",
   ];
   for (const t of types) {
     es.addEventListener(t, (msg) => {
       let ev;
       try { ev = JSON.parse(msg.data); } catch { return; }
-      if (t === "pass.log") handlers.onLog && handlers.onLog(ev);
+      if (t === "pass.log" || t === "inquiry.log") handlers.onLog && handlers.onLog(ev);
       else handlers.onEvent && handlers.onEvent(ev);
     });
   }

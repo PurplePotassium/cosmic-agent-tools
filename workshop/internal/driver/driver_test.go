@@ -59,6 +59,40 @@ func TestClaudePlanArgs(t *testing.T) {
 	}
 }
 
+func TestClaudeSessionPlan(t *testing.T) {
+	t.Setenv("WORKSHOP_CLAUDE_BIN", fakeClaudeBin(t))
+	cfgDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	c := NewClaude()
+	caps, err := c.Probe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !caps.Sessions {
+		t.Fatal("claude must declare the Sessions capability")
+	}
+
+	const id = "0eca2f27-e7b7-4a96-89df-4631bee2db0e"
+	plan, err := c.Plan(InvokeSpec{SessionID: id, WorkDir: `C:\GameDev\my.repo`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.Index(plan.Args, "--session-id")
+	if i < 0 || i+1 >= len(plan.Args) || plan.Args[i+1] != id {
+		t.Fatalf("session flag missing: %v", plan.Args)
+	}
+	want := filepath.Join(cfgDir, "projects", "C--GameDev-my-repo", id+".jsonl")
+	if plan.TranscriptPath != want {
+		t.Fatalf("transcript path: %q, want %q", plan.TranscriptPath, want)
+	}
+
+	// No session id -> no flag, no transcript path.
+	plan, _ = c.Plan(InvokeSpec{WorkDir: `C:\GameDev\my.repo`})
+	if slices.Contains(plan.Args, "--session-id") || plan.TranscriptPath != "" {
+		t.Fatalf("sessionless plan leaked session artifacts: %+v", plan)
+	}
+}
+
 func TestClaudeEffortWhenSupported(t *testing.T) {
 	t.Setenv("WORKSHOP_CLAUDE_BIN", fakeClaudeBin(t))
 	c := NewClaude()

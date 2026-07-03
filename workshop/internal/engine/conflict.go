@@ -32,7 +32,7 @@ const (
 // the resolution worktree; the ENGINE reproduces the merge, verifies the
 // result (no unmerged paths, no marker strings, gate green), and the
 // resolution branch lands through the normal gated queue.
-func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved) (PassResult, error) {
+func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved, sessionID string) (PassResult, error) {
 	name := w.cfg.Pipeline.Name
 	laneBranch := task.Meta[MetaLaneBranch]
 	laneTip := task.Meta[MetaLaneTip]
@@ -99,7 +99,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 
 	logPath := filepath.Join(w.cfg.LogDir, fmt.Sprintf("iter-%06d.log", pass.N))
 	w.patchPass(ctx, pass.ID, store.PassPatch{LogPath: &logPath})
-	logFile, err := w.openPassLog(logPath, pass, task, res, prompt.Spice{})
+	logFile, err := w.openPassLog(logPath, pass, task, res, prompt.Spice{}, sessionID)
 	if err != nil {
 		cleanup(true)
 		return w.failSetup(ctx, pass, task, err)
@@ -111,7 +111,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 		"n": pass.N, "task": task.Title, "conflict": true, "lane": laneBranch,
 		"agent": res.bundle.Agent, "model": res.bundle.Model,
 	})
-	exitCode, _, timedOut, runErr := w.spawn(ctx, pass, res, full, resolveDir, logPath, logFile)
+	exitCode, _, timedOut, runErr := w.spawn(ctx, pass, res, full, resolveDir, logPath, logFile, sessionID)
 	if ctx.Err() != nil {
 		_ = w.st.ReleaseTask(ctx, task.ID)
 		cleanup(true)

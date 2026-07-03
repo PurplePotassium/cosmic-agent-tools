@@ -41,6 +41,10 @@ type Capabilities struct {
 	Effort       bool // supports a reasoning-effort flag
 	ModelSelect  bool // supports --model
 	AuthProbe    bool // auth failures are detectable from captured output
+	// Sessions: the runtime accepts a caller-chosen session id and writes a
+	// recoverable full transcript (tool calls, reasoning) keyed by it. When
+	// set, Plan honors InvokeSpec.SessionID and reports ExecPlan.TranscriptPath.
+	Sessions bool
 }
 
 // SpawnMode maps capabilities onto the proc spawn mode.
@@ -59,6 +63,8 @@ type InvokeSpec struct {
 	SkipPermissions bool
 	ExtraArgs       []string
 	OpLogPath       string // where the driver's own operational log goes ("" = driver default)
+	SessionID       string // caller-minted session id; ignored if !Capabilities.Sessions
+	WorkDir         string // the cwd the process will run in (some transcript paths derive from it)
 }
 
 // ExecPlan is the concrete process invocation derived from an InvokeSpec.
@@ -67,6 +73,10 @@ type ExecPlan struct {
 	Args        []string
 	StdinPrompt bool // pipe InvokeSpec.Prompt to stdin (else it is in Args)
 	Mode        proc.SpawnMode
+	// TranscriptPath is where the runtime will leave this run's full session
+	// transcript ("" = the runtime keeps none we can locate). Read it AFTER
+	// the process exits; archive it promptly — runtimes prune their own logs.
+	TranscriptPath string
 }
 
 // Driver is one agent CLI backend.
