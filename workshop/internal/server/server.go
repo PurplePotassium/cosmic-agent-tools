@@ -517,7 +517,7 @@ func (s *Server) resolveBacklog(name string) (string, error) {
 	case "", statedir.SharedLabel:
 		return domain.MainBacklog, nil
 	}
-	for _, p := range s.App.Res.Config.ResolvedPipelines() {
+	for _, p := range s.App.Res().Config.ResolvedPipelines() {
 		if strings.EqualFold(p.Name, name) {
 			return p.Name, nil
 		}

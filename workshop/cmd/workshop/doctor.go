@@ -52,10 +52,10 @@ func cmdDoctor(args []string) int {
 	defer a.Close()
 	add("repository", "PASS", a.RepoDir, "")
 
-	if len(a.Res.Warnings) == 0 {
+	if len(a.Res().Warnings) == 0 {
 		add("config", "PASS", "no warnings", "")
 	}
-	for _, w := range a.Res.Warnings {
+	for _, w := range a.Res().Warnings {
 		add("config", "WARN", w, "edit .workshop/config.toml and re-run workshop doctor")
 	}
 
@@ -104,7 +104,7 @@ func cmdDoctor(args []string) int {
 			add("server", "WARN", "stale server.json (server not responding)", "workshop stop clears it")
 		}
 	} else {
-		port := a.Res.Config.Server.Port
+		port := a.Res().Config.Server.Port
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			add("port", "WARN", fmt.Sprintf("port %d is taken by another process", port), "workshop up falls back to a free port automatically")

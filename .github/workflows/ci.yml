@@ -35,6 +35,20 @@ jobs:
       - name: test
         if: runner.os == 'Windows'
         run: go test ./...
+      # Windows is the primary dev platform but the full suite under -race is
+      # slow there; cover the packages with real cross-goroutine mutation
+      # (app config reloads, server handlers, store writers, bus fan-out).
+      # windows-latest ships mingw gcc, which -race needs.
+      - name: race (windows, concurrency-heavy packages)
+        if: runner.os == 'Windows'
+        run: go test -race ./internal/app/... ./internal/server/... ./internal/store/... ./internal/bus/...
+        env:
+          CGO_ENABLED: 1
+      # The e2e suite is the orchestrator-level proof (README calls it the
+      # gate's teeth): it builds the REAL binary and drives it against
+      # scaffolded repos. Hermetic — temp state dirs, fake driver only.
+      - name: e2e
+        run: go test -tags e2e -timeout 10m ./e2e
       - run: go build ./cmd/workshop
 
   # A broken .goreleaser.yaml otherwise only surfaces at the first tag.

@@ -1,10 +1,46 @@
 package app
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 )
+
+// Concurrent pipeline mutations against concurrent config reads: the adds
+// must all survive (the overrides file is a whole-list write, so an unlocked
+// read-modify-write loses entries), and the Res pointer handoff must be
+// race-clean (run under -race).
+func TestConcurrentPipelineMutationsLoseNothing(t *testing.T) {
+	a := newTestAppForPipelines(t)
+
+	const n = 8
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := a.AddPipeline(config.PipelineConfig{Name: fmt.Sprintf("lane%d", i)}); err != nil {
+				t.Errorf("add lane%d: %v", i, err)
+			}
+		}(i)
+		wg.Add(1)
+		go func() { // racing readers of the live config snapshot
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				_ = a.Res().Config.ResolvedPipelines()
+				_ = a.currentPipelineConfigs()
+			}
+		}()
+	}
+	wg.Wait()
+
+	pl := a.Res().Config.ResolvedPipelines()
+	if len(pl) != n+1 { // implicit main + n adds
+		t.Fatalf("pipelines after %d concurrent adds = %d, want %d: %+v", n, len(pl), n+1, pl)
+	}
+}
 
 // newTestAppForPipelines is newTestApp plus a sandboxed WORKSHOP_STATE_DIR:
 // AddPipeline/DeletePipeline write config.OverridesFile(a.RepoDir), which is
@@ -22,7 +58,7 @@ func TestAddPipelineThenDeletePipeline(t *testing.T) {
 	if err := a.AddPipeline(config.PipelineConfig{Name: "art", Agent: "agy", Model: "gemini-3-flash"}); err != nil {
 		t.Fatal(err)
 	}
-	pl := a.Res.Config.ResolvedPipelines()
+	pl := a.Res().Config.ResolvedPipelines()
 	if len(pl) != 2 {
 		t.Fatalf("pipelines after add = %d, want 2 (implicit main + art): %+v", len(pl), pl)
 	}
@@ -37,7 +73,7 @@ func TestAddPipelineThenDeletePipeline(t *testing.T) {
 	if err := a.DeletePipeline("art"); err != nil {
 		t.Fatal(err)
 	}
-	pl = a.Res.Config.ResolvedPipelines()
+	pl = a.Res().Config.ResolvedPipelines()
 	if len(pl) != 1 || pl[0].Name != config.DefaultPipelineName {
 		t.Fatalf("pipelines after delete = %+v, want just main", pl)
 	}
@@ -58,7 +94,7 @@ func TestAddPipelineValidation(t *testing.T) {
 	if err := a.AddPipeline(config.PipelineConfig{Name: config.DefaultPipelineName}); err == nil {
 		t.Fatal("duplicate name (implicit main): want error, got nil")
 	}
-	if pl := a.Res.Config.ResolvedPipelines(); len(pl) != 1 {
+	if pl := a.Res().Config.ResolvedPipelines(); len(pl) != 1 {
 		t.Fatalf("rejected AddPipeline calls left pipelines = %+v, want just the implicit main", pl)
 	}
 }
@@ -87,7 +123,7 @@ func TestDeletePipelineProtectsMain(t *testing.T) {
 // what stops the backlog from ending up with zero lanes to do work.
 func TestDeletePipelineProtectsLastLane(t *testing.T) {
 	a := newTestAppForPipelines(t)
-	a.Res.Config.Pipelines = []config.PipelineConfig{{Name: "solo", Agent: "claude"}}
+	a.Res().Config.Pipelines = []config.PipelineConfig{{Name: "solo", Agent: "claude"}}
 
 	if err := a.DeletePipeline("solo"); err == nil {
 		t.Fatal("deleting the last remaining pipeline: want error, got nil")

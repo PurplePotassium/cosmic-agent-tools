@@ -49,13 +49,7 @@ func newTestApp(t *testing.T, repo string) *App {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return &App{
-		RepoDir:  repo,
-		StateDir: stateDir,
-		Res:      &config.Result{Config: config.Default()},
-		Store:    st,
-		Bus:      bus.New(st),
-	}
+	return New(repo, stateDir, &config.Result{Config: config.Default()}, st, bus.New(st))
 }
 
 // TestRunHeadlessStartStoppedParksPipelines pins the `up` default: seeding the

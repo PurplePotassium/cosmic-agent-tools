@@ -111,7 +111,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 		"n": pass.N, "task": task.Title, "conflict": true, "lane": laneBranch,
 		"agent": res.bundle.Agent, "model": res.bundle.Model,
 	})
-	exitCode, _, timedOut, runErr := w.spawn(ctx, pass, res, full, resolveDir, logPath, logFile)
+	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, resolveDir, logPath, logFile)
 	if ctx.Err() != nil {
 		_ = w.st.ReleaseTask(ctx, task.ID)
 		cleanup(true)
@@ -134,6 +134,12 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 	case timedOut:
 		return fail(domain.FailTimeout, "wedged")
 	case exitCode != 0:
+		// An expired login must halt HERE too — otherwise it burns the
+		// whole ConflictRetryBudget × MaxTaskAttempts in blind retries.
+		if res.caps.AuthProbe && isAuthFailure(tail) {
+			cleanup(true)
+			return w.haltAuth(ctx, pass, task, res, exitCode)
+		}
 		return fail(domain.FailExit, fmt.Sprintf("agent exit %d", exitCode))
 	}
 

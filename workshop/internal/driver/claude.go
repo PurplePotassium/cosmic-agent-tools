@@ -50,7 +50,13 @@ func (c *Claude) Probe(ctx context.Context) (Capabilities, error) {
 	}
 	hctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	help, herr := exec.CommandContext(hctx, exe, "--help").CombinedOutput()
+	cmd := exec.CommandContext(hctx, exe, "--help")
+	// CombinedOutput returns on pipe EOF, not process exit. An npm shim
+	// (claude.cmd -> node) killed by the timeout leaves its node child
+	// holding the pipe write-end — without WaitDelay the probe hangs
+	// forever, well past the "15s timeout".
+	cmd.WaitDelay = 2 * time.Second
+	help, herr := cmd.CombinedOutput()
 	if herr == nil {
 		caps.Effort = parseEffortSupport(string(help))
 	}

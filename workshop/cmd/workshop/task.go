@@ -53,7 +53,9 @@ func parseMixed(fs *flag.FlagSet, args []string) []string {
 		}
 		rest := fs.Args()
 		i := 0
-		for i < len(rest) && !strings.HasPrefix(rest[i], "-") {
+		// A lone "-" is positional too: flag.Parse won't consume it, so
+		// refusing it here would leave args unchanged and spin forever.
+		for i < len(rest) && (rest[i] == "-" || !strings.HasPrefix(rest[i], "-")) {
 			positional = append(positional, rest[i])
 			i++
 		}
@@ -88,7 +90,7 @@ func resolveBacklogName(a *app.App, name string) (string, error) {
 	case "", statedir.SharedLabel:
 		return domain.MainBacklog, nil
 	}
-	for _, p := range a.Res.Config.ResolvedPipelines() {
+	for _, p := range a.Res().Config.ResolvedPipelines() {
 		if strings.EqualFold(p.Name, name) {
 			return p.Name, nil
 		}
@@ -98,7 +100,7 @@ func resolveBacklogName(a *app.App, name string) (string, error) {
 
 func pipelineNames(a *app.App) string {
 	var b strings.Builder
-	for _, p := range a.Res.Config.ResolvedPipelines() {
+	for _, p := range a.Res().Config.ResolvedPipelines() {
 		b.WriteString(", " + p.Name)
 	}
 	return b.String()

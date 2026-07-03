@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -20,7 +21,7 @@ type Worktree struct {
 // the porcelain format (never the human format — path normalization on
 // Windows bit the PowerShell predecessor).
 func Worktrees(ctx context.Context, repoDir string) ([]Worktree, error) {
-	out, err := run(ctx, repoDir, "worktree", "list", "--porcelain")
+	out, err := runOut(ctx, repoDir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +76,13 @@ func normPath(p string) string {
 	if err != nil {
 		abs = p
 	}
-	return strings.ToLower(filepath.ToSlash(filepath.Clean(abs)))
+	norm := filepath.ToSlash(filepath.Clean(abs))
+	// Case-fold only where the filesystem does: on a case-sensitive fs,
+	// folding would match a DIFFERENT directory's worktree and adopt it.
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		norm = strings.ToLower(norm)
+	}
+	return norm
 }
 
 // AddWorktree creates (or adopts) a worktree at path on branch. If the branch
@@ -86,6 +93,9 @@ func normPath(p string) string {
 // otherwise commit to the wrong branch while the integrator watches the
 // right one.
 func AddWorktree(ctx context.Context, repoDir, path, branch, base string) error {
+	if err := rejectFlagLike(path, branch, base); err != nil {
+		return err
+	}
 	if wt, err := FindWorktree(ctx, repoDir, path); err != nil {
 		return err
 	} else if wt != nil {

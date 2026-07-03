@@ -64,24 +64,6 @@ func (s *Store) AddTask(ctx context.Context, t *domain.Task, top bool) (*domain.
 	}
 	t.Updated = now
 
-	edge := "MAX"
-	if top {
-		edge = "MIN"
-	}
-	var cur sql.NullFloat64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT `+edge+`(position) FROM tasks WHERE backlog = ? AND status IN ('open','claimed')`,
-		t.Backlog).Scan(&cur); err != nil {
-		return nil, err
-	}
-	if !cur.Valid {
-		t.Position = positionStep
-	} else if top {
-		t.Position = cur.Float64 - positionStep
-	} else {
-		t.Position = cur.Float64 + positionStep
-	}
-
 	files, _ := json.Marshal(t.Files)
 	meta, _ := json.Marshal(t.Meta)
 	if t.Files == nil {
@@ -90,12 +72,25 @@ func (s *Store) AddTask(ctx context.Context, t *domain.Task, top bool) (*domain.
 	if t.Meta == nil {
 		meta = []byte("{}")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tasks (`+taskCols+`)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	// The position is computed INSIDE the insert: a separate read-then-write
+	// races the engine, dashboard, and CLI (all are writers), letting two
+	// adds claim the same slot and silently breaking `--first` ordering.
+	edge, sign := "MAX", "+"
+	if top {
+		edge, sign = "MIN", "-"
+	}
+	err := s.db.QueryRowContext(ctx, `INSERT INTO tasks (`+taskCols+`)
+		VALUES (?,?,?,?,?,?,?,?,?,
+			(SELECT COALESCE(`+edge+`(position) `+sign+` ?, ?) FROM tasks
+			 WHERE backlog = ? AND status IN ('open','claimed')),
+			?,?,?,?,?,?,?,?,?)
+		RETURNING position`,
 		t.ID, t.Backlog, t.Type, t.Title, t.Detail, string(files),
 		t.Pin.Agent, t.Pin.Model, t.Pin.Effort,
-		t.Position, t.Status, t.Origin, t.ClaimedBy, t.ClaimPass,
-		t.Attempts, toMillis(t.NotBefore), string(meta), toMillis(t.Created), toMillis(t.Updated))
+		positionStep, positionStep, t.Backlog,
+		t.Status, t.Origin, t.ClaimedBy, t.ClaimPass,
+		t.Attempts, toMillis(t.NotBefore), string(meta), toMillis(t.Created), toMillis(t.Updated)).
+		Scan(&t.Position)
 	if err != nil {
 		return nil, fmt.Errorf("store: add task: %w", err)
 	}
@@ -204,8 +199,11 @@ func (s *Store) CompleteTask(ctx context.Context, id, pipeline, result string) e
 	defer tx.Rollback()
 	now := time.Now().UTC()
 	var title string
+	// The status guard makes completion idempotent: a retried finalization
+	// must not insert a second completion row for the same task.
 	err = tx.QueryRowContext(ctx,
-		`UPDATE tasks SET status = 'done', updated = ? WHERE id = ? RETURNING title`,
+		`UPDATE tasks SET status = 'done', updated = ?
+		 WHERE id = ? AND status IN ('open', 'claimed') RETURNING title`,
 		toMillis(now), id).Scan(&title)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound

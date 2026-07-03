@@ -99,7 +99,7 @@ func openApp(ctx context.Context, repo string) (*app.App, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, w := range a.Res.Warnings {
+	for _, w := range a.Res().Warnings {
 		fmt.Fprintln(os.Stderr, "config warning:", w)
 	}
 	return a, nil
@@ -168,7 +168,7 @@ func cmdUp(args []string) int {
 		url := fmt.Sprintf("http://127.0.0.1:%d/", si.Port)
 		if pingServer(si.Port) {
 			fmt.Printf("workshop already running for this repo (pid %d) — %s\n", si.PID, url)
-			if !*noOpen && a.Res.Config.Server.OpenBrowser {
+			if !*noOpen && a.Res().Config.Server.OpenBrowser {
 				openBrowser(url + "#token=" + si.Token)
 			}
 			return 0
@@ -177,10 +177,10 @@ func cmdUp(args []string) int {
 	}
 
 	ctl := app.NewEngineControl(func(ctx context.Context, startStopped bool) error {
-		return a.RunHeadless(ctx, a.Res.Config.Safety.MaxIterations, false, startStopped)
+		return a.RunHeadless(ctx, a.Res().Config.Safety.MaxIterations, false, startStopped)
 	})
 	srv := server.New(a, cancel, ctl.Halt)
-	wantPort := a.Res.Config.Server.Port
+	wantPort := a.Res().Config.Server.Port
 	if *port != 0 {
 		wantPort = *port
 	}
@@ -206,7 +206,7 @@ func cmdUp(args []string) int {
 	for _, p := range pipelines {
 		fmt.Printf(" %s(%s)", p.Name, p.Bundle.Agent)
 	}
-	startStopped := a.Res.Config.Server.StartStopped && !*startRunning
+	startStopped := a.Res().Config.Server.StartStopped && !*startRunning
 	if startStopped {
 		fmt.Println("\n  pipelines start stopped — resume them from the dashboard (or launch with --start-running).")
 	} else {
@@ -215,7 +215,7 @@ func cmdUp(args []string) int {
 
 	ctl.Start(ctx, startStopped)
 
-	if !*noOpen && a.Res.Config.Server.OpenBrowser {
+	if !*noOpen && a.Res().Config.Server.OpenBrowser {
 		openBrowser(url + "#token=" + srv.Token())
 	}
 

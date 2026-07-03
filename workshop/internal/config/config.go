@@ -258,17 +258,22 @@ func (c *Config) checkModel(where, agent, model string) error {
 		where, model, agent, domain.ModelFamilies(agent), agent)
 }
 
-// Validate returns human-readable problems. Errors block startup; warnings
-// (returned separately by Load) do not.
-func (c *Config) Validate() []error {
-	var errs []error
+// Validate returns blocking problems (errs — Load aborts startup on any: for
+// an unattended tool, a bad safety knob or malformed pipeline must never
+// silently run) and advisories (warns — model-family mismatches, which are
+// documented to warn-not-block so proxy aliases and brand-new ids work).
+func (c *Config) Validate() (errs, warns []error) {
 	seen := map[string]bool{}
 	for _, p := range c.Pipelines {
 		name := strings.ToLower(p.Name)
 		switch {
 		case p.Name == "":
 			errs = append(errs, fmt.Errorf("pipelines: every [[pipelines]] entry needs a name"))
-		case !pipelineNameRe.MatchString(name):
+		case !pipelineNameRe.MatchString(p.Name):
+			// The RAW name is checked: it is what lands in branch and
+			// directory names and exact-match SQL — lowercasing it first
+			// would bless "MyPipe" here while everything else uses the
+			// mixed-case original.
 			errs = append(errs, fmt.Errorf("pipelines: name %q must match %s (used in branch and directory names)", p.Name, pipelineNameRe))
 		case name == SharedBacklogName:
 			errs = append(errs, fmt.Errorf("pipelines: name %q is reserved for the shared backlog", p.Name))
@@ -284,7 +289,7 @@ func (c *Config) Validate() []error {
 			agent = "claude"
 		}
 		if err := c.checkModel("pipelines."+p.Name, agent, p.Model); err != nil {
-			errs = append(errs, err)
+			warns = append(warns, err)
 		}
 		switch p.Mode {
 		case "", "goal", "discover", "drain":
@@ -296,15 +301,20 @@ func (c *Config) Validate() []error {
 		if !domain.ValidEffort(b.Effort) {
 			errs = append(errs, fmt.Errorf("types.%s: effort %q is not one of %v", t, b.Effort, domain.Efforts))
 		}
-		if b.Agent != "" {
+		switch {
+		case b.Agent != "":
 			if err := c.checkModel("types."+t, b.Agent, b.Model); err != nil {
-				errs = append(errs, err)
+				warns = append(warns, err)
 			}
+		case b.Model != "":
+			// An agent-less model overlays whatever agent the PIPELINE
+			// runs, and a wrong id for that agent can fail silently (agy).
+			errs = append(errs, fmt.Errorf("types.%s: model %q needs an explicit agent — a model id is only valid for its own agent", t, b.Model))
 		}
 	}
 	if c.Classifier.Agent != "" {
 		if err := c.checkModel("classifier", c.Classifier.Agent, c.Classifier.Model); err != nil {
-			errs = append(errs, err)
+			warns = append(warns, err)
 		}
 	}
 	switch normalizeWorktrees(c.Git.Worktrees) {
@@ -320,5 +330,18 @@ func (c *Config) Validate() []error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		errs = append(errs, fmt.Errorf("server.port: %d out of range", c.Server.Port))
 	}
-	return errs
+	// Safety knobs guard unattended execution — nonsense values must block.
+	if c.Safety.WedgeMinutes <= 0 {
+		errs = append(errs, fmt.Errorf("safety.wedge_minutes: %d — a pass with no wedge timeout can hang the pipeline forever (or be killed instantly); use a large value instead of 0", c.Safety.WedgeMinutes))
+	}
+	if c.Safety.MaxConcurrent < 0 {
+		errs = append(errs, fmt.Errorf("safety.max_concurrent: %d is negative", c.Safety.MaxConcurrent))
+	}
+	if c.Safety.BreakerFailures < 0 {
+		errs = append(errs, fmt.Errorf("safety.breaker_failures: %d is negative", c.Safety.BreakerFailures))
+	}
+	if c.Safety.SleepSeconds < 0 {
+		errs = append(errs, fmt.Errorf("safety.sleep_seconds: %d is negative", c.Safety.SleepSeconds))
+	}
+	return errs, warns
 }
