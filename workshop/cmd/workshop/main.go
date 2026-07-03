@@ -176,7 +176,10 @@ func cmdUp(args []string) int {
 		_ = os.Remove(server.InfoPath(a.StateDir))
 	}
 
-	srv := server.New(a, cancel)
+	ctl := app.NewEngineControl(func(ctx context.Context, startStopped bool) error {
+		return a.RunHeadless(ctx, a.Res.Config.Safety.MaxIterations, false, startStopped)
+	})
+	srv := server.New(a, cancel, ctl.Halt)
 	wantPort := a.Res.Config.Server.Port
 	if *port != 0 {
 		wantPort = *port
@@ -210,8 +213,7 @@ func cmdUp(args []string) int {
 		fmt.Println("\n  Ctrl+C stops the loop and kills any in-flight pass.")
 	}
 
-	loopDone := make(chan error, 1)
-	go func() { loopDone <- a.RunHeadless(ctx, a.Res.Config.Safety.MaxIterations, false, startStopped) }()
+	ctl.Start(ctx, startStopped)
 
 	if !*noOpen && a.Res.Config.Server.OpenBrowser {
 		openBrowser(url + "#token=" + srv.Token())
@@ -220,8 +222,8 @@ func cmdUp(args []string) int {
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nstopping...")
-		<-loopDone
-	case err := <-loopDone:
+		<-ctl.Done()
+	case err := <-ctl.Done():
 		switch {
 		case err == nil:
 			fmt.Println("loop finished (iteration bound reached); server still running — Ctrl+C to exit")

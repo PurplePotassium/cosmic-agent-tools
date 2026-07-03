@@ -53,7 +53,8 @@ func ReadInfo(stateDir string) (*ServerInfo, error) {
 // Server hosts the API for one project.
 type Server struct {
 	App    *app.App
-	OnStop func()
+	OnStop func() // full process shutdown — CLI `workshop stop` / POST /server/stop
+	OnHalt func() // kill every in-flight pass, stay up parked — POST /server/halt
 
 	token    string
 	listener net.Listener
@@ -61,10 +62,10 @@ type Server struct {
 }
 
 // New builds the server (not yet listening).
-func New(a *app.App, onStop func()) *Server {
+func New(a *app.App, onStop, onHalt func()) *Server {
 	buf := make([]byte, 16)
 	_, _ = rand.Read(buf)
-	return &Server{App: a, OnStop: onStop, token: hex.EncodeToString(buf)}
+	return &Server{App: a, OnStop: onStop, OnHalt: onHalt, token: hex.EncodeToString(buf)}
 }
 
 // Token returns the session token (embedded in the URL the CLI opens).
@@ -151,6 +152,25 @@ func (s *Server) handler() http.Handler {
 		if s.OnStop != nil {
 			go s.OnStop()
 		}
+	}))
+	// Halt kills every in-flight pass right now but leaves the server (and
+	// this HTTP request's own process) running — the dashboard's "stop"
+	// button, distinct from the CLI's full-shutdown "stop server".
+	mux.HandleFunc("POST /api/v1/server/halt", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]bool{"halting": true})
+		if s.OnHalt != nil {
+			go s.OnHalt()
+		}
+	}))
+	// PauseAfter stops every enabled pipeline from claiming new work but
+	// lets whatever they're currently running finish — the dashboard's
+	// "pause-after" button.
+	mux.HandleFunc("POST /api/v1/server/pause-after", guard(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.App.PauseAfter(r.Context()); err != nil {
+			httpErr(w, err, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
 	}))
 
 	// --- static SPA ---

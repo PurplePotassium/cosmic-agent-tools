@@ -51,7 +51,12 @@ export const api = {
   // Live agent/model/effort override for the pipeline's NEXT pass; an empty
   // bundle {} clears it back to the configured routing.
   setPipelineBundle: (name, bundle) => req("PATCH", `/api/v1/pipelines/${name}`, { bundle }),
-  stopServer: () => req("POST", "/api/v1/server/stop", {}),
+  // haltServer kills every in-flight pass right now but leaves the server
+  // (and every parked pipeline's ability to be resumed later) alive.
+  haltServer: () => req("POST", "/api/v1/server/halt", {}),
+  // pauseAfter stops every pipeline from claiming new work, letting whatever
+  // they're currently running finish untouched.
+  pauseAfter: () => req("POST", "/api/v1/server/pause-after", {}),
 };
 
 // subscribe wires the SSE stream; handlers: { onEvent(ev), onLog(ev), onOpen, onDown }.

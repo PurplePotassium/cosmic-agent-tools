@@ -70,13 +70,14 @@ function describeEvent(ev) {
 
 // ---------- components ----------
 
-function TopBar({ status, connected, onStopServer }) {
+function TopBar({ status, connected, onHalt, onPauseAfter }) {
   return html`<div class="topbar">
     <h1>Workshop</h1>
     <span class="muted mono">${status?.repo || ""}</span>
     <span class="spacer"></span>
     <span><span class=${"dot " + (connected ? "on" : "off")}></span>${connected ? "live" : "reconnecting…"}</span>
-    <button class="danger" onClick=${onStopServer} title="Stop the workshop server and all loops">stop server</button>
+    <button onClick=${onPauseAfter} title="Stop every pipeline from claiming new work; whatever's running now finishes">pause after</button>
+    <button class="danger" onClick=${onHalt} title="Kill every in-flight pass now — no models running, server stays up">stop</button>
   </div>`;
 }
 
@@ -391,7 +392,8 @@ function App() {
 
   return html`<div>
     <${TopBar} status=${status} connected=${connected}
-      onStopServer=${() => act(() => api.stopServer())} />
+      onHalt=${() => act(() => api.haltServer())}
+      onPauseAfter=${() => act(() => api.pauseAfter())} />
     <div class="columns">
       <div>
         <${Alerts} alerts=${alerts} dismiss=${(id) => setAlerts((a) => a.filter((x) => x.id !== id))} />

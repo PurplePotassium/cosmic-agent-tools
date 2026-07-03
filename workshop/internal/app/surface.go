@@ -81,6 +81,19 @@ func (a *App) SetPipelineDesired(ctx context.Context, name string, running bool)
 	return a.Store.SetHalted(ctx, name, "operator")
 }
 
+// PauseAfter stops every enabled pipeline from claiming new work — the bulk
+// form of SetPipelineDesired(name, false) — while letting whatever each
+// pipeline is currently running finish untouched. It is the "pause-after"
+// dashboard action's counterpart to Halt's immediate kill.
+func (a *App) PauseAfter(ctx context.Context) error {
+	for _, p := range a.EnabledPipelines() {
+		if err := a.Store.SetHalted(ctx, p.Name, "operator"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SetPipelineBundle sets (or, for a zero bundle, clears) the live
 // agent/model/effort override for a pipeline. Workers re-read it every pass,
 // so it takes effect on the NEXT pass without a restart — the successor of
