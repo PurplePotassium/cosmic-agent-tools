@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -97,7 +98,17 @@ func (c *Claude) Plan(spec InvokeSpec) (ExecPlan, error) {
 
 func findClaude() (string, error) {
 	if v := os.Getenv("WORKSHOP_CLAUDE_BIN"); v != "" {
-		return v, nil
+		// Absolutize: a relative override would resolve against cmd.Dir —
+		// the agent's WORKTREE — so a previous pass committing a file at
+		// that relative path would get executed as the agent binary.
+		abs, err := filepath.Abs(v)
+		if err != nil {
+			return "", fmt.Errorf("driver: WORKSHOP_CLAUDE_BIN %q: %w", v, err)
+		}
+		if info, err := os.Stat(abs); err != nil || info.IsDir() {
+			return "", fmt.Errorf("driver: WORKSHOP_CLAUDE_BIN %q is not an executable file", v)
+		}
+		return abs, nil
 	}
 	exe, err := exec.LookPath("claude")
 	if err != nil {

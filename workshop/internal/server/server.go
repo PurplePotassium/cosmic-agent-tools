@@ -8,6 +8,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
@@ -57,16 +59,22 @@ type Server struct {
 	OnStop func() // full process shutdown — CLI `workshop stop` / POST /server/stop
 	OnHalt func() // kill every in-flight pass, stay up parked — POST /server/halt
 
-	token    string
-	listener net.Listener
-	http     *http.Server
+	token     string
+	listener  net.Listener
+	http      *http.Server
+	closing   chan struct{} // closed at Shutdown; unblocks long-lived handlers (SSE)
+	closeOnce sync.Once
 }
 
 // New builds the server (not yet listening).
 func New(a *app.App, onStop, onHalt func()) *Server {
 	buf := make([]byte, 16)
 	_, _ = rand.Read(buf)
-	return &Server{App: a, OnStop: onStop, OnHalt: onHalt, token: hex.EncodeToString(buf)}
+	return &Server{
+		App: a, OnStop: onStop, OnHalt: onHalt,
+		token:   hex.EncodeToString(buf),
+		closing: make(chan struct{}),
+	}
 }
 
 // Token returns the session token (embedded in the URL the CLI opens).
@@ -80,7 +88,13 @@ func (s *Server) Start(port int) (int, error) {
 	}
 	s.listener = ln
 	bound := ln.Addr().(*net.TCPAddr).Port
-	s.http = &http.Server{Handler: s.handler()}
+	s.http = &http.Server{
+		Handler: s.handler(),
+		// WriteTimeout stays 0 (SSE holds the response open), but header
+		// reads and idle keep-alives must not be holdable forever.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 	go func() { _ = s.http.Serve(ln) }()
 
 	info := ServerInfo{PID: os.Getpid(), Port: bound, Token: s.token, Started: time.Now().UTC()}
@@ -91,8 +105,12 @@ func (s *Server) Start(port int) (int, error) {
 	return bound, nil
 }
 
-// Shutdown stops the HTTP server and removes server.json.
+// Shutdown stops the HTTP server and removes server.json. The closing
+// channel drains SSE handlers first — http.Server.Shutdown waits for active
+// handlers without cancelling their request contexts, so an open dashboard
+// tab would otherwise stall every shutdown to the full ctx deadline.
 func (s *Server) Shutdown(ctx context.Context) {
+	s.closeOnce.Do(func() { close(s.closing) })
 	if s.http != nil {
 		_ = s.http.Shutdown(ctx)
 	}
@@ -530,7 +548,8 @@ func (s *Server) resolveBacklog(name string) (string, error) {
 // Referer), and the dashboard already carries the token via the URL fragment
 // into sessionStorage, so a query channel buys nothing.
 func (s *Server) authorized(r *http.Request) bool {
-	return r.Header.Get("X-Workshop-Token") == s.token
+	got := r.Header.Get("X-Workshop-Token")
+	return subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
 }
 
 // serveUI serves the embedded dashboard with history fallback.

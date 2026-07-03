@@ -252,6 +252,15 @@ func (w *Worker) Loop(ctx context.Context, iterations int, untilDrained bool) er
 		if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return err
 		}
+		if err != nil {
+			// A store/setup failure is not "drained": a bounded run must
+			// exit nonzero, and even a live loop must say WHY it is idling
+			// instead of silently spinning on a dead database.
+			w.event(ctx, "pass.error", w.cfg.Pipeline.Name, 0, map[string]any{"error": err.Error()})
+			if bounded || untilDrained {
+				return err
+			}
+		}
 		switch res {
 		case PassHalted:
 			// Bounded runs report the halt; a live (unbounded) worker

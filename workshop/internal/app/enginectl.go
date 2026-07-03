@@ -17,6 +17,7 @@ type EngineControl struct {
 
 	mu       sync.Mutex
 	cancel   context.CancelFunc
+	live     bool // a run loop is currently executing
 	stopping bool // true while a Halt()-triggered relaunch is in flight
 	done     chan error
 }
@@ -38,12 +39,14 @@ func (e *EngineControl) launch(parent context.Context, startStopped bool) {
 	runCtx, cancel := context.WithCancel(parent)
 	e.mu.Lock()
 	e.cancel = cancel
+	e.live = true
 	e.mu.Unlock()
 	go func() {
 		err := e.run(runCtx, startStopped)
 		e.mu.Lock()
 		swallow := e.stopping && errors.Is(err, context.Canceled)
 		e.stopping = false
+		e.live = false
 		e.mu.Unlock()
 		if swallow {
 			// Come back up parked: no pipeline claims work until the
@@ -61,6 +64,13 @@ func (e *EngineControl) launch(parent context.Context, startStopped bool) {
 // whatever HTTP server sits in front of it — stays alive throughout.
 func (e *EngineControl) Halt() {
 	e.mu.Lock()
+	if !e.live {
+		// The loop already exited (iteration bound reached): cancelling a
+		// dead context does nothing, and latching stopping=true here would
+		// stick forever — the dashboard's halt/resume would silently no-op.
+		e.mu.Unlock()
+		return
+	}
 	e.stopping = true
 	cancel := e.cancel
 	e.mu.Unlock()
