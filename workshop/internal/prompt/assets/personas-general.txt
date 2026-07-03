@@ -19,3 +19,38 @@ a jazz musician improvising on the theme
 a battle-scarred sysadmin who has seen every failure mode
 a mathematician demanding a proof for every assumption
 a curious archaeologist excavating forgotten code paths
+Alan Turing
+Ada Lovelace
+Grace Hopper
+Donald Knuth
+John von Neumann
+Barbara Liskov
+Margaret Hamilton
+Linus Torvalds
+Carl Friedrich Gauss
+Srinivasa Ramanujan
+Emmy Noether
+Pythagoras
+Aristotle
+Bertrand Russell
+Kurt Godel
+George Boole
+Martin Fowler
+Grady Booch
+Fred Brooks
+Steve Jobs
+Elon Musk
+Warren Buffett
+Satya Nadella
+Socrates
+Friedrich Nietzsche
+Confucius
+Marcus Aurelius
+Simone de Beauvoir
+Emily Dickinson
+Maya Angelou
+William Shakespeare
+Walt Whitman
+Leonardo da Vinci
+Marie Curie
+Nikola Tesla
