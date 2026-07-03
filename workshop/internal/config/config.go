@@ -1,0 +1,243 @@
+// Package config defines the Workshop configuration schema and its layered
+// resolution: built-ins → user-global file → repo file → runtime overrides →
+// environment → CLI flags. Every resolved key carries provenance so the
+// operator can always answer "why is it using that value?".
+package config
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+)
+
+// Config is the fully resolved configuration for one project.
+type Config struct {
+	Project    ProjectConfig            `toml:"project"`
+	Git        GitConfig                `toml:"git"`
+	Safety     SafetyConfig             `toml:"safety"`
+	Spice      SpiceConfig              `toml:"spice"`
+	Classifier ClassifierConfig         `toml:"classifier"`
+	Types      map[string]domain.Bundle `toml:"types"` // task-type routing table
+	Pipelines  []PipelineConfig         `toml:"pipelines"`
+	Server     ServerConfig             `toml:"server"`
+	Agents     map[string]AgentConfig   `toml:"agents"`
+}
+
+type ProjectConfig struct {
+	Name      string `toml:"name"`       // default: repo folder name
+	Trunk     string `toml:"trunk"`      // branch pipelines fork from / merge into; "" = current
+	Verify    string `toml:"verify"`     // gate command, exit 0 = pass; "" = prompt-level verify only
+	VerifyDir string `toml:"verify_dir"` // cwd for verify, repo-relative
+}
+
+type GitConfig struct {
+	// Worktrees: "auto" (on iff >1 enabled pipeline), "on", "off".
+	// "true"/"false" are accepted spellings for on/off.
+	Worktrees    string `toml:"worktrees"`
+	BranchPrefix string `toml:"branch_prefix"` // pipeline branches: <prefix><pipeline>
+}
+
+type SafetyConfig struct {
+	MaxIterations   int  `toml:"max_iterations"` // 0 = unbounded (supervised)
+	SkipPermissions bool `toml:"skip_permissions"`
+	BreakerFailures int  `toml:"breaker_failures"` // consecutive failed passes -> halt
+	WedgeMinutes    int  `toml:"wedge_minutes"`    // in-flight pass older than this -> killed; must exceed agy's 30m --print-timeout
+	MaxConcurrent   int  `toml:"max_concurrent"`   // simultaneous agent passes across pipelines
+	SleepSeconds    int  `toml:"sleep_seconds"`    // pause between passes of one pipeline
+}
+
+type SpiceConfig struct {
+	Enabled  bool   `toml:"enabled"`
+	Personas string `toml:"personas"` // "general" | "gamedev" | repo-relative path
+	Nouns    string `toml:"nouns"`
+}
+
+type ClassifierConfig struct {
+	Mode  string `toml:"mode"` // "off" | "heuristic" | "agent"
+	Agent string `toml:"agent"`
+	Model string `toml:"model"`
+}
+
+type PipelineConfig struct {
+	Name      string   `toml:"name"`
+	Types     []string `toml:"types"`      // main-backlog claim filter; empty = all
+	DrainMain *bool    `toml:"drain_main"` // default true
+	Agent     string   `toml:"agent"`
+	Model     string   `toml:"model"`
+	Effort    string   `toml:"effort"`
+	Invent    *bool    `toml:"invent"`   // default true
+	Enabled   *bool    `toml:"enabled"`  // default true
+	Worktree  *bool    `toml:"worktree"` // per-pipeline override of [git].worktrees
+	ScopeHint string   `toml:"scope_hint"`
+	// WedgeMinutes overrides [safety].wedge_minutes for this pipeline (0 = inherit).
+	WedgeMinutes int `toml:"wedge_minutes"`
+	// ExtraArgs are appended verbatim to every agent invocation of this pipeline.
+	ExtraArgs []string `toml:"extra_args"`
+}
+
+type ServerConfig struct {
+	Port        int  `toml:"port"` // binds 127.0.0.1 only — by design, not configurable
+	OpenBrowser bool `toml:"open_browser"`
+}
+
+type AgentConfig struct {
+	// ExtraModels extends the curated known-good model list for this agent
+	// (silences "unknown model" validation warnings).
+	ExtraModels []string `toml:"extra_models"`
+}
+
+// Default returns the built-in configuration — the "empty file works" layer.
+func Default() Config {
+	return Config{
+		Project:    ProjectConfig{VerifyDir: "."},
+		Git:        GitConfig{Worktrees: "auto", BranchPrefix: "workshop/"},
+		// WedgeMinutes must stay above agy's 30m --print-timeout or default
+		// config kills healthy agy passes (and can trip the breaker).
+		Safety:     SafetyConfig{MaxIterations: 0, SkipPermissions: true, BreakerFailures: 5, WedgeMinutes: 35, MaxConcurrent: 2},
+		Spice:      SpiceConfig{Enabled: true, Personas: "general", Nouns: "general"},
+		Classifier: ClassifierConfig{Mode: "heuristic"},
+		// Built-in task types ship with EMPTY bundles: routing falls through
+		// to the pipeline's own bundle, so nothing changes about which agent
+		// runs. Their presence seeds the classifier vocabulary (tasks get
+		// typed out of the box) and provides the merge-conflict route the
+		// integrator's conflict-task machinery keys on. Operators override
+		// per-type bundles ([types.art] agent = "agy" ...) to route work.
+		Types: map[string]domain.Bundle{
+			"code": {}, "tests": {}, "docs": {}, "art": {}, "audio": {}, "merge-conflict": {},
+		},
+		Server:     ServerConfig{Port: 4455, OpenBrowser: true},
+		Agents:     map[string]AgentConfig{},
+	}
+}
+
+// SharedBacklogName is the CLI/API/UI sentinel addressing the shared main
+// backlog (domain.MainBacklog internally). A pipeline may not take this name.
+const SharedBacklogName = "shared"
+
+// DefaultPipelineName names the implicit pipeline used when the config
+// defines none.
+const DefaultPipelineName = "main"
+
+var pipelineNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ResolvedPipelines expands the configured pipelines into domain.Pipeline
+// values with defaults applied. With no [[pipelines]] configured it returns
+// the single implicit pipeline: all types, drains main, claude, invent on.
+func (c *Config) ResolvedPipelines() []domain.Pipeline {
+	boolOr := func(p *bool, def bool) bool {
+		if p == nil {
+			return def
+		}
+		return *p
+	}
+	if len(c.Pipelines) == 0 {
+		return []domain.Pipeline{{
+			Name:        DefaultPipelineName,
+			Bundle:      domain.Bundle{Agent: "claude"},
+			DrainMain:   true,
+			Invent:      true,
+			Enabled:     true,
+			PassTimeout: time.Duration(c.Safety.WedgeMinutes) * time.Minute,
+		}}
+	}
+	out := make([]domain.Pipeline, 0, len(c.Pipelines))
+	for _, pc := range c.Pipelines {
+		wedge := pc.WedgeMinutes
+		if wedge == 0 {
+			wedge = c.Safety.WedgeMinutes
+		}
+		agent := pc.Agent
+		if agent == "" {
+			agent = "claude"
+		}
+		out = append(out, domain.Pipeline{
+			Name:        pc.Name,
+			Bundle:      domain.Bundle{Agent: agent, Model: pc.Model, Effort: pc.Effort},
+			TaskTypes:   pc.Types,
+			DrainMain:   boolOr(pc.DrainMain, true),
+			ScopeHint:   pc.ScopeHint,
+			Invent:      boolOr(pc.Invent, true),
+			Enabled:     boolOr(pc.Enabled, true),
+			Worktree:    pc.Worktree,
+			PassTimeout: time.Duration(wedge) * time.Minute,
+			ExtraArgs:   pc.ExtraArgs,
+		})
+	}
+	return out
+}
+
+// WorktreesEnabled resolves the [git].worktrees tri-state against the number
+// of enabled pipelines.
+func (c *Config) WorktreesEnabled() bool {
+	enabled := 0
+	for _, p := range c.ResolvedPipelines() {
+		if p.Enabled {
+			enabled++
+		}
+	}
+	switch normalizeWorktrees(c.Git.Worktrees) {
+	case "on":
+		return true
+	case "off":
+		return false
+	default: // auto
+		return enabled > 1
+	}
+}
+
+func normalizeWorktrees(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "on", "true", "yes", "1":
+		return "on"
+	case "off", "false", "no", "0":
+		return "off"
+	default:
+		return "auto"
+	}
+}
+
+// Validate returns human-readable problems. Errors block startup; warnings
+// (returned separately by Load) do not.
+func (c *Config) Validate() []error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, p := range c.Pipelines {
+		name := strings.ToLower(p.Name)
+		switch {
+		case p.Name == "":
+			errs = append(errs, fmt.Errorf("pipelines: every [[pipelines]] entry needs a name"))
+		case !pipelineNameRe.MatchString(name):
+			errs = append(errs, fmt.Errorf("pipelines: name %q must match %s (used in branch and directory names)", p.Name, pipelineNameRe))
+		case name == SharedBacklogName:
+			errs = append(errs, fmt.Errorf("pipelines: name %q is reserved for the shared backlog", p.Name))
+		case seen[name]:
+			errs = append(errs, fmt.Errorf("pipelines: duplicate name %q", p.Name))
+		}
+		seen[name] = true
+		if !domain.ValidEffort(p.Effort) {
+			errs = append(errs, fmt.Errorf("pipelines.%s: effort %q is not one of %v", p.Name, p.Effort, domain.Efforts))
+		}
+	}
+	for t, b := range c.Types {
+		if !domain.ValidEffort(b.Effort) {
+			errs = append(errs, fmt.Errorf("types.%s: effort %q is not one of %v", t, b.Effort, domain.Efforts))
+		}
+	}
+	switch normalizeWorktrees(c.Git.Worktrees) {
+	case "on", "off", "auto":
+	default:
+		errs = append(errs, fmt.Errorf("git.worktrees: %q is not auto/on/off", c.Git.Worktrees))
+	}
+	switch c.Classifier.Mode {
+	case "", "off", "heuristic", "agent":
+	default:
+		errs = append(errs, fmt.Errorf("classifier.mode: %q is not off/heuristic/agent", c.Classifier.Mode))
+	}
+	if c.Server.Port < 1 || c.Server.Port > 65535 {
+		errs = append(errs, fmt.Errorf("server.port: %d out of range", c.Server.Port))
+	}
+	return errs
+}

@@ -1,0 +1,238 @@
+// Package domain holds the pure data types shared across Workshop.
+// It performs no I/O and imports nothing outside the standard library.
+package domain
+
+import (
+	"strings"
+	"time"
+)
+
+// MainBacklog is the Task.Backlog value for the shared main backlog.
+// Any other value names the pipeline whose exclusive backlog owns the task.
+const MainBacklog = ""
+
+// TaskStatus is the lifecycle state of a Task.
+type TaskStatus string
+
+const (
+	TaskOpen      TaskStatus = "open"
+	TaskClaimed   TaskStatus = "claimed"
+	TaskDone      TaskStatus = "done"
+	TaskFailed    TaskStatus = "failed"
+	TaskStuck     TaskStatus = "stuck" // repeatedly blocked/reverted; needs operator attention
+	TaskCancelled TaskStatus = "cancelled"
+)
+
+// TaskOrigin records who created a task.
+type TaskOrigin string
+
+const (
+	OriginOperator TaskOrigin = "operator"
+	OriginAgent    TaskOrigin = "agent"
+	OriginSystem   TaskOrigin = "system" // merge-conflict, gate-red, ...
+)
+
+// Bundle is one validated agent/model/effort selection.
+type Bundle struct {
+	Agent  string `json:"agent,omitempty" toml:"agent,omitempty"`
+	Model  string `json:"model,omitempty" toml:"model,omitempty"`
+	Effort string `json:"effort,omitempty" toml:"effort,omitempty"`
+}
+
+// IsZero reports whether no field of the bundle is set.
+func (b Bundle) IsZero() bool { return b.Agent == "" && b.Model == "" && b.Effort == "" }
+
+// Overlay returns b with any empty field filled from base.
+func (b Bundle) Overlay(base Bundle) Bundle {
+	if b.Agent == "" {
+		b.Agent = base.Agent
+	}
+	if b.Model == "" {
+		b.Model = base.Model
+	}
+	if b.Effort == "" {
+		b.Effort = base.Effort
+	}
+	return b
+}
+
+// Efforts is the ordered set of recognized effort levels.
+var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+// ValidEffort reports whether e is empty (unset) or a recognized effort level.
+func ValidEffort(e string) bool {
+	if e == "" {
+		return true
+	}
+	for _, v := range Efforts {
+		if e == v {
+			return true
+		}
+	}
+	return false
+}
+
+// Task is one unit of backlog work. Tasks live either on the shared main
+// backlog (Backlog == MainBacklog) or on exactly one pipeline's exclusive
+// backlog (Backlog == pipeline name).
+type Task struct {
+	ID       string            `json:"id"`
+	Backlog  string            `json:"backlog,omitempty"`
+	Type     string            `json:"type,omitempty"` // "" = unclassified
+	Title    string            `json:"title"`
+	Detail   string            `json:"detail,omitempty"`
+	Files    []string          `json:"files,omitempty"` // optional scope hint
+	Pin      Bundle            `json:"pin,omitzero"`    // operator pin — beats the routing table
+	Position float64           `json:"-"`               // per-backlog ordering; lower = sooner
+	Status   TaskStatus        `json:"status,omitempty"`
+	Origin   TaskOrigin        `json:"origin,omitempty"`
+
+	ClaimedBy string            `json:"claimedBy,omitempty"` // pipeline name
+	ClaimPass int64             `json:"-"`
+	Attempts  int               `json:"attempts,omitempty"`
+	NotBefore time.Time         `json:"-"` // retry backoff gate
+	Meta      map[string]string `json:"meta,omitempty"`
+
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"-"`
+}
+
+// Pipeline is the configuration-shaped description of one worker lane.
+// Runtime state (iteration counter, breaker, halt reason) lives in the store
+// and engine, not here.
+type Pipeline struct {
+	Name      string
+	Bundle    Bundle   // fallback bundle for untyped / invented tasks
+	TaskTypes []string // main-backlog claim filter; empty = all types
+	DrainMain bool     // also claim from the main backlog
+	ScopeHint string   // soft file-ownership guidance appended to the prompt tail
+	Invent    bool     // idle + empty backlog => may invent one task toward GOAL
+	Enabled   bool
+	Worktree  *bool // per-pipeline override of the project worktree setting; nil = inherit
+
+	PassTimeout time.Duration // wedge threshold; 0 = driver default
+	ExtraArgs   []string      // raw args appended to every agent invocation
+
+	// Computed at runtime by the engine:
+	Branch string // branch the pipeline commits to
+	Dir    string // working dir (worktree dir, or the repo dir in simple mode)
+}
+
+// HandlesType reports whether the pipeline claims tasks of type t from the
+// main backlog. Own-backlog tasks are always claimable regardless of type.
+func (p Pipeline) HandlesType(t string) bool {
+	if len(p.TaskTypes) == 0 {
+		return true
+	}
+	for _, v := range p.TaskTypes {
+		if strings.EqualFold(v, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// PassState is the engine state machine position of a pass.
+type PassState string
+
+const (
+	PassClaiming   PassState = "claiming"
+	PassPreparing  PassState = "preparing"
+	PassRunning    PassState = "running"
+	PassIngesting  PassState = "ingesting"
+	PassCommitting PassState = "committing"
+	PassDone       PassState = "done"
+	PassFailed     PassState = "failed"
+)
+
+// FailKind classifies why a pass failed.
+type FailKind string
+
+const (
+	FailNone    FailKind = ""
+	FailAuth    FailKind = "auth"
+	FailExit    FailKind = "exit"
+	FailTimeout FailKind = "timeout"
+	FailSetup   FailKind = "setup"
+)
+
+// PassOutcome is the agent-reported (or engine-derived) result of a pass.
+type PassOutcome string
+
+const (
+	OutcomeDone     PassOutcome = "done"
+	OutcomeBlocked  PassOutcome = "blocked"
+	OutcomeReverted PassOutcome = "reverted"
+	OutcomeNoChange PassOutcome = "no-change"
+	OutcomeFailed   PassOutcome = "failed"
+)
+
+// Pass is one iteration of one pipeline.
+type Pass struct {
+	ID       int64
+	Pipeline string
+	N        int    // per-pipeline iteration counter (survives restarts)
+	TaskID   string // claimed task; freeform (invented) passes get a synthetic task
+	Spice    string // "persona:X" / "recode:noun/Stem" / "" — recorded for forensics
+
+	State   PassState
+	Started time.Time
+	Ended   time.Time
+
+	ExitCode  *int
+	CommitSHA string
+	Outcome   PassOutcome
+	Failure   FailKind
+	LogPath   string
+}
+
+// Progress is the agent's self-report, overwritten whole-file each pass.
+// It is the only window into a pass run by a blind (non-capturable) driver.
+type Progress struct {
+	Phase   string `json:"phase"` // working | done | blocked | reverted
+	Task    string `json:"task,omitempty"`
+	Plan    string `json:"plan,omitempty"`
+	Note    string `json:"note,omitempty"`
+	Result  string `json:"result,omitempty"`
+	Updated string `json:"updated,omitempty"` // ISO-8601, agent-written
+}
+
+// Completion is the durable record of a finished task.
+type Completion struct {
+	ID        string    `json:"id"`
+	TaskID    string    `json:"taskId,omitempty"`
+	Pipeline  string    `json:"pipeline,omitempty"`
+	Title     string    `json:"title"`
+	Result    string    `json:"result,omitempty"`
+	Completed time.Time `json:"completed"`
+}
+
+// Proposal is a follow-up task suggested by an agent in proposals.json.
+type Proposal struct {
+	Title   string   `json:"title"`
+	Detail  string   `json:"detail,omitempty"`
+	Type    string   `json:"type,omitempty"`
+	Backlog string   `json:"backlog,omitempty"` // "" = main; or a pipeline name
+	Files   []string `json:"files,omitempty"`
+}
+
+// LaneIntegration is the integrator's per-pipeline merge-queue state.
+type LaneIntegration struct {
+	Pipeline         string
+	LastSeenTip      string // tip SHA already merged-or-dropped (skip-until-advanced key)
+	Blocked          bool
+	BlockedBy        string // "" | "gate" | "conflict" | "+"-joined kept-set names
+	ProvenCulprit    bool   // failed the gate ALONE on trunk (not just in combination)
+	ConflictTaskID   string // open merge-conflict task, if any
+	ConflictAttempts int    // resolution attempts for the current tip
+}
+
+// Event is one bus event. Payload keys are event-type specific.
+type Event struct {
+	Seq      int64          `json:"seq"`
+	TS       time.Time      `json:"ts"`
+	Type     string         `json:"type"`
+	Pipeline string         `json:"pipeline,omitempty"`
+	Pass     int64          `json:"pass,omitempty"`
+	Payload  map[string]any `json:"payload,omitempty"`
+}
