@@ -16,12 +16,14 @@ repo (and a task list), not in the agent's memory — so it grinds on a task for
 |---|---|---|---|
 | **[`workshop/`](workshop/)** | **Workshop** — the loop as a mature app: a single Go binary with an embedded dashboard. One pipeline by default; scales to multiple simultaneous pipelines in git worktrees behind a gated merge queue, with per-task-type model/effort routing and agent-resolved merge conflicts. | Go binary (Windows / macOS / Linux) | [`workshop/README.md`](workshop/README.md) |
 | **[`ralph/`](ralph/)** | **Ralph loops + fleet orchestrator** — the original PowerShell scripts: the single loop, plus a fan-out that runs many loops in parallel worktrees behind a merge queue and a planner. | PowerShell (single loop also Bash) | [`ralph/README.md`](ralph/README.md) |
+| **[`cosmo-canyon/`](cosmo-canyon/)** | **Cosmo Canyon** — a Claude Code–orchestrated take on the loop: a per-tick `claude -p` cycle (opus planner + hybrid `agy`/Claude worker + deterministic gate/commit) that builds a fresh browser game from a Ready-Spec set you author in an Asset Browser. The generated game lives in its own nested repo and is not tracked here. | Node standalone app (`server.mjs`, :7788) | [`cosmo-canyon/AGENTS.md`](cosmo-canyon/AGENTS.md) |
 | **[`skills/`](skills/)** | **Agent skills** — self-contained guides an agent loads on demand (art direction, deep research, audit). Harness-agnostic drop-ins. | any agent harness | [Skills](#skills) below |
 
 `workshop/` is the successor to the PowerShell tooling: `ralph/`'s fleet ideas (worktrees, merge
 queue, bisect-on-red) and the original solo Workshop are both built into one binary, configured per
 repo with a checked-in `.workshop/config.toml`. The `ralph/` scripts remain for reference and for
-PowerShell-native workflows. `skills/` is independent of both.
+PowerShell-native workflows. `cosmo-canyon/` is a separate, self-contained take on the loop — building
+a browser game from a spec set rather than grinding a backlog. `skills/` is independent of all of them.
 
 **Requirements:** at least one coding-agent CLI on PATH and authenticated — **`claude`** (Claude
 Code) and/or **`agy`** (Antigravity CLI, Gemini).

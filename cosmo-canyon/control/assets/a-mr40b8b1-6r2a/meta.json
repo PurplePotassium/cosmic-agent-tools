@@ -1,0 +1,41 @@
+{
+  "id": "a-mr40b8b1-6r2a",
+  "kind": "spec",
+  "filename": "charselect_screen.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:46ddcc931bf2b3a8f709550fbbb7314df6f186d857b6d60fd93e5765507ec4e4",
+  "instructions": "Character-select v2 — overhaul the EXISTING character-select screen (src/render/charselect.ts) and REMOVE the obsolete Fort Condor test character roster. Make the targeted changes below; the screen already exists, so DO NOT rebuild from scratch. Keep the deterministic gate green: do NOT edit game/test/** or game/accept/**. Render code may use performance.now(); src/sim/** must never use Math.random/Date.now/performance.now (sim-purity).\n\nROSTER CLEANUP (remove obsolete test artifacts):\n- The characters 'granbruf', 'widowlancer', 'heajri' and the unlock system tied to them are OBSOLETE test cruft from an earlier project and are NOT part of the design. REMOVE every reference to them:\n  - src/main.ts: the startRun() per-character weapon/HP/speed switch on localStorage 'rs_selected_character', AND the 'rs_unlocked_characters' unlock + migration logic (the widowlancer/heajri unlock blocks).\n  - src/render/worldmap.ts: the top-left character widget's granbruf/widowlancer/heajri strings + emojis in _updateCharWidget() and the default charNameText/charAvatarText.\n- The ONLY character roster is the three placeholders already on the character-select screen: Warrior (id 'a', getTexture('player.charsel_a')), Ranger (id 'b', getTexture('player.charsel_b')), Mage (id 'c', getTexture('player.charsel_c')).\n- In worldmap.ts, keep a small character widget but make it show the CURRENTLY SELECTED placeholder (Warrior/Ranger/Mage by the saved id) and still open the character-select screen on tap ('Tap to change'). No granbruf/widowlancer/heajri anywhere.\n\nMAKE THE SELECT BUTTON FUNCTIONAL:\n- On SELECT press, persist the choice: localStorage.setItem('rs_selected_character', the selected id 'a'|'b'|'c'), then leave the screen via the screen's confirm/back callback (main.ts wires it to worldMap.show()). Replace the current onSelectConfirmed no-op (console.log) with this.\n- startRun() (main.ts) maps the selected placeholder id to a simple loadout using EXISTING sim weapons only (do NOT invent sim content): 'a' Warrior -> weapon 'axe', maxHp 300, speed 220; 'b' Ranger -> 'knives', maxHp 250, speed 260; 'c' Mage -> 'fireball', maxHp 200, speed 180. Default to 'a' when unset.\n- On show(), pre-highlight the currently-saved character (read 'rs_selected_character', default 'a').\n\nUI IMPROVEMENTS (src/render/charselect.ts):\n- TITLE: a centered 'CHOOSE YOUR HERO' title (code Text) near the top, filling the currently-empty upper area.\n- BIGGER + GROUNDED: render the three character sprites noticeably LARGER (renderScale ~2.5-3x) and add a soft dark elliptical ground shadow (code Graphics, low alpha) under each so they don't float.\n- NAME LABELS: show each character's name (WARRIOR / RANGER / MAGE) under its sprite at ALL times, not only when selected.\n- FIRE GLOW: add getTexture('fx.charsel_fireglow') as a soft warm glow centered on the campfire (behind it, gentle pulse synced to the fire frames), casting a light pool over the nearby characters. Use a normal or additive blend.\n- EMBERS: a few small rising ember motes near the fire (code-drawn small Graphics dots that drift up and fade, driven by the frame counter — render-only, performance.now is fine here).\n- SELECT LABEL: when enabled, the button reads 'SELECT - <NAME>' (e.g. 'SELECT - WARRIOR'); keep the disabled(grey) -> enabled(green) states.\n- INFO PANEL: keep the name + description and ALSO show a stats line (HP / SPEED / weapon) from the loadout above.\n- KEYBOARD: Left/Right arrows move the selection among the three characters; Enter confirms (same as SELECT); Escape returns to the world map.\n\nACCEPTANCE (verified visually via snapshot, no sim test): the screen shows a title, three larger shadowed characters around a glowing campfire with a few drifting embers, and always-visible names; selecting a character (click or arrow+Enter) shows the gold highlight + an info panel with its stats, and the SELECT button reads 'SELECT - <NAME>' in its green enabled state; NO references to granbruf / widowlancer / heajri remain anywhere in main.ts or worldmap.ts.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr40b8b1-6r2a-r4",
+    "sha": "a9345de46c7bd3c1b55b1a4a6455bddd57398713",
+    "contentHash": "sha256:46ddcc931bf2b3a8f709550fbbb7314df6f186d857b6d60fd93e5765507ec4e4",
+    "rev": 4
+  },
+  "implementedContentHash": "sha256:46ddcc931bf2b3a8f709550fbbb7314df6f186d857b6d60fd93e5765507ec4e4",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr40b8b1-6r2a-r4",
+    "rev": 4,
+    "by": "operator",
+    "at": "2026-07-03T05:05:31.713Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-02T21:18:41.869Z",
+  "updated": "2026-07-03T05:05:31.713Z",
+  "rev": 4
+}

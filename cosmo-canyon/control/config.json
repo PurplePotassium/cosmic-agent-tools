@@ -1,0 +1,12 @@
+{
+  "concurrency": {
+    "mode": "parallel",
+    "maxConcurrency": 5,
+    "isolation": "worktree",
+    "worktreeRoot": "C:/Vibes-cc-wt",
+    "perAgentTimeoutMin": 45,
+    "heavyCostReserve": 3,
+    "heartbeatSec": 30
+  },
+  "tickBudget": 200
+}

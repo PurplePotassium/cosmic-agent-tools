@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cosmo Canyon</title>
+<style>
+  :root {
+    --bg: #0b0f1a; --panel: #111827; --panel2: rgba(2,6,23,0.5); --line: #1f2937;
+    --ink: #e2e8f0; --dim: #94a3b8; --dim2: #64748b; --accent: #22d3ee; --good: #34d399; --warn: #fbbf24; --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  code { background: rgba(148,163,184,0.14); padding: 0 4px; border-radius: 4px; font-size: 0.85em; }
+  a { color: #7dd3fc; }
+  .wrap { max-width: 1880px; margin: 0 auto; padding: 1rem 1.6rem 3rem; }
+  h1 { font-size: 1.15rem; margin: 0; display: flex; align-items: center; gap: 0.5rem; }
+  h2 { font-size: 0.85rem; margin: 0 0 0.6rem; color: var(--ink); display: flex; align-items: center; gap: 0.4rem; }
+  .header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.4rem 0 1rem; }
+  .badges { display: flex; gap: 0.4rem; align-items: center; }
+  .pill { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; font-weight: 600; border-radius: 999px; padding: 0.22rem 0.6rem; border: 1px solid var(--line); background: var(--panel); color: var(--dim); }
+  .pill .dot { width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
+  .pill.running { color: var(--good); border-color: rgba(52,211,153,0.4); }
+  .pill.idle { color: var(--dim); }
+  .pill.stopped { color: var(--bad); border-color: rgba(239,68,68,0.4); }
+  .grid { display: grid; grid-template-columns: 1fr 1.15fr; gap: 1rem; align-items: start; }
+  @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 1rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0.9rem 1rem; }
+  .card.right { height: calc(100vh - 8rem); position: sticky; top: 1rem; display: flex; flex-direction: column; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-top: 0.2rem; }
+  .stat { background: var(--panel2); border-radius: 8px; padding: 0.5rem 0.6rem; }
+  .stat .lbl { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim2); }
+  .stat .val { font-size: 1.1rem; font-weight: 700; color: var(--ink); }
+  input, textarea { width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); padding: 0.5rem 0.6rem; font: inherit; }
+  textarea { resize: vertical; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--ink); padding: 0.5rem 0.7rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; }
+  button:hover { border-color: #334155; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .btn-go { background: rgba(34,211,238,0.14); border-color: rgba(34,211,238,0.4); color: #a5f3fc; }
+  .btn-stop { background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+  .row { display: flex; gap: 0.5rem; }
+  .full { width: 100%; }
+  .muted { color: var(--dim2); font-size: 0.72rem; }
+  .mini { font-size: 0.72rem; color: var(--dim); }
+  pre { margin: 0.4rem 0 0; max-height: 150px; overflow: auto; font-size: 0.66rem; line-height: 1.4; color: var(--dim); background: var(--panel2); border-radius: 8px; padding: 0.5rem; white-space: pre-wrap; }
+  .bead { background: var(--panel2); border-left: 2px solid var(--accent); border-radius: 6px; padding: 0.4rem 0.5rem; font-size: 0.72rem; }
+  iframe { flex: 1; width: 100%; border: none; border-radius: 8px; background: #14141c; min-height: 380px; }
+  /* ⚠ LOUD fallback-supervisor banner (§7/§15d) — pinned, high-contrast, NOT collapsible */
+  #cc-banner { display: none; position: sticky; top: 0; z-index: 50; margin: -0.2rem 0 0.8rem; padding: 0.7rem 1rem; border-radius: 10px;
+    background: repeating-linear-gradient(45deg, #7f1d1d, #7f1d1d 12px, #991b1b 12px, #991b1b 24px);
+    color: #fff; font-weight: 700; box-shadow: 0 0 0 2px rgba(239,68,68,0.6), 0 6px 24px rgba(239,68,68,0.3);
+    align-items: center; justify-content: space-between; gap: 1rem; }
+  #cc-banner.on { display: flex; animation: ccpulse 2s ease-in-out infinite; }
+  @keyframes ccpulse { 0%,100% { box-shadow: 0 0 0 2px rgba(239,68,68,0.55), 0 6px 24px rgba(239,68,68,0.25); } 50% { box-shadow: 0 0 0 3px rgba(239,68,68,0.9), 0 6px 30px rgba(239,68,68,0.5); } }
+  #cc-banner .txt { font-size: 0.86rem; }
+  #cc-banner .sub { font-weight: 500; font-size: 0.72rem; opacity: 0.92; }
+  #cc-banner button { background: #fff; color: #991b1b; border: none; font-weight: 700; white-space: nowrap; }
+  #toast { position: fixed; right: 1rem; bottom: 1rem; display: flex; flex-direction: column; gap: 0.4rem; z-index: 100; }
+  .toast { padding: 0.5rem 0.8rem; border-radius: 8px; font-size: 0.78rem; box-shadow: 0 6px 18px rgba(0,0,0,0.4); }
+  .toast.success { background: #064e3b; color: #a7f3d0; }
+  .toast.error { background: #7f1d1d; color: #fecaca; }
+  .toast.info { background: #1e293b; color: #cbd5e1; }
+  /* ── Asset Browser (§15d — PRIMARY input surface) ── */
+  #cc-dropzone { border: 1.5px dashed var(--line); border-radius: 10px; padding: 0.7rem; text-align: center; color: var(--dim2); font-size: 0.74rem; transition: border-color 0.15s, background 0.15s; cursor: pointer; }
+  #cc-dropzone.drag { border-color: var(--accent); background: rgba(34,211,238,0.08); color: var(--accent); }
+  .cc-filterbar { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin: 0.6rem 0 0.5rem; }
+  .cc-fbtn { font-size: 0.66rem; padding: 0.18rem 0.5rem; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); color: var(--dim); }
+  .cc-fbtn.on { border-color: rgba(34,211,238,0.5); color: #a5f3fc; background: rgba(34,211,238,0.12); }
+  .cc-fclear { margin-left: auto; font-size: 0.64rem; color: var(--dim2); background: none; border: none; text-decoration: underline; padding: 0.1rem 0.2rem; }
+  /* intended-usage callout — make the "Drive Cosmo Canyon" path unmissable */
+  #cc-drive-note { display: flex; gap: 0.6rem; align-items: flex-start; margin: 0 0 1.1rem; padding: 0.7rem 0.9rem; border: 1px solid rgba(34,211,238,0.4); border-left: 3px solid var(--accent); border-radius: 10px; background: rgba(34,211,238,0.07); color: var(--ink); font-size: 0.82rem; line-height: 1.35; }
+  #cc-drive-note .ic { font-size: 1.1rem; line-height: 1; flex: 0 0 auto; }
+  #cc-drive-note code { background: rgba(34,211,238,0.16); color: #a5f3fc; padding: 0.08rem 0.4rem; border-radius: 5px; font-weight: 700; }
+  #cc-drive-note .sub { margin-top: 0.35rem; font-size: 0.72rem; color: var(--dim); }
+  #cc-drive-note-x { margin-left: auto; flex: 0 0 auto; align-self: flex-start; background: none; border: none; color: var(--dim); font-size: 0.9rem; line-height: 1; padding: 0.1rem 0.3rem; cursor: pointer; border-radius: 5px; }
+  #cc-drive-note-x:hover { color: var(--ink); background: rgba(255,255,255,0.08); }
+  /* stale-preview nudge (Preview tab) */
+  #cc-preview-stale { display: flex; align-items: center; gap: 0.7rem; margin: 0 0 0.6rem; padding: 0.55rem 0.8rem; border: 1px solid rgba(251,191,36,0.5); border-left: 3px solid var(--warn); border-radius: 8px; background: rgba(251,191,36,0.1); color: #fde68a; font-size: 0.8rem; font-weight: 600; }
+  #cc-preview-stale button { margin-left: auto; padding: 0.28rem 0.7rem; flex: 0 0 auto; }
+  .tabbtn.has-update { position: relative; }
+  .tabbtn.has-update::after { content: ''; position: absolute; top: 0.45rem; right: 0.4rem; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--bg, #0b0f1a); }
+  .cc-search { flex: 1 1 180px; min-width: 140px; max-width: 320px; font-size: 0.7rem; padding: 0.22rem 0.5rem; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); }
+  .cc-search:focus { outline: none; border-color: rgba(34,211,238,0.5); }
+  .cc-asset { display: flex; gap: 0.55rem; background: var(--panel2); border: 1px solid var(--line); border-left-width: 2px; border-radius: 8px; padding: 0.5rem; }
+  .cc-asset.k-ready { border-left-color: var(--good); }
+  .cc-asset.k-nr { border-left-color: var(--dim2); }
+  .cc-asset.k-q { border-left-color: var(--warn); }
+  .cc-asset.k-impl { border-left-color: #a78bfa; }
+  .cc-thumbcol { display: flex; flex-direction: column; gap: 0.25rem; flex: 0 0 52px; width: 52px; }
+  .cc-thumb { width: 52px; height: 52px; border-radius: 6px; background: #0b0f1a center/contain no-repeat; border: 1px solid var(--line); image-rendering: pixelated; position: relative; cursor: pointer; transition: border-color 0.12s, box-shadow 0.12s; }
+  .cc-thumb:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .cc-thumbbtn { font-size: 0.56rem; padding: 0.14rem 0.1rem; text-align: center; white-space: nowrap; }
+  .cc-thumb .kg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; }
+  .cc-abody { flex: 1; min-width: 0; }
+  .cc-arow1 { display: flex; align-items: center; gap: 0.4rem; }
+  .cc-aname { color: var(--ink); font-size: 0.74rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cc-tag { font-size: 0.6rem; padding: 0.08rem 0.36rem; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  .cc-tag.ready { color: var(--good); border-color: rgba(52,211,153,0.4); }
+  .cc-tag.nr { color: var(--dim2); }
+  .cc-tag.q { color: var(--warn); border-color: rgba(251,191,36,0.4); }
+  .cc-tag.impl { color: #c4b5fd; border-color: rgba(167,139,250,0.4); }
+  .cc-tag.dirty { color: #67e8f9; }
+  .cc-ains { margin-top: 0.35rem; min-height: 2.1rem; font-size: 0.7rem; padding: 0.3rem 0.4rem; }
+  .cc-actions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; align-items: center; }
+  .cc-actions button { font-size: 0.64rem; padding: 0.2rem 0.45rem; }
+  /* state toggle: label = CURRENT state. ON (ready) = affirmative green, OFF (not-ready) = muted neutral. */
+  .cc-statebtn.on { color: var(--good); border-color: rgba(52,211,153,0.5); background: rgba(52,211,153,0.14); font-weight: 600; }
+  .cc-statebtn.off { color: var(--dim); border-color: var(--line); background: var(--panel2); }
+  .cc-qbox { margin-top: 0.35rem; border: 1px solid rgba(251,191,36,0.3); border-radius: 6px; padding: 0.35rem 0.45rem; font-size: 0.66rem; }
+  .cc-qbox label { display: flex; gap: 0.35rem; align-items: flex-start; margin: 0.15rem 0; color: var(--dim); }
+  .cc-summary { font-size: 0.66rem; color: var(--dim2); margin-bottom: 0.3rem; }
+  .cc-atask { background: var(--panel2); border-left: 2px solid #38bdf8; border-radius: 6px; padding: 0.35rem 0.5rem; font-size: 0.68rem; color: var(--dim); }
+  /* ── tabbed layout (UX overhaul): wider wrap + tab bar + space-filling grids ── */
+  .header .badges button { padding: 0.4rem 0.9rem; }
+  .tabbar { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); margin: 0 0 1.3rem; flex-wrap: wrap; }
+  .tabbtn { background: transparent; border: 1px solid transparent; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; color: var(--dim); padding: 0.55rem 1.1rem; font-weight: 600; font-size: 0.86rem; }
+  .tabbtn:hover { color: var(--ink); background: var(--panel2); border-color: var(--line); border-bottom-color: transparent; }
+  .tabbtn.active { color: var(--accent); background: rgba(34,211,238,0.08); border-color: var(--line); border-bottom-color: var(--accent); }
+  .tabbtn .cnt { display: inline-block; min-width: 1.1rem; text-align: center; font-size: 0.68rem; font-weight: 700; color: var(--dim2); background: var(--panel2); border-radius: 999px; padding: 0 0.35rem; margin-left: 0.25rem; }
+  .tabbtn.active .cnt { color: #a5f3fc; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .stats.stats-wide { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1rem; align-items: start; margin-top: 1rem; }
+  .cc-asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 0.6rem; }
+  .cc-asset-grid .cc-empty { grid-column: 1 / -1; }
+  .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 1rem; align-items: start; }
+  .preview-card { display: flex; flex-direction: column; height: calc(100vh - 11rem); min-height: 480px; }
+  .preview-card iframe { flex: 1; min-height: 400px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ⚠ LOUD fallback-supervisor banner: the anti-invisible-process rail (§7/§15d) -->
+  <div id="cc-banner">
+    <div>
+      <div class="txt">⚠ FALLBACK SUPERVISOR RUNNING — headless <code style="background:rgba(255,255,255,0.2);color:#fff;">claude -p</code> loop</div>
+      <div class="sub" id="cc-banner-sub">pid — · started — · tick — · —/— today</div>
+    </div>
+    <button type="button" onclick="ccStop(event)">⏹ Stop loop</button>
+  </div>
+
+  <div class="header">
+    <h1>🪐 Cosmo Canyon</h1>
+    <div class="badges">
+      <span class="pill stopped" id="cc-status-pill"><span class="dot"></span> Checking…</span>
+      <span class="pill running" id="cc-stage-badge" style="display:none;"><span class="dot"></span> <span id="cc-stage-text">tick</span></span>
+      <!-- Start/Stop moved to Settings › Loop control (avoids accidental clicks); status pill stays here -->
+    </div>
+  </div>
+
+  <!-- ── intended-usage callout: the loop is meant to be driven by Claude Code, not this button ── -->
+  <div id="cc-drive-note">
+    <span class="ic">💡</span>
+    <div>
+      <b>Intended usage:</b> don't click <b>Start loop</b>. In your Claude Code session, just say
+      <code>Drive Cosmo Canyon</code> — the orchestrator runs the loop <b>while you're present</b> (you can watch, steer, and stop it in chat).
+      <div class="sub"><b>▶ Start loop</b> (under <b>Settings › Loop control</b>) is only the detached fallback supervisor for <b>unattended / overnight</b> runs.</div>
+    </div>
+    <button type="button" id="cc-drive-note-x" title="dismiss" aria-label="dismiss" onclick="ccDismissDriveNote()">✕</button>
+  </div>
+
+  <!-- ── tab bar ── -->
+  <nav class="tabbar" id="cc-tabbar">
+    <button type="button" class="tabbtn active" data-tab="dashboard" onclick="ccShowTab('dashboard')">📊 Dashboard</button>
+    <button type="button" class="tabbtn" data-tab="assets" onclick="ccShowTab('assets')">🎨 Assets <span class="cnt" id="cc-tab-assets-cnt">0</span></button>
+    <button type="button" class="tabbtn" data-tab="preview" onclick="ccShowTab('preview')">🖥 Preview</button>
+    <button type="button" class="tabbtn" data-tab="settings" onclick="ccShowTab('settings')">⚙ Settings</button>
+  </nav>
+
+  <!-- ═══ DASHBOARD (realtime worker/loop state) ═══ -->
+  <section class="tab-panel active" id="tab-dashboard">
+    <div class="card">
+      <div id="cc-alert" style="display:none;font-size:0.78rem;font-weight:600;border-radius:6px;padding:0.5rem 0.65rem;margin:0 0 0.7rem;"></div>
+      <div class="stats stats-wide">
+        <div class="stat"><div class="lbl">In-flight</div><div class="val" id="cc-inflight">idle</div></div>
+        <div class="stat"><div class="lbl">Ready</div><div class="val" id="cc-ready-stat">0</div></div>
+        <div class="stat"><div class="lbl">Done</div><div class="val" id="cc-done-stat">0</div></div>
+        <div class="stat"><div class="lbl">Blocked</div><div class="val" id="cc-blocked-stat">0</div></div>
+        <div class="stat"><div class="lbl">Suggestions</div><div class="val" id="cc-suggnum-stat">0</div></div>
+        <div class="stat"><div class="lbl">Ticks today</div><div class="val" id="cc-usage-stat">—</div></div>
+        <div class="stat"><div class="lbl">Supervisor</div><div class="val" id="cc-sup-stat" style="font-size:0.9rem;">—</div></div>
+        <div class="stat"><div class="lbl">Mode</div><div class="val" id="cc-mode-stat" style="font-size:0.9rem;">—</div></div>
+        <div class="stat"><div class="lbl">Known-good</div><div class="val" id="cc-known-stat" style="font-size:0.9rem;">—</div></div>
+      </div>
+      <div class="mini" style="margin-top:0.6rem;">Last: <span id="cc-laststage" style="color:#cbd5e1;">—</span></div>
+    </div>
+
+    <div class="dash-grid">
+      <!-- ── Active tasks: pure read of active.json (writer is phase 5; renders [] gracefully) ── -->
+      <div class="card">
+        <h2>⚙ Active tasks <span class="pill idle" id="cc-active-count" style="margin-left:auto;">0</span></h2>
+        <div id="cc-active-list" style="display:flex;flex-direction:column;gap:0.35rem;"></div>
+      </div>
+
+      <!-- ── Feel review: HUMAN gate for feel/visual specs (§15.18). A model critic verdict is ADVISORY — only an operator confirm flips Implemented. ── -->
+      <div class="card">
+        <h2>🎨 Feel review <span class="pill idle" id="cc-feel-count" style="margin-left:auto;">0</span></h2>
+        <p class="muted" style="margin:0 0 0.5rem;">Feel/visual specs whose critic verdict is <b>advisory only</b>. A model verdict never lands a green — review the snapshot, then confirm to flip Implemented.</p>
+        <div id="cc-feel-list" style="display:flex;flex-direction:column;gap:0.35rem;"></div>
+      </div>
+
+      <div class="card">
+        <h2>✅ Backlog <span class="pill idle" id="cc-backlog-count" style="margin-left:auto;">0</span></h2>
+        <p class="muted" style="margin:0 0 0.4rem;">Read-only view of what the planner has queued from the Ready specs.</p>
+        <div id="cc-backlog-list" style="margin-top:0.2rem;display:flex;flex-direction:column;gap:0.35rem;"></div>
+      </div>
+
+      <div class="card">
+        <h2>💡 Suggestions <span class="pill idle" id="cc-sugg-count" style="margin-left:auto;">0</span></h2>
+        <div id="cc-sugg-list" style="display:flex;flex-direction:column;gap:0.35rem;"></div>
+      </div>
+
+      <div class="card">
+        <h2>🏁 Completed</h2>
+        <div id="cc-completions" style="display:flex;flex-direction:column;gap:0.3rem;font-size:0.72rem;color:var(--dim);"></div>
+      </div>
+
+      <div class="card">
+        <h2>⌨ Logs</h2>
+        <details open><summary style="cursor:pointer;font-size:0.78rem;color:#cbd5e1;">planner log + host log</summary>
+          <pre id="cc-planner-log">—</pre>
+          <pre id="cc-host-log">—</pre>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ ASSETS (Asset Browser — the PRIMARY human input surface §15d) ═══ -->
+  <section class="tab-panel" id="tab-assets">
+    <div class="card" id="cc-asset-card">
+      <h2>🎨 Asset Browser <span class="pill idle" id="cc-asset-count" style="margin-left:auto;">0</span></h2>
+      <div id="cc-dropzone">⬇ drop image / audio / spec files here (or click) — PNG·JPG·GIF · WAV·MP3·OGG · .md/.txt</div>
+      <input type="file" id="cc-asset-file" multiple accept="image/*,audio/*,.md,.txt,text/*" style="display:none;">
+      <div class="cc-filterbar" id="cc-asset-filters"></div>
+      <div class="cc-summary" id="cc-asset-summary"></div>
+      <div id="cc-asset-list" class="cc-asset-grid"></div>
+    </div>
+  </section>
+
+  <!-- ═══ PREVIEW (game dev server :8780) ═══ -->
+  <section class="tab-panel" id="tab-preview">
+    <div class="card preview-card">
+      <h2>🖥 Preview (:8780)
+        <span style="margin-left:auto;display:flex;gap:0.4rem;">
+          <button type="button" style="padding:0.3rem 0.6rem;" onclick="ccReloadPreview()">↻ Reload</button>
+          <button type="button" style="padding:0.3rem 0.6rem;" onclick="window.open('http://localhost:8780/','_blank')">⧉ Popout</button>
+          <button type="button" style="padding:0.3rem 0.6rem;" onclick="document.getElementById('cc-preview').requestFullscreen()">⛶ Fullscreen</button>
+        </span>
+      </h2>
+      <!-- stale-preview nudge: shown when a new bead has landed since this iframe last loaded -->
+      <div id="cc-preview-stale" style="display:none;">
+        <span>🔄 New changes have landed since this preview loaded — reload to see them.</span>
+        <button type="button" class="btn-go" onclick="ccReloadPreview()">↻ Reload now</button>
+      </div>
+      <iframe id="cc-preview" src="http://localhost:8780/"></iframe>
+      <details style="margin-top:0.5rem;"><summary class="mini" style="cursor:pointer;">Auto-snapshot (headless capture)</summary>
+        <img id="cc-snapshot" src="/api/cosmocanyon/snapshot" style="display:none;max-width:100%;border-radius:6px;margin-top:0.4rem;">
+      </details>
+    </div>
+  </section>
+
+  <!-- ═══ SETTINGS (worker engine + concurrency/runtime) ═══ -->
+  <section class="tab-panel" id="tab-settings">
+    <div class="settings-grid">
+      <div class="card" style="grid-column:1/-1;">
+        <h2>🕹 Three ways to drive the loop</h2>
+        <p class="muted" style="margin:0 0 0.7rem;">All three read/write the same <code>control/</code> plane and delegate every gate/commit to the same <code>bookkeep.mjs</code> — the deterministic rails never move; only <b>who runs the ticks</b> differs. Full playbook: <code>AGENTS.md</code> › “Three ways to drive it” + <code>docs/DRIVE.md</code>.</p>
+        <div class="mini" style="display:flex;flex-direction:column;gap:0.75rem;line-height:1.4;">
+          <div><b>A · Claude Code, present — the default (“Drive Cosmo Canyon”).</b> Recommended. In a Claude Code chat say <code>Drive Cosmo Canyon to do X</code>; the agent orchestrates with its own judgment + vision, spawning <code>Agent</code> subagents per bead. Most adaptive — you watch, steer, and stop it in chat. No external process, no <code>claude -p</code>.</div>
+          <div><b>B · In-app Workflow — desktop app, hands-off.</b> From a desktop chat session launch the dynamic Workflow:<br><code>Workflow({scriptPath:"cosmo-canyon/orchestrator/cc-loop.workflow.js", args:{ticks:1, noPlanner:true}})</code><br>The Workflow script hosts the loop; each tick is a spawned agent (sense = haiku, work = sonnet, planner = opus), visible live in the app’s tasks pane. Runs only while the app/session is alive. Stop: set <code>control/.paused</code> or <code>TaskStop</code> the Workflow.</div>
+          <div><b>C · Detached supervisor — unattended / overnight, last resort.</b> Click <b>▶ Start loop</b> below — or <code>POST /api/cosmocanyon/start</code>, or CLI <code>node orchestrator/supervisor.mjs</code>. Spawns a detached <code>supervisor.mjs</code> running a per-tick <code>claude -p</code>. It is an <b>invisible</b> headless loop → the LOUD banner flags it while alive; <b>⏹ Stop loop</b> (or <code>control/.paused</code>) halts it.</div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column:1/-1;">
+        <h2>▶ Loop control <span class="pill idle" id="cc-loop-pill" style="margin-left:auto;">—</span></h2>
+        <p class="muted" style="margin:0 0 0.6rem;">Preferred path: tell Claude Code <code>Drive Cosmo Canyon to do X</code> (you-present). These buttons spawn/kill the <b>detached fallback supervisor</b> for unattended runs.</p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button type="button" class="btn-go" id="cc-start-btn" onclick="ccStart(event)">▶ Start loop</button>
+          <button type="button" class="btn-stop" onclick="ccStop(event)">⏹ Stop loop</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🧠 Worker engine</h2>
+        <p class="muted" style="margin:0 0 0.6rem;">Check the models the orchestrator is <b>allowed</b> to use — it picks one <b>per task</b> (logic→agy, feel/visual→sonnet, hard/structural→opus), limited to your set (falls back to the next-best checked). Feel/visual needs a Claude model (agy is preview-blind). Agy auto-cools-down on a Gemini quota wall.</p>
+        <div id="cc-agent-buttons" style="display:flex;flex-direction:column;gap:0.4rem;"></div>
+        <div id="cc-agent-note" class="mini" style="color:var(--warn);margin-top:0.5rem;"></div>
+      </div>
+
+      <div class="card">
+        <h2>⚙ Concurrency &amp; runtime <span class="pill idle" id="cc-config-pill" style="margin-left:auto;">—</span></h2>
+        <p class="muted" style="margin:0 0 0.6rem;">How the loop runs — change while <b>stopped</b>. <b>Serial</b> = one bead at a time (safest, byte-for-byte). <b>Parallel</b> = up to N isolated-worktree workers with a single-committer merge.</p>
+        <div id="cc-config"></div>
+      </div>
+
+      <div class="card" style="grid-column:1/-1;">
+        <h2>ℹ About</h2>
+        <p class="mini" style="margin:0;">Standalone app: this host (<code>:7788</code>) serves the dashboard + all <code>/api/cosmocanyon/*</code> routes and spawns the detached <code>supervisor.mjs</code>. The supervisor runs a per-tick <code>claude -p</code> loop building <code>game/</code>: opus planner + hybrid worker (agy logic / Claude feel) + deterministic gate &amp; commit.</p>
+      </div>
+
+      <!-- ✍ Mode-A prompt builder — assemble a "Drive Cosmo Canyon to X" prompt to paste into a Claude Code chat -->
+      <div class="card" style="grid-column:1/-1;">
+        <h2>✍ Drive prompt builder <span class="mini" style="margin-left:auto;color:var(--dim2);font-weight:400;">Mode A · paste into a Claude Code chat</span></h2>
+        <p class="muted" style="margin:0 0 0.6rem;">Assemble the <code>Drive Cosmo Canyon to …</code> prompt for the you-present default (<b>A</b> above), then copy it into a Claude Code chat.</p>
+        <label class="mini" for="cc-pb-goal" style="display:block;margin-bottom:0.25rem;color:var(--dim);">Goal (the <b>X</b> in “Drive Cosmo Canyon to X”)</label>
+        <input id="cc-pb-goal" type="text" placeholder="e.g. get a playable first level with a boss fight" oninput="ccBuildPrompt()">
+        <label class="mini" for="cc-pb-doc" style="display:block;margin:0.6rem 0 0.25rem;color:var(--dim);">Design doc link <span style="color:var(--dim2);">(optional — orchestrator reads it &amp; authors the Ready Specs)</span></label>
+        <input id="cc-pb-doc" type="text" placeholder="e.g. https://docs.google.com/… — a URL or path to the design doc" oninput="ccBuildPrompt()">
+        <div style="display:flex;flex-direction:column;gap:0.45rem;margin:0.6rem 0;">
+          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.76rem;color:var(--ink);">
+            <input id="cc-pb-assets" type="checkbox" style="width:auto;flex:0 0 auto;margin:0.15rem 0 0;" onchange="ccBuildPrompt()">
+            <span>Create placeholder assets — appends <i>“Create all the placeholder Assets needed for …”</i></span>
+          </label>
+          <input id="cc-pb-assets-for" type="text" placeholder="placeholder assets for… (blank = same as the Goal above)" oninput="ccBuildPrompt()" style="margin:-0.15rem 0 0.15rem 1.7rem;width:calc(100% - 1.7rem);font-size:0.76rem;">
+          <label style="display:flex;align-items:flex-start;gap:0.55rem;cursor:pointer;font-size:0.76rem;color:var(--ink);">
+            <input id="cc-pb-manage" type="checkbox" style="width:auto;flex:0 0 auto;margin:0.15rem 0 0;" onchange="ccBuildPrompt()">
+            <span>Manage workers closely — tells the orchestrator to watch for deadlocks &amp; other issues and intervene.</span>
+          </label>
+        </div>
+        <div class="row" style="align-items:center;">
+          <button type="button" class="btn-go" onclick="ccCopyPrompt(event)">📋 Copy prompt</button>
+          <span id="cc-pb-copied" class="mini" style="color:var(--good);opacity:0;transition:opacity 0.2s;">✓ Copied!</span>
+        </div>
+        <textarea id="cc-pb-out" readonly rows="4" style="margin-top:0.55rem;font-size:0.78rem;line-height:1.5;" onclick="this.select()"></textarea>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ── Cosmo Canyon standalone dashboard client (§7/§15d). Same-origin API (:7788). 3s poll, no websocket. ──
+  const ccApi = (p, opt) => fetch('/api/cosmocanyon' + p, opt);
+  // §H2 — escape quotes too: several sinks interpolate untrusted values (asset filename, planner-supplied
+  // bead/suggestion id) into HTML ATTRIBUTE contexts (title="…", onclick="fn('…')"). Escaping only &<> let a
+  // " or ' break out of the attribute and inject an event handler / JS. Cover both attribute and JS-string contexts.
+  const ccEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let ccPollInterval = null;
+
+  function showToast(message, type = 'success') {
+    const box = document.getElementById('toast'); const el = document.createElement('div');
+    el.className = 'toast ' + type; el.textContent = message; box.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2600);
+  }
+  function stopCosmoPolling() { if (ccPollInterval) { clearInterval(ccPollInterval); ccPollInterval = null; } }
+  function startCosmoPolling() { stopCosmoPolling(); pollCosmo(); ccPollInterval = setInterval(pollCosmo, 3000); }
+
+  async function ccStart(e) { if (e) e.preventDefault(); const b = document.getElementById('cc-start-btn'); b.disabled = true; try { await ccApi('/start', { method: 'POST' }); showToast('Supervisor starting…'); } catch {} setTimeout(() => { b.disabled = false; pollCosmo(); }, 1200); }
+  async function ccStop(e) { if (e) e.preventDefault(); try { await ccApi('/stop', { method: 'POST' }); showToast('Stopped + paused'); } catch {} setTimeout(pollCosmo, 600); }
+
+  // ── ✍ Mode-A "Drive Cosmo Canyon to X" prompt builder (client-only; assembles + copies text) ──
+  function ccBuildPrompt() {
+    const goalRaw = (document.getElementById('cc-pb-goal').value || '').trim();
+    const g = (goalRaw || 'X').replace(/[.\s]+$/, '');   // strip trailing period/space so WE control punctuation
+    const doc = (document.getElementById('cc-pb-doc').value || '').trim().replace(/[.\s]+$/, '');
+    const lines = ['Drive Cosmo Canyon to ' + g + '.'];
+    if (doc) lines.push('Read the design doc at ' + doc + ', extract the design, and author the necessary Ready Specs for it in the Asset Browser.');
+    if (document.getElementById('cc-pb-assets').checked) {
+      const forRaw = (document.getElementById('cc-pb-assets-for').value || '').trim().replace(/[.\s]+$/, '');
+      const y = forRaw || g;   // Y defaults to the Goal (X) when its own field is left blank
+      lines.push('Create all the placeholder Assets needed for ' + y + '.');
+    }
+    if (document.getElementById('cc-pb-manage').checked) lines.push('Manage the workers closely — check for deadlocks and other issues, and intervene if a worker stalls.');
+    const out = lines.join(' ');
+    document.getElementById('cc-pb-out').value = out;
+    return out;
+  }
+  async function ccCopyPrompt(e) {
+    if (e) e.preventDefault();
+    const text = ccBuildPrompt();
+    const ta = document.getElementById('cc-pb-out');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
+      else { ta.focus(); ta.select(); document.execCommand('copy'); }
+    } catch { ta.focus(); ta.select(); try { document.execCommand('copy'); } catch {} }
+    const flag = document.getElementById('cc-pb-copied'); flag.style.opacity = '1'; setTimeout(() => { flag.style.opacity = '0'; }, 1400);
+    showToast('Prompt copied to clipboard');
+  }
+
+  async function loadCosmoAgent() {
+    try { const j = await (await ccApi('/agent')).json();
+      const allowed = new Set(j.allowed || []); const wrap = document.getElementById('cc-agent-buttons'); wrap.innerHTML = '';
+      (j.options || []).forEach(o => {
+        const lab = document.createElement('label');
+        lab.style.cssText = 'display:flex;align-items:center;gap:0.55rem;padding:0.35rem 0.5rem;border:1px solid var(--line);border-radius:0.4rem;cursor:pointer;';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = o.key; cb.checked = allowed.has(o.key); cb.onchange = saveCosmoAllowed;
+        cb.style.cssText = 'width:auto;flex:0 0 auto;margin:0;padding:0;'; // override the global input{width:100%}
+        const span = document.createElement('span'); span.textContent = o.label; span.style.color = '#e2e8f0';
+        lab.appendChild(cb); lab.appendChild(span); wrap.appendChild(lab);
+      });
+      document.getElementById('cc-agent-note').textContent = j.cooldownAgy ? '⏳ agy paused (Gemini quota cooldown) — orchestrator using Claude until it clears; re-check agy to retry now.' : '';
+    } catch {}
+  }
+  async function saveCosmoAllowed() {
+    const keys = [...document.querySelectorAll('#cc-agent-buttons input[type=checkbox]:checked')].map(c => c.value);
+    try { const r = await ccApi('/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allowed: keys }) });
+      const j = await r.json(); if (!keys.length && j.allowed) showToast('At least one model required — re-enabled all'); } catch {}
+    loadCosmoAgent();
+  }
+  async function loadCosmoConfig() {
+    try {
+      const j = await (await ccApi('/config')).json(); const c = j.config || {}; const max = j.max || 2;
+      document.getElementById('cc-config-pill').textContent = c.mode || '—';
+      const box = document.getElementById('cc-config'); box.innerHTML = '';
+      const parallel = c.mode === 'parallel';
+      // serial / parallel toggle
+      const modeRow = document.createElement('div'); modeRow.style.cssText = 'display:flex;gap:0.4rem;margin-bottom:0.6rem;';
+      ['serial', 'parallel'].forEach(mo => { const b = document.createElement('button'); b.className = 'full ' + (c.mode === mo ? 'btn-stop' : 'btn-go'); b.style.justifyContent = 'center'; b.textContent = (c.mode === mo ? '● ' : '○ ') + mo; b.onclick = () => saveCosmoConfig({ mode: mo }); modeRow.appendChild(b); });
+      box.appendChild(modeRow);
+      // numeric + select knobs
+      const grid = document.createElement('div'); grid.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:0.4rem 0.6rem;align-items:center;font-size:0.72rem;color:var(--dim);';
+      const num = (label, key, val, min, mx, disabled) => {
+        const l = document.createElement('span'); l.textContent = label;
+        const i = document.createElement('input'); i.type = 'number'; i.value = val; i.min = min; if (mx) i.max = mx; i.disabled = !!disabled;
+        i.style.cssText = 'width:4.5rem;justify-self:end;padding:0.3rem 0.4rem;' + (disabled ? 'opacity:0.45;' : '');
+        i.onchange = () => saveCosmoConfig({ [key]: Number(i.value) });
+        grid.appendChild(l); grid.appendChild(i);
+      };
+      num('Daily tick budget (ticks/day)', 'tickBudget', j.tickBudget, 1);   // supervisor DAILY_CAP — read live each cycle
+      if (parallel) num(`Max parallel workers (2–${max})`, 'maxConcurrency', c.maxConcurrency, 2, max, false);
+      num('Per-agent timeout (min)', 'perAgentTimeoutMin', c.perAgentTimeoutMin, 1);
+      num('Heavy-cost reserve', 'heavyCostReserve', c.heavyCostReserve, 1);
+      num('Heartbeat (sec)', 'heartbeatSec', c.heartbeatSec, 1);
+      const il = document.createElement('span'); il.textContent = 'Isolation';
+      const is = document.createElement('select'); is.style.cssText = 'justify-self:end;width:auto;padding:0.3rem 0.4rem;';
+      ['auto', 'worktree', 'inline'].forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = o; op.selected = c.isolation === o; is.appendChild(op); });
+      is.onchange = () => saveCosmoConfig({ isolation: is.value });
+      grid.appendChild(il); grid.appendChild(is);
+      box.appendChild(grid);
+      // worktree root (parallel only)
+      const wr = document.createElement('div'); wr.style.cssText = 'margin-top:0.55rem;';
+      const wl = document.createElement('div'); wl.className = 'mini'; wl.style.color = 'var(--dim)'; wl.textContent = 'Worktree root (parallel):';
+      const wi = document.createElement('input'); wi.type = 'text'; wi.value = c.worktreeRoot || ''; wi.disabled = !parallel; if (!parallel) wi.style.opacity = '0.45';
+      wi.onchange = () => saveCosmoConfig({ worktreeRoot: wi.value });
+      wr.appendChild(wl); wr.appendChild(wi); box.appendChild(wr);
+    } catch {}
+  }
+  async function saveCosmoConfig(patch) {
+    try { await ccApi('/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }); showToast('Config saved'); } catch {}
+    loadCosmoConfig();
+  }
+
+  async function acceptCosmoSugg(id) { try { await ccApi('/suggestions/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); pollCosmo(); } catch {} }
+  async function rejectCosmoSugg(id) { const reason = prompt("Reject reason (planner won't re-suggest):") || ''; try { await ccApi('/suggestions/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, reason }) }); pollCosmo(); } catch {} }
+
+  function renderBanner(s) {
+    const alive = s.supervisor && s.supervisor.alive;
+    const banner = document.getElementById('cc-banner');
+    if (alive) {
+      banner.classList.add('on');
+      const t = s.inFlight ? (s.inFlight.beadId || (s.inFlight.mode ? 'planner:' + s.inFlight.mode : 'tick')) : 'idle';
+      const started = s.supervisor.started ? new Date(s.supervisor.started).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '?';
+      const u = s.usage || {};
+      document.getElementById('cc-banner-sub').textContent = 'pid ' + (s.supervisor.pid || '?') + ' · started ' + started + ' · tick ' + t + ' · ' + (u.today != null ? u.today : '?') + '/' + (u.cap != null ? u.cap : '?') + ' today';
+      document.title = '● supervisor running — Cosmo Canyon';
+    } else {
+      banner.classList.remove('on');
+      document.title = 'Cosmo Canyon';
+    }
+  }
+
+  // ── stale-preview detection: the iframe (:8780) reflects the game as of its last (re)load. A landed bead
+  // advances knownGood (green commit) and/or the completions count — when that composite "game version" moves
+  // past what the iframe loaded at, the preview is behind → nudge a reload. Vite HMR usually hot-patches, but a
+  // fresh commit (new files / sim changes) isn't guaranteed to hot-apply, so we prompt to be sure.
+  let ccPreviewLoadedVer = null;   // the game version the iframe currently shows (null until first known)
+  let ccPreviewCurVer = null;      // the latest game version observed from /status
+  function ccGameVer(s) { return String((s && s.knownGood) || '') + ':' + ((s && s.counts && s.counts.completions != null) ? s.counts.completions : 0); }
+  function ccReloadPreview() {
+    const f = document.getElementById('cc-preview'); if (f) f.src = f.src;   // force iframe reload
+    ccPreviewLoadedVer = ccPreviewCurVer;                                    // now current → clear the nudge
+    const n = document.getElementById('cc-preview-stale'); if (n) n.style.display = 'none';
+    const tab = document.querySelector('#cc-tabbar .tabbtn[data-tab="preview"]'); if (tab) tab.classList.remove('has-update');
+  }
+  function ccUpdatePreviewStaleness(s) {
+    ccPreviewCurVer = ccGameVer(s);
+    if (ccPreviewLoadedVer === null) ccPreviewLoadedVer = ccPreviewCurVer;   // first observation = what the iframe loaded at; don't false-alarm
+    const stale = ccPreviewCurVer !== ccPreviewLoadedVer;
+    const n = document.getElementById('cc-preview-stale'); if (n) n.style.display = stale ? 'flex' : 'none';
+    const tab = document.querySelector('#cc-tabbar .tabbtn[data-tab="preview"]'); if (tab) tab.classList.toggle('has-update', stale);
+  }
+
+  async function pollCosmo() {
+    let s; try { s = await (await ccApi('/status')).json(); } catch { return; }
+    renderBanner(s);
+    ccUpdatePreviewStaleness(s);
+    const pill = document.getElementById('cc-status-pill');
+    const alive = s.supervisor && s.supervisor.alive;
+    pill.className = 'pill ' + (s.paused ? 'stopped' : alive ? 'running' : 'idle');
+    pill.innerHTML = '<span class="dot"></span> ' + (s.paused ? 'Paused (' + ccEsc(s.pausedReason || '') + ')' : alive ? 'Running' : 'Stopped');
+    const lp = document.getElementById('cc-loop-pill'); if (lp) { lp.className = pill.className; lp.textContent = s.paused ? 'paused' : alive ? 'running' : 'stopped'; }
+    const sb = document.getElementById('cc-stage-badge'); const inflight = s.inFlight;
+    if (inflight) { sb.style.display = ''; document.getElementById('cc-stage-text').textContent = (inflight.mode ? 'planner:' + inflight.mode : 'work:' + (inflight.beadId || '')); } else sb.style.display = 'none';
+    document.getElementById('cc-inflight').textContent = inflight ? (inflight.beadId || inflight.mode || 'tick') : 'idle';
+    document.getElementById('cc-ready-stat').textContent = s.counts ? s.counts.ready : 0;
+    document.getElementById('cc-done-stat').textContent = s.counts ? s.counts.completions : 0;
+    // extended realtime tiles (worker/loop state)
+    const setTxt = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+    setTxt('cc-blocked-stat', s.counts ? s.counts.blocked : 0);
+    setTxt('cc-suggnum-stat', s.counts ? s.counts.suggestions : 0);
+    setTxt('cc-usage-stat', s.usage ? ((s.usage.today != null ? s.usage.today : '?') + '/' + (s.usage.cap != null ? s.usage.cap : '?')) : '—');
+    setTxt('cc-sup-stat', alive ? ('● pid ' + (s.supervisor.pid || '?')) : (s.paused ? 'paused' : 'stopped'));
+    setTxt('cc-mode-stat', s.mode || '—');
+    setTxt('cc-known-stat', s.knownGood || '—');
+    document.getElementById('cc-laststage').textContent = (s.lastStatus && (s.lastStatus.stage || '') + (s.lastStatus.title ? ' — ' + s.lastStatus.title : '')) || s.stage || '—';
+    const al = document.getElementById('cc-alert');
+    if (s.guardAlert) { al.style.display = 'block'; al.style.background = 'rgba(239,68,68,0.15)'; al.style.color = '#fca5a5'; al.textContent = '⚠ guard: ' + JSON.stringify(s.guardAlert); }
+    else if (s.agyStrikes > 0) { al.style.display = 'block'; al.style.background = 'rgba(251,191,36,0.12)'; al.style.color = '#fbbf24'; al.textContent = 'agy quota strikes: ' + s.agyStrikes; }
+    else al.style.display = 'none';
+    // backlog
+    try { const beads = await (await ccApi('/backlog')).json();
+      document.getElementById('cc-backlog-count').textContent = beads.length;
+      document.getElementById('cc-backlog-list').innerHTML = beads.map(b => {
+        const col = b.status === 'abandoned' ? '#ef4444' : b.status === 'blocked' ? '#f59e0b' : '#22d3ee';
+        return '<div class="bead" style="border-left-color:' + col + ';">'
+          + '<div style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="color:#e2e8f0;">' + ccEsc(b.title) + '</span>'
+          + '<span style="color:#64748b;white-space:nowrap;">' + ccEsc(b.tier || '') + (b.engine ? '·' + ccEsc(b.engine) : '') + (b.attempts ? ' ↻' + b.attempts : '') + '</span></div>'
+          + (b.status !== 'ready' ? '<div style="color:' + col + ';font-size:0.66rem;">' + ccEsc(b.status) + (b.blocked_reason ? ': ' + ccEsc(b.blocked_reason) : '') + '</div>' : '') + '</div>';
+      }).join('') || '<div class="muted">empty</div>';
+    } catch {}
+    // suggestions
+    try { const sg = await (await ccApi('/suggestions')).json();
+      document.getElementById('cc-sugg-count').textContent = sg.length;
+      document.getElementById('cc-sugg-list').innerHTML = sg.map(x => '<div class="bead" style="border-left-color:#a78bfa;"><div style="color:#e2e8f0;">' + ccEsc(x.title) + '</div><div style="margin-top:0.3rem;display:flex;gap:0.3rem;"><button class="btn-go" style="padding:0.2rem 0.5rem;font-size:0.66rem;" onclick="acceptCosmoSugg(\'' + ccEsc(x.id) + '\')">accept</button><button class="btn-stop" style="padding:0.2rem 0.5rem;font-size:0.66rem;" onclick="rejectCosmoSugg(\'' + ccEsc(x.id) + '\')">reject</button></div></div>').join('') || '<div class="muted">none</div>';
+    } catch {}
+    // completions
+    try { const c = await (await ccApi('/completions')).json();
+      document.getElementById('cc-completions').innerHTML = c.slice(0, 12).map(x => '<div>✓ <b style="color:#cbd5e1;">' + ccEsc(x.id) + '</b> ' + ccEsc(x.title) + '</div>').join('') || '<div class="muted">none yet</div>';
+    } catch {}
+    // logs + snapshot — the <pre> is a 150px scroll box; /aux returns the TAIL, so pin to the BOTTOM (newest)
+    // or the box shows only the oldest lines below the fold ("logs look stale/frozen" bug, 2026-07-02).
+    try { const a = await (await ccApi('/aux')).json();
+      const setLog = (id, txt) => {
+        const el = document.getElementById(id); if (!el) return;
+        const first = el.dataset.init !== '1';                                  // first real population → force to newest
+        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24; // else respect a user scrolled up
+        el.textContent = txt || '—';
+        if (first || nearBottom) { el.scrollTop = el.scrollHeight; el.dataset.init = '1'; }
+      };
+      setLog('cc-planner-log', a.plannerLog);
+      setLog('cc-host-log', a.hostLog);
+    } catch {}
+    if (s.snapshotMtime) { const img = document.getElementById('cc-snapshot'); img.style.display = 'block'; img.src = '/api/cosmocanyon/snapshot?t=' + s.snapshotMtime; }
+    else { const img = document.getElementById('cc-snapshot'); img.style.display = 'none'; img.removeAttribute('src'); } // no snapshot → hide, don't keep showing a stale frame
+    // Asset Browser + Active tasks — focus-safe diff-render (never clobbers a half-typed instructions field, 15.35)
+    loadCosmoAssets(); loadCosmoActive(); loadCosmoFeelReview();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Asset Browser (§15d) — PRIMARY input surface. Focus-safe 3s diff-render (15.35 ship-blocker):
+  // never innerHTML-replace / reorder a row whose textarea has focus or holds unsaved edits; save is
+  // rev-guarded (409 → reload that row). Composable filters (kind × state × questions). Drag-drop create.
+  // ════════════════════════════════════════════════════════════════════════
+  const CC_KINDS = ['image', 'audio', 'spec'];
+  const CC_KIND_GLYPH = { image: '🖌️', audio: '🔊', spec: '📜' };
+  const ccAssetRows = {};                 // id → { rev, el }
+  let ccAssetFilter = { kind: new Set(), state: new Set(), q: false, search: '' }; // empty kind/state = all; search = free-text over name+instructions
+  let ccLastAssetSig = '';                // guard lastCounts: skip summary rerender when unchanged
+  const ccSaveTimers = {};                // id → debounce handle
+
+  const ccToggleSet = (set, v) => { set.has(v) ? set.delete(v) : set.add(v); };
+  function ccRowRank(a) {                 // actionable first: ready+Q > ready > not_ready > implemented(proj)
+    if (a.state === 'ready' && a.hasOpenQuestions) return 0;
+    if (a.state === 'ready' && !a.implementedBy) return 1;
+    if (a.state === 'not_ready') return 2;
+    return 3;
+  }
+  function ccAssetMatches(a) {
+    if (ccAssetFilter.kind.size && !ccAssetFilter.kind.has(a.kind)) return false;
+    if (ccAssetFilter.state.size && !ccAssetFilter.state.has(a.state)) return false;
+    if (ccAssetFilter.q && !a.hasOpenQuestions) return false;
+    if (ccAssetFilter.search) { const s = ccAssetFilter.search.toLowerCase(); const hay = ((a.filename || a.id || '') + ' ' + (a.instructions || '')).toLowerCase(); if (!hay.includes(s)) return false; }
+    return true;
+  }
+  // A row is LOCKED (never poll-clobbered, 15.35) when an EDITABLE field (textarea/text input) inside it is
+  // focused, it holds unsaved edits, OR it has an OPEN answer qbox (.cc-qwrap[data-open] — an in-progress
+  // answer with checked qids + typed text a rev-change/force render would silently discard). NOTE: a focused
+  // BUTTON must NOT lock the row — else clicking Ready/Not-Ready focuses that button and freezes the row so its
+  // own label never re-renders until focus leaves (the "only updates when I click another button" bug). The
+  // lock protects unsaved TYPING, not a click.
+  const ccRowEditing = (el) => { const a = document.activeElement; return !!a && el.contains(a) && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && a.type !== 'checkbox' && a.type !== 'radio' && a.type !== 'button')); };
+  const ccRowLocked = (el) => !!el && (ccRowEditing(el) || el.dataset.dirty === '1' || !!el.querySelector('.cc-qwrap[data-open="1"]'));
+
+  function ccInitAssetFilters() {
+    const bar = document.getElementById('cc-asset-filters');
+    if (!bar || bar.dataset.wired) return; bar.dataset.wired = '1';
+    const mkBtn = (label, cls) => { const b = document.createElement('button'); b.className = 'cc-fbtn' + (cls || ''); b.textContent = label; return b; };
+    // free-text search over filename + instructions — real-time, focus-safe (lives in the once-wired filterbar, never poll-clobbered)
+    const search = document.createElement('input'); search.type = 'search'; search.id = 'cc-asset-search'; search.className = 'cc-search'; search.placeholder = '🔍 search name / instructions';
+    search.addEventListener('input', () => { ccAssetFilter.search = search.value.trim(); loadCosmoAssets(true); });
+    bar.appendChild(search);
+    // one-click triage preset: Ready + Questions (§15d "Ready+Questions is one click")
+    const preset = mkBtn('🔥 actionable');
+    preset.onclick = () => {
+      ccAssetFilter = { kind: new Set(), state: new Set(['ready']), q: true, search: ccAssetFilter.search };
+      ccSyncFilterButtons(); loadCosmoAssets(true);
+    };
+    bar.appendChild(preset);
+    CC_KINDS.forEach(k => { const b = mkBtn(k); b.dataset.kind = k; b.onclick = () => { ccToggleSet(ccAssetFilter.kind, k); b.classList.toggle('on'); loadCosmoAssets(true); }; bar.appendChild(b); });
+    ['ready', 'not_ready'].forEach(s => { const b = mkBtn(s); b.dataset.state = s; b.onclick = () => { ccToggleSet(ccAssetFilter.state, s); b.classList.toggle('on'); loadCosmoAssets(true); }; bar.appendChild(b); });
+    const qb = mkBtn('❓ questions'); qb.dataset.q = '1'; qb.onclick = () => { ccAssetFilter.q = !ccAssetFilter.q; qb.classList.toggle('on'); loadCosmoAssets(true); }; bar.appendChild(qb);
+    const clr = document.createElement('button'); clr.className = 'cc-fclear'; clr.textContent = 'clear'; clr.onclick = () => { ccAssetFilter = { kind: new Set(), state: new Set(), q: false, search: '' }; const si = document.getElementById('cc-asset-search'); if (si) si.value = ''; ccSyncFilterButtons(); loadCosmoAssets(true); }; bar.appendChild(clr);
+  }
+  function ccSyncFilterButtons() {
+    document.querySelectorAll('#cc-asset-filters .cc-fbtn').forEach(b => {
+      const on = (b.dataset.kind && ccAssetFilter.kind.has(b.dataset.kind)) || (b.dataset.state && ccAssetFilter.state.has(b.dataset.state)) || (b.dataset.q && ccAssetFilter.q);
+      b.classList.toggle('on', !!on);
+    });
+  }
+
+  function ccBuildAssetRow(a) {
+    const el = document.createElement('div');
+    const impl = !!a.implementedBy;
+    el.className = 'cc-asset ' + (a.state === 'ready' && a.hasOpenQuestions ? 'k-q' : impl ? 'k-impl' : a.state === 'ready' ? 'k-ready' : 'k-nr');
+    el.dataset.id = a.id; el.dataset.rev = a.rev; el.dataset.dirty = '0';
+    const thumb = a.kind === 'image'
+      ? '<div class="cc-thumb" style="background-image:url(/api/cosmocanyon/assets/file?id=' + encodeURIComponent(a.id) + '&r=' + a.rev + ')"></div>'
+      : '<div class="cc-thumb"><span class="kg">' + (CC_KIND_GLYPH[a.kind] || '❔') + '</span></div>';
+    const tags = ['<span class="cc-tag ' + (a.state === 'ready' ? 'ready' : 'nr') + '">' + a.state + '</span>'];
+    if (a.hasOpenQuestions) tags.push('<span class="cc-tag q">❓ questions</span>');
+    if (a.dirty) tags.push('<span class="cc-tag dirty">dirty</span>');
+    if (impl) tags.push('<span class="cc-tag impl">impl (provisional)</span>');
+    // left column: thumb + an open-file button + a reveal-folder-on-disk button
+    const thumbCol = '<div class="cc-thumbcol">' + thumb
+      + '<button type="button" class="cc-thumbbtn" data-act="file" title="open the asset file in its default app (outside the browser)">⧉ file</button>'
+      + '<button type="button" class="cc-thumbbtn" data-act="dir" title="open the asset folder on disk">📁 folder</button></div>';
+    el.innerHTML = thumbCol + '<div class="cc-abody">'
+      + '<div class="cc-arow1"><span class="cc-aname" title="' + ccEsc(a.filename || a.id) + '">' + (CC_KIND_GLYPH[a.kind] || '') + ' ' + ccEsc(a.filename || a.id) + '</span>' + tags.join('') + '</div>'
+      + '<textarea class="cc-ains" rows="2" placeholder="instructions (e.g. 24x24, 6 frames, 8fps)"></textarea>'
+      + '<div class="cc-actions"></div><div class="cc-qwrap"></div></div>';
+    const fileUrl = '/api/cosmocanyon/assets/file?id=' + encodeURIComponent(a.id) + '&r=' + a.rev;
+    const thumbEl = el.querySelector('.cc-thumb');
+    // thumb click = quick in-browser preview (new tab); the ⧉ file button = open outside the browser (OS default app)
+    if (thumbEl) { thumbEl.title = 'preview ' + (a.filename || a.id) + ' in a new tab'; thumbEl.onclick = () => window.open(fileUrl, '_blank', 'noopener'); }
+    el.querySelector('[data-act="file"]').onclick = () => ccOpenAssetFile(a.id);
+    el.querySelector('[data-act="dir"]').onclick = () => ccRevealAsset(a.id);
+    const ta = el.querySelector('.cc-ains');
+    ta.value = a.instructions || '';       // set via value (no HTML-entity round-trip)
+    ta.addEventListener('input', () => { el.dataset.dirty = '1'; ccScheduleSave(a.id, el); });
+    ta.addEventListener('blur', () => { if (el.dataset.dirty === '1') ccSaveInstructions(a.id, el); });
+    const actions = el.querySelector('.cc-actions');
+    // state toggle — the LABEL reflects the CURRENT state (not the action); the whole control is a switch, so
+    // clicking flips it. Tooltip spells out what the click does.
+    const toggle = document.createElement('button');
+    const ready = a.state === 'ready';
+    toggle.className = 'cc-statebtn ' + (ready ? 'on' : 'off');
+    toggle.textContent = ready ? '✓ Ready' : '○ Not ready';
+    toggle.title = ready ? 'Ready — click to mark Not ready' : 'Not ready — click to mark Ready';
+    toggle.onclick = () => ccToggleState(a.id, el, ready ? 'not_ready' : 'ready');
+    actions.appendChild(toggle);
+    const rep = document.createElement('button'); rep.textContent = '⇄ replace';
+    rep.onclick = () => ccReplacePrompt(a.id, el); actions.appendChild(rep);
+    const del = document.createElement('button'); del.textContent = '🗑';
+    del.onclick = () => ccDeleteAsset(a.id, el); actions.appendChild(del);
+    if (a.hasOpenQuestions) {
+      const ans = document.createElement('button'); ans.className = 'btn-go'; ans.textContent = '💬 answer';
+      ans.onclick = () => ccOpenAnswer(a.id, el); actions.appendChild(ans);
+    }
+    // §GC1 — a spec the worker parked as needs-operator (blockedNeedsOperator, not yet Implemented): let the operator
+    // attest it is ALREADY satisfied by existing code (the acceptance route the autonomous loop lacked). Verify first.
+    if (a.kind === 'spec' && ready && a.blockedNeedsOperator && !impl) {
+      const sat = document.createElement('button'); sat.className = 'btn-go'; sat.textContent = '✓ satisfied';
+      sat.title = 'Confirm this spec is already satisfied by existing code (verify it renders/works first) — flips it Implemented';
+      sat.onclick = () => ccConfirmSatisfied(a.id); actions.appendChild(sat);
+    }
+    return el;
+  }
+
+  function ccRenderAssets(assets, force) {
+    ccInitAssetFilters();
+    const container = document.getElementById('cc-asset-list');
+    const filtered = assets.filter(ccAssetMatches).sort((a, b) => ccRowRank(a) - ccRowRank(b) || (a.id < b.id ? -1 : 1));
+    const wantIds = new Set(filtered.map(a => a.id));
+    Array.from(container.children).forEach(el => {
+      const id = el.dataset.id;
+      if (!wantIds.has(id)) { if (ccRowLocked(el) && assets.some(a => a.id === id)) return; el.remove(); delete ccAssetRows[id]; }
+    });
+    filtered.forEach(a => {
+      const ex = ccAssetRows[a.id];
+      if (ex && ccRowLocked(ex.el)) return;               // never touch a focused/dirty row (15.35)
+      if (ex && ex.rev === a.rev && !force) return;        // unchanged
+      const el = ccBuildAssetRow(a);
+      if (ex) container.replaceChild(el, ex.el); else container.appendChild(el);
+      ccAssetRows[a.id] = { rev: a.rev, el };
+    });
+    const anyLocked = Array.from(container.children).some(ccRowLocked);
+    if (!anyLocked) filtered.forEach(a => { const r = ccAssetRows[a.id]; if (r) container.appendChild(r.el); }); // reorder only when idle
+    // empty marker: APPEND a node (never innerHTML=) and only when NO real row remains — a locked/dirty row kept above
+    // (line ~462) must survive, else this would wipe the focused textarea + unsaved edit it was protecting (15.35).
+    if (!filtered.length && !container.querySelector('.cc-asset')) {
+      if (!container.querySelector('.cc-empty')) { const d = document.createElement('div'); d.className = 'muted cc-empty'; d.textContent = 'no assets match — drop files above or clear filters'; container.appendChild(d); }
+    } else { const e = container.querySelector('.cc-empty'); if (e) e.remove(); }
+    // summary (guard lastCounts)
+    const c = assets.reduce((o, a) => { o.total++; o[a.state] = (o[a.state] || 0) + 1; if (a.hasOpenQuestions) o.q++; if (a.implementedBy) o.impl++; return o; }, { total: 0, ready: 0, not_ready: 0, q: 0, impl: 0 });
+    const sig = JSON.stringify(c) + '|' + filtered.length;
+    if (sig !== ccLastAssetSig) {
+      ccLastAssetSig = sig;
+      document.getElementById('cc-asset-count').textContent = c.total;
+      const tabCnt = document.getElementById('cc-tab-assets-cnt'); if (tabCnt) tabCnt.textContent = c.total;
+      document.getElementById('cc-asset-summary').textContent = `${filtered.length}/${c.total} shown · ${c.ready} ready · ${c.not_ready} not-ready · ${c.q} with questions · ${c.impl} implemented (provisional)`;
+    }
+  }
+
+  async function loadCosmoAssets(force) {
+    try { const j = await (await ccApi('/assets/list')).json(); ccRenderAssets(j.assets || [], !!force); } catch {}
+  }
+
+  function ccScheduleSave(id, el) { clearTimeout(ccSaveTimers[id]); ccSaveTimers[id] = setTimeout(() => ccSaveInstructions(id, el), 900); }
+  async function ccSaveInstructions(id, el) {
+    clearTimeout(ccSaveTimers[id]);
+    const ta = el.querySelector('.cc-ains'); const rev = Number(el.dataset.rev);
+    try {
+      const r = await ccApi('/assets/instructions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, rev, instructions: ta.value }) });
+      const j = await r.json();
+      if (r.status === 409) { el.dataset.dirty = '0'; showToast('Instructions changed elsewhere — reloading', 'info'); loadCosmoAssets(true); return; }
+      if (!r.ok) { showToast(j.error || 'save failed', 'error'); return; }
+      el.dataset.dirty = '0'; el.dataset.rev = j.asset.rev; if (ccAssetRows[id]) ccAssetRows[id].rev = j.asset.rev;
+    } catch { showToast('save failed', 'error'); }
+  }
+  async function ccToggleState(id, el, state) {
+    if (el.dataset.stateBusy === '1') return;            // ignore a rapid 2nd click while the 1st toggle is in flight (the reload lands async → el.dataset.rev is briefly stale)
+    el.dataset.stateBusy = '1';
+    try {
+      const post = (withConfirm) => ccApi('/assets/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, rev: Number(el.dataset.rev), state, ...(withConfirm ? { confirm: true } : {}) }) });
+      let r = await post(false); let j = await r.json();
+      // retiring a guarded Ready spec (last Ready / spec-legacy monolith / cited beads / implemented) → the server asks
+      // to confirm. Mirror ccDeleteAsset/ccDoReplace: prompt, then resubmit confirm:true — else the not-ready button is a
+      // silent dead-end for those specs (the fix for the "can't un-Ready a spec" bug).
+      if (r.status === 409 && j.needsConfirm) {
+        if (!confirm(j.error + '\n\nProceed anyway?')) { loadCosmoAssets(true); return; }
+        r = await post(true); j = await r.json();
+      }
+      // stale rev (a double-click that raced the reload): the state change already applied server-side → resync quietly, don't alarm.
+      if (r.status === 409 && !j.needsConfirm) { showToast('State already updated — refreshing', 'info'); loadCosmoAssets(true); return; }
+      if (!r.ok) { showToast(j.error || 'state failed', 'error'); loadCosmoAssets(true); return; }
+      // keep the row's rev in sync immediately (mirrors ccSaveInstructions) so a fast follow-up click isn't stale.
+      if (j.asset && typeof j.asset.rev === 'number') { el.dataset.rev = j.asset.rev; if (ccAssetRows[id]) ccAssetRows[id].rev = j.asset.rev; }
+      loadCosmoAssets(true);
+    } catch { showToast('state failed', 'error'); }
+    finally { el.dataset.stateBusy = '0'; }
+  }
+  async function ccDeleteAsset(id, el) {
+    let body = { id };
+    let r = await ccApi('/assets', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let j = await r.json();
+    if (r.status === 409 && j.needsConfirm) {
+      if (!confirm(j.error + '\n\nDelete anyway? (tombstoned to .trash/, not erased)')) return;
+      r = await ccApi('/assets', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, confirm: true }) }); j = await r.json();
+    }
+    if (r.ok) { showToast('Deleted (tombstoned)'); el.remove(); delete ccAssetRows[id]; loadCosmoAssets(true); }
+    else showToast(j.error || 'delete failed', 'error');
+  }
+  function ccReplacePrompt(id, el) {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*,audio/*,.md,.txt';
+    inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) ccDoReplace(id, el, f); };
+    inp.click();
+  }
+  function ccReadDataUrl(f) { return new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(f); }); }
+  async function ccDoReplace(id, el, f) {
+    try {
+      const dataUrl = await ccReadDataUrl(f);
+      const send = (confirm2) => ccApi('/assets/replace', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, rev: Number(el.dataset.rev), file: dataUrl, confirm: confirm2 }) });
+      let r = await send(false); let j = await r.json();
+      if (r.status === 409 && j.needsConfirm) { if (!confirm(j.error + '\n\nReplace anyway?')) return; r = await send(true); j = await r.json(); }
+      if (r.ok) {
+        // refresh the row's rev immediately — the §15.35 focus-safe render skips rebuilding a locked/dirty row, so
+        // relying on the reload alone leaves el.dataset.rev stale and a 2nd replace would then rev-mismatch.
+        if (j.asset && typeof j.asset.rev === 'number') { el.dataset.rev = j.asset.rev; if (ccAssetRows[id]) ccAssetRows[id].rev = j.asset.rev; }
+        showToast('Replaced (prior bytes in history/)'); loadCosmoAssets(true);
+      } else if (r.status === 409) { showToast('Asset changed — refreshing', 'info'); loadCosmoAssets(true); } // stale rev on a repeat → resync quietly
+      else showToast(j.error || 'replace failed', 'error');
+    } catch { showToast('replace failed', 'error'); }
+  }
+  async function ccOpenAnswer(id, el) {
+    const wrap = el.querySelector('.cc-qwrap');
+    if (wrap.dataset.open === '1') { wrap.innerHTML = ''; wrap.dataset.open = '0'; return; }
+    let meta; try { meta = await (await ccApi('/assets/get?id=' + encodeURIComponent(id))).json(); } catch { return; }
+    if (!meta || !Array.isArray(meta.questions)) return;
+    wrap.dataset.open = '1';
+    const box = document.createElement('div'); box.className = 'cc-qbox';
+    box.innerHTML = '<div style="color:#fbbf24;margin-bottom:0.25rem;">Open questions — check the ones this answer resolves:</div>';
+    meta.questions.forEach(q => { const l = document.createElement('label'); l.innerHTML = '<input type="checkbox" checked value="' + ccEsc(q.id) + '"> ' + ccEsc(q.text); box.appendChild(l); });
+    const ta = document.createElement('textarea'); ta.rows = 2; ta.className = 'cc-ains'; ta.value = meta.instructions || ''; ta.placeholder = 'updated instructions (answer)'; box.appendChild(ta);
+    const btn = document.createElement('button'); btn.className = 'btn-go'; btn.style.marginTop = '0.3rem'; btn.textContent = 'submit answer';
+    btn.onclick = async () => {
+      if (btn.disabled) return; btn.disabled = true;   // in-flight guard: a 2nd click would re-send the same (now-stale) rev → 409
+      const clearQids = Array.from(box.querySelectorAll('input:checked')).map(i => i.value);
+      try {
+        const r = await ccApi('/assets/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, rev: meta.rev, instructions: ta.value, clearQids }) });
+        const j = await r.json();
+        if (r.ok) { showToast('Answered — asset re-armed (ready + dirty)'); wrap.innerHTML = ''; wrap.dataset.open = '0'; loadCosmoAssets(true); return; }
+        if (r.status === 409) { showToast('Answer already applied — refreshing', 'info'); wrap.innerHTML = ''; wrap.dataset.open = '0'; loadCosmoAssets(true); return; } // stale rev (double-submit): already applied
+        showToast(j.error || 'answer failed', 'error'); btn.disabled = false;
+      } catch { showToast('answer failed', 'error'); btn.disabled = false; }
+    };
+    box.appendChild(btn); wrap.innerHTML = ''; wrap.appendChild(box);
+  }
+
+  async function ccOpenAssetFile(id) {
+    try {
+      const r = await ccApi('/assets/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+      const j = await r.json();
+      if (r.ok) showToast('Opened in default app'); else showToast(j.error || 'open failed', 'error');
+    } catch { showToast('open failed', 'error'); }
+  }
+  async function ccRevealAsset(id) {
+    try {
+      const r = await ccApi('/assets/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+      const j = await r.json();
+      if (r.ok) showToast('Opened asset folder on disk'); else showToast(j.error || 'reveal failed', 'error');
+    } catch { showToast('reveal failed', 'error'); }
+  }
+
+  async function ccUploadFiles(files) {
+    for (const f of files) {
+      try {
+        const dataUrl = await ccReadDataUrl(f);
+        const r = await ccApi('/assets/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file: dataUrl, filename: f.name }) });
+        const j = await r.json();
+        if (r.ok) showToast('Added ' + f.name + (j.warn ? ' — ⚠ ' + j.warn : ''), j.warn ? 'info' : 'success');
+        else showToast(f.name + ': ' + (j.error || ('HTTP ' + r.status)), 'error');
+      } catch { showToast(f.name + ': read failed', 'error'); }
+    }
+    loadCosmoAssets(true);
+  }
+  function ccWireDropzone() {
+    const dz = document.getElementById('cc-dropzone'); const inp = document.getElementById('cc-asset-file');
+    if (!dz || dz.dataset.wired) return; dz.dataset.wired = '1';
+    dz.onclick = () => inp.click();
+    inp.onchange = () => { if (inp.files && inp.files.length) ccUploadFiles(inp.files); inp.value = ''; };
+    const card = document.getElementById('cc-asset-card');
+    ['dragenter', 'dragover'].forEach(ev => card.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
+    ['dragleave', 'drop'].forEach(ev => card.addEventListener(ev, (e) => { e.preventDefault(); if (ev === 'drop' || !card.contains(e.relatedTarget)) dz.classList.remove('drag'); })); // clear when the pointer truly left the card (relatedTarget outside), not only when it exits over the card itself — a child exit left it stuck
+    card.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('drag'); const fs = e.dataTransfer && e.dataTransfer.files; if (fs && fs.length) ccUploadFiles(fs); });
+  }
+
+  async function loadCosmoActive() {
+    try {
+      const arr = await (await ccApi('/active')).json();
+      document.getElementById('cc-active-count').textContent = arr.length;
+      document.getElementById('cc-active-list').innerHTML = arr.length
+        ? arr.map(t => '<div class="cc-atask">⚙ <b style="color:#cbd5e1;">' + ccEsc(t.beadId || t.assetKey || t.id || 'task') + '</b> ' + ccEsc(t.stage || t.engine || t.state || '') + '</div>').join('')
+        : '<div class="muted">none in flight</div>';
+    } catch {}
+  }
+
+  async function loadCosmoFeelReview() {
+    try {
+      const arr = await (await ccApi('/assets/feel-review')).json();
+      document.getElementById('cc-feel-count').textContent = arr.length;
+      document.getElementById('cc-feel-list').innerHTML = arr.length
+        ? arr.map(e => '<div class="cc-atask" style="display:flex;align-items:center;gap:0.4rem;">🎨 <b style="color:#cbd5e1;">' + ccEsc(e.title || e.beadId) + '</b> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ccEsc((e.note || '').slice(0, 90)) + '</span> <button class="btn-go" style="padding:0.2rem 0.5rem;font-size:0.66rem;" onclick="ccFeelConfirm(\'' + ccEsc(e.assetId) + '\')">✓ confirm</button></div>').join('')
+        : '<div class="muted">none awaiting review</div>';
+    } catch {}
+  }
+  async function ccFeelConfirm(id) {
+    try { const r = await ccApi('/assets/feel-confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); const j = await r.json();
+      if (r.ok) { showToast('Confirmed — Implemented'); loadCosmoFeelReview(); loadCosmoAssets(true); } else showToast(j.error || 'confirm failed', 'error'); } catch {}
+  }
+
+  // §GC1 — operator attests a spec is already satisfied by existing code (the acceptance route the autonomous loop
+  // lacked). Verify it renders/works FIRST — this flips it Implemented (a human attestation, like feel-confirm).
+  async function ccConfirmSatisfied(id) {
+    if (!confirm('Confirm this spec is already satisfied by existing code? Verify it renders/works first — this flips it to Implemented.')) return;
+    try { const r = await ccApi('/assets/confirm-satisfied', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); const j = await r.json();
+      if (r.ok) { showToast('Confirmed satisfied — Implemented'); loadCosmoAssets(true); } else showToast(j.error || 'confirm-satisfied failed', 'error'); } catch {}
+  }
+
+  // ── intended-usage tip: dismissible + remembered across reloads ──
+  function ccDismissDriveNote() { const n = document.getElementById('cc-drive-note'); if (n) n.style.display = 'none'; try { localStorage.setItem('cc-drive-note-dismissed', '1'); } catch {} }
+  try { if (localStorage.getItem('cc-drive-note-dismissed') === '1') { const n = document.getElementById('cc-drive-note'); if (n) n.style.display = 'none'; } } catch {}
+
+  // ── tabs: switch visible panel + persist choice (§ UX overhaul) ──
+  function ccShowTab(name) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+    document.querySelectorAll('#cc-tabbar .tabbtn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    try { localStorage.setItem('cc-tab', name); } catch {}
+  }
+  try { const t = localStorage.getItem('cc-tab'); if (t && document.getElementById('tab-' + t)) ccShowTab(t); } catch {}
+
+  ccInitAssetFilters(); ccWireDropzone(); ccBuildPrompt();
+  loadCosmoAgent(); loadCosmoConfig(); loadCosmoAssets(true); loadCosmoActive(); loadCosmoFeelReview(); startCosmoPolling();
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+Settings menu design (render/settings.ts + render/audio.ts). A centered panel (getTexture('panel.settings'), 320x400) over a dark overlay, with a gear icon (getTexture('icon.gear')) beside a "SETTINGS" title, and a BACK button (getTexture('button.back')) at the bottom that plays audioManager.playSound('sfx.back') and returns to the previous screen.
+
+Rows, top to bottom:
+1. MUSIC toggle — ON/OFF, getTexture('toggle.on')/('toggle.off'); plays sfx.toggle on change; audioManager.setMusicEnabled(bool).
+2. SFX toggle — ON/OFF, same toggle sprites; plays sfx.toggle on change.
+3. VIBRATION toggle — ON/OFF, same toggle sprites; plays sfx.toggle on change.
+4. MUSIC VOLUME slider — a draggable volume slider (SEPARATE from SFX).
+5. SFX VOLUME slider — a draggable volume slider (SEPARATE from music).
+
+VOLUME SLIDERS (the focus of this spec) — there are TWO independent sliders, one for music and one for sfx (NOT a single master volume):
+- Each slider row = a label ("MUSIC VOL" / "SFX VOL"), a track Sprite getTexture('slider.track') (200x16), and a draggable knob Sprite getTexture('slider.knob') (20x28) positioned on the track.
+- The knob is draggable (pointerdown on the knob -> pointermove drags -> pointerup releases; clamp the knob x to the track ends). The knob's x position along the track maps to a volume value in [0,1] (left edge = 0, right edge = 1).
+- On drag, update the value live and persist it: localStorage 'rs_setting_music_vol' for the music slider and 'rs_setting_sfx_vol' for the sfx slider (store the float 0..1). Load these on show()/init and place each knob to reflect the saved value (default music 0.5, sfx 0.6).
+- Music slider changes call audioManager.setMusicVolume(v); SFX slider changes call audioManager.setSfxVolume(v). Optionally play sfx.toggle (a soft tick) on sfx-slider release so the user hears the level.
+
+AUDIO WIRING (render/audio.ts) — the AudioManager ALREADY has separate _musicGain and _sfxGain GainNodes:
+- Add setMusicVolume(v: number): clamp v to [0,1] and set this._musicGain.gain.value = v (guard null ctx).
+- Add setSfxVolume(v: number): clamp v to [0,1] and set this._sfxGain.gain.value = v (guard null ctx).
+- When the AudioContext is first created (_getCtx), initialise _musicGain/_sfxGain from the persisted 'rs_setting_music_vol'/'rs_setting_sfx_vol' (falling back to the current defaults 0.5 / 0.6) so a saved volume applies on boot.
+
+Keep the existing Music/SFX/Vibration toggles and BACK button working. This is a UI/feel/layout change verified visually (no sim test). Do NOT edit game/test/** or game/accept/**.
