@@ -15,6 +15,17 @@ const INVENT_TASK_DETAIL = "INVENT the single highest-impact task that moves the
   "then do exactly that one increment. Record what you chose in progress.json's task field. " +
   "If the last few completions are all the same KIND of work, pick a different kind.";
 
+// GOAL_EVAL_QUESTIONS are asked one at a time (as separate self-evaluator
+// inquiries — see internal/app/inquiry.go) by the "evaluate goal.md" button.
+// Each already sees the current Goal.md as context, so no extra wiring is
+// needed to point them at it.
+const GOAL_EVAL_QUESTIONS = [
+  "Evaluate the clarity of the Goal.md. What’s the biggest thing I’m missing about the situation right now. What don’t I realize?",
+  "Evaluate the clarity of the Goal.md. What are you least confident about right now?",
+  "Evaluate the task in the Goal.md. If you could add one unrequested, industry-leading feature, what would it be?",
+  "Reading through the Goal.md, what assumptions did you make that you never stated explicitly?",
+];
+
 // ---------- helpers ----------
 
 const backlogLabel = (b) => (b === "" || b === SHARED ? SHARED : b);
@@ -64,6 +75,8 @@ function describeEvent(ev) {
     case "pipeline.bundle": return p.cleared ? "model override cleared"
       : `model override → ${[p.agent, p.model, p.effort].filter(Boolean).join(":")}`;
     case "integration.merge_failed": return `merge failed (will retry): ${p.error || ""}`.slice(0, 140);
+    case "inquiry.asked": return `asked: ${p.question || ""}`;
+    case "inquiry.answered": return p.ok ? "inquiry answered" : "inquiry FAILED";
     default: return JSON.stringify(p).slice(0, 120);
   }
 }
@@ -105,6 +118,29 @@ function GoalCard({ goal, onSave }) {
       <button class="primary" onClick=${async () => { await onSave(text); setDirty(false); }}>save</button>
       <button onClick=${() => { setText(goal); setDirty(false); }}>discard</button>
     </div>`}
+  </div>`;
+}
+
+// GoalEvaluation shows the answers to GOAL_EVAL_QUESTIONS, matched by exact
+// question text against the inquiries list (newest first, so a re-run's
+// answer replaces the previous one in place). Inquiries run one at a time on
+// the server, so `running` also covers the wait between questions.
+function GoalEvaluation({ inquiries, running, onEvaluate }) {
+  const answers = GOAL_EVAL_QUESTIONS.map((q) => inquiries.find((i) => i.question === q));
+  return html`<div class="card">
+    <h2>Goal.md evaluation
+      <button class="primary" style="margin-left:auto" disabled=${running} onClick=${onEvaluate}
+        title="Ask the AI four fixed self-evaluation questions about the current Goal.md, one at a time">
+        ${running ? "evaluating…" : "evaluate goal.md"}
+      </button>
+    </h2>
+    ${answers.every((a) => !a) && html`<div class="muted">not evaluated yet</div>`}
+    ${GOAL_EVAL_QUESTIONS.map((q, i) => answers[i] && html`<div class="completion" key=${i}>
+      <div>${q}</div>
+      ${answers[i].state === "running" && html`<div class="muted">thinking…</div>`}
+      ${answers[i].state === "failed" && html`<div class="result">failed: ${answers[i].error}</div>`}
+      ${answers[i].state === "done" && html`<div class="result">${answers[i].answer}</div>`}
+    </div>`)}
   </div>`;
 }
 
@@ -465,6 +501,43 @@ function Commits({ commits }) {
   </div>`;
 }
 
+// InquiryCard is the self-evaluator: ask WHY the workshop did something
+// ("why are the coin pickups so big?") and a read-only forensics agent
+// answers from commit trailers, pass logs, archived session transcripts, and
+// the project docs. It investigates the past — it never edits anything.
+function InquiryCard({ inquiries, log, onAsk, onStop }) {
+  const [q, setQ] = useState("");
+  const running = inquiries.some((i) => i.state === "running");
+  const submit = async (e) => {
+    e.preventDefault();
+    const question = q.trim();
+    if (!question || running) return;
+    await onAsk(question);
+    setQ("");
+  };
+  return html`<div class="card">
+    <h2>Ask why <span class="muted">(read-only forensics)</span></h2>
+    <form onSubmit=${submit}>
+      <textarea rows="2" placeholder="why did the workshop… (e.g. why are the coin pickups so big?)"
+        value=${q} onInput=${(e) => setQ(e.target.value)}
+        onKeyDown=${(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(e); } }}></textarea>
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        <button class="primary" type="submit" disabled=${running || !q.trim()}>
+          ${running ? "investigating…" : "ask"}</button>
+        ${running && html`<button type="button" class="danger" onClick=${onStop}
+          title="Kill the running inquiry">stop</button>`}
+      </div>
+    </form>
+    ${running && log && log.length > 0 && html`<${LogTail} lines=${log} />`}
+    ${inquiries.map((i) => html`<div class="inquiry" key=${i.id}>
+      <div class="inquiry-q">${i.question}</div>
+      ${i.state === "running" && html`<div class="muted">investigating… ${elapsed(i.started)}</div>`}
+      ${i.state === "failed" && html`<div class="inquiry-a bad">${i.error}</div>`}
+      ${i.state === "done" && html`<div class="inquiry-a">${i.answer}</div>`}
+    </div>`)}
+  </div>`;
+}
+
 // ---------- root ----------
 
 const ALERT_TYPES = {
@@ -484,15 +557,18 @@ function App() {
   const [feed, setFeed] = useState([]);
   const [logs, setLogs] = useState({});
   const [alerts, setAlerts] = useState([]);
+  const [inquiries, setInquiries] = useState([]);
   const [connected, setConnected] = useState(false);
+  const [evaluatingGoal, setEvaluatingGoal] = useState(false);
   const refreshTimer = useRef(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [st, ts, q] = await Promise.all([api.status(), api.tasks(), api.queue()]);
+      const [st, ts, q, inqs] = await Promise.all([api.status(), api.tasks(), api.queue(), api.inquiries()]);
       setStatus(st);
       setTasks(ts);
       setQueue(q || []);
+      setInquiries(inqs || []);
     } catch { /* server briefly away */ }
   }, []);
 
@@ -528,7 +604,7 @@ function App() {
             id: `${ev.seq}-${ev.type}`, tone, pipeline: ev.pipeline, text: describeEvent(ev),
           }].slice(-6));
         }
-        if (ev.type === "pass.started") {
+        if (ev.type === "pass.started" || ev.type === "inquiry.asked") {
           setLogs((prev) => ({ ...prev, [ev.pipeline]: [] }));
         }
         scheduleRefresh();
@@ -549,6 +625,30 @@ function App() {
 
   const act = async (fn) => { try { await fn(); } catch (e) { alert(e.message); } await refresh(); };
 
+  // Fires GOAL_EVAL_QUESTIONS as separate inquiries. The server runs only one
+  // inquiry at a time, so each question is asked only once the previous one
+  // has an answer (polled — there's no per-question completion event to await).
+  const onEvaluateGoal = async () => {
+    if (evaluatingGoal) return;
+    setEvaluatingGoal(true);
+    try {
+      for (const q of GOAL_EVAL_QUESTIONS) {
+        const started = await api.ask(q);
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 1200));
+          const list = await api.inquiries();
+          setInquiries(list || []);
+          const found = (list || []).find((x) => x.id === started.id);
+          if (found && found.state !== "running") break;
+        }
+      }
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setEvaluatingGoal(false);
+    }
+  };
+
   return html`<div>
     <${TopBar} status=${status} connected=${connected} pauseAfterPending=${pauseAfterPending}
       onHalt=${() => act(() => api.haltServer())}
@@ -557,6 +657,7 @@ function App() {
       <div>
         <${Alerts} alerts=${alerts} dismiss=${(id) => setAlerts((a) => a.filter((x) => x.id !== id))} />
         <${GoalCard} goal=${goal} onSave=${async (text) => { await api.setGoal(text); setGoal(text); }} />
+        <${GoalEvaluation} inquiries=${inquiries} running=${evaluatingGoal} onEvaluate=${onEvaluateGoal} />
         <div class="card">
           <h2>Add task
             <button class="primary" style="margin-left:auto"
@@ -585,6 +686,9 @@ function App() {
         <${QueuePanel} queue=${queue} />
         <${ActivityFeed} feed=${feed} />
         <${Commits} commits=${status?.recentCommits} />
+        <${InquiryCard} inquiries=${inquiries} log=${logs["inquiry"]}
+          onAsk=${(question) => act(() => api.ask(question))}
+          onStop=${() => act(() => api.stopInquiry())} />
       </div>
     </div>
   </div>`;

@@ -223,6 +223,36 @@ It's separate from — and while set, takes priority over — the `mode` in
 `config.toml`; click the ✕ next to the chip to clear it and fall back to the
 configured mode.
 
+### The self-evaluator ("ask why")
+
+The **Ask why** card (third column, under recent commits) answers questions
+about what the loop already did — "why are the coin pickups so big?", "why
+are there 4 duplicator levels when the GDD says 2?". It launches a one-shot
+**read-only** forensics agent — no skip-permissions; only read tools and
+read-only git commands are allowlisted — that works the evidence trail the
+engine keeps anyway:
+
+- every engine commit carries `Workshop-Pass` / `Workshop-Task` trailers;
+- every pass row records its task, spice persona, outcome, commit SHA and —
+  for session-capable agents (claude) — the runtime **session id**;
+- every pass log carries the agent's final summary and an optional
+  `--- decisions ---` footer (the contract asks passes to record judgment
+  calls in `progress.json`'s `decisions` field);
+- each claude pass's **full session transcript** (the exact prompt, every
+  tool call and result, the model's reasoning) is archived beside its log as
+  `iter-NNNNNN.transcript.jsonl` — Claude Code prunes its own copies after
+  ~30 days, the archive is permanent.
+
+Answers stream into the card live and cite commits, passes, and transcript
+quotes. One inquiry runs at a time and costs about one agent pass. It runs on
+claude at high effort by default; add a `[types.inquiry]` entry to route it:
+
+```toml
+[types.inquiry]
+model  = "claude-opus-4-8"
+effort = "xhigh"
+```
+
 ## ⚠️ Unattended execution
 
 Agents run with `--dangerously-skip-permissions` by default

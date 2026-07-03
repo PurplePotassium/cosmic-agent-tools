@@ -70,8 +70,13 @@ unverifiable, REVERT your edits rather than leave the tree broken.
 On verified success, OVERWRITE `progress.json`:
 
 ```json
-{ "phase": "done", "task": "<task title>", "result": "<what you did + how it verified>", "note": "", "updated": "<ISO-8601 UTC now>" }
+{ "phase": "done", "task": "<task title>", "result": "<what you did + how it verified>", "decisions": "", "note": "", "updated": "<ISO-8601 UTC now>" }
 ```
+
+`decisions` (optional, 1–3 lines): judgment calls a future reviewer would ask
+about — assumptions you made, alternatives you rejected, anything you did
+differently than the task or project docs implied, and why. Skip it when the
+pass was routine; never restate the result.
 
 If blocked or reverted: make sure the tree is clean of your broken edits, then
 OVERWRITE `progress.json` with `"phase": "blocked"` (or `"reverted"`) and a
