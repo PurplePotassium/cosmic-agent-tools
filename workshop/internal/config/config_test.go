@@ -260,6 +260,47 @@ effort = "gigantic"
 	}
 }
 
+func TestValidateModelFamilies(t *testing.T) {
+	dir := t.TempDir()
+	repo := writeFile(t, dir, "repo.toml", `
+[[pipelines]]
+name  = "code"
+agent = "claude"
+model = "claude-opus-4-8"
+
+[[pipelines]]
+name  = "art"
+agent = "agy"
+model = "gemini-3-flash"
+
+[[pipelines]]
+name  = "bad"
+agent = "claude"
+model = "gpt-4o"
+
+[[pipelines]]
+name        = "whitelisted"
+agent       = "claude"
+model       = "my-internal-proxy-model"
+
+[agents.claude]
+extra_models = ["my-internal-proxy-model"]
+`)
+	res, err := Load("", repo, "", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(res.Warnings, "\n")
+	if !strings.Contains(joined, `pipelines.bad: model "gpt-4o" is not a known claude model`) {
+		t.Fatalf("expected unknown-model warning, got:\n%s", joined)
+	}
+	for _, unwanted := range []string{"pipelines.code", "pipelines.art", "pipelines.whitelisted"} {
+		if strings.Contains(joined, unwanted) {
+			t.Errorf("unexpected warning for %s:\n%s", unwanted, joined)
+		}
+	}
+}
+
 func TestStartStoppedLayering(t *testing.T) {
 	dir := t.TempDir()
 	// A layer that sets other [server] keys but omits start_stopped must not

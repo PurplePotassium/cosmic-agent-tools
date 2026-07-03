@@ -233,6 +233,22 @@ func normalizeWorktrees(v string) string {
 	}
 }
 
+// checkModel warns when model doesn't match agent's curated family list —
+// e.g. claude models must be sonnet/fable/opus/haiku, agy models gemini.
+// [agents.<agent>] extra_models silences a deliberate off-list choice.
+func (c *Config) checkModel(where, agent, model string) error {
+	if domain.KnownModel(agent, model) {
+		return nil
+	}
+	for _, extra := range c.Agents[agent].ExtraModels {
+		if model == extra {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: model %q is not a known %s model (%v) — add it to [agents.%s] extra_models to silence this",
+		where, model, agent, domain.ModelFamilies(agent), agent)
+}
+
 // Validate returns human-readable problems. Errors block startup; warnings
 // (returned separately by Load) do not.
 func (c *Config) Validate() []error {
@@ -254,6 +270,13 @@ func (c *Config) Validate() []error {
 		if !domain.ValidEffort(p.Effort) {
 			errs = append(errs, fmt.Errorf("pipelines.%s: effort %q is not one of %v", p.Name, p.Effort, domain.Efforts))
 		}
+		agent := p.Agent
+		if agent == "" {
+			agent = "claude"
+		}
+		if err := c.checkModel("pipelines."+p.Name, agent, p.Model); err != nil {
+			errs = append(errs, err)
+		}
 		switch p.Mode {
 		case "", "goal", "discover", "drain":
 		default:
@@ -263,6 +286,16 @@ func (c *Config) Validate() []error {
 	for t, b := range c.Types {
 		if !domain.ValidEffort(b.Effort) {
 			errs = append(errs, fmt.Errorf("types.%s: effort %q is not one of %v", t, b.Effort, domain.Efforts))
+		}
+		if b.Agent != "" {
+			if err := c.checkModel("types."+t, b.Agent, b.Model); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if c.Classifier.Agent != "" {
+		if err := c.checkModel("classifier", c.Classifier.Agent, c.Classifier.Model); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	switch normalizeWorktrees(c.Git.Worktrees) {

@@ -135,6 +135,12 @@ agent  = "claude"
 model  = "claude-opus-4-8"
 effort = "high"
 
+# model is validated against a curated family list per agent — claude:
+# sonnet/fable/opus/haiku, agy: gemini — and just WARNS (never blocks) on a
+# mismatch. Off-list on purpose (a proxy alias, a brand-new id)? Whitelist it:
+# [agents.claude]
+# extra_models = ["my-internal-proxy-model"]
+
 # ---- pipelines: parallel worker lanes --------------------------------------
 [[pipelines]]
 name   = "code"

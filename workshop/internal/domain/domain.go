@@ -72,6 +72,47 @@ func ValidEffort(e string) bool {
 	return false
 }
 
+// ClaudeModels are the curated model-id prefixes for the claude driver: the
+// four Claude families (version suffixes change often; family names don't).
+var ClaudeModels = []string{"claude-sonnet", "claude-fable", "claude-opus", "claude-haiku"}
+
+// AgyModels are the curated model-id prefixes for the agy driver. agy
+// (Antigravity CLI) is wired up here purely for Gemini routing — a wrong
+// `--model` id fails silently (see AGENTS.md), so this only ever produces a
+// warning, never blocks.
+var AgyModels = []string{"gemini"}
+
+// ModelFamilies returns the curated model-id prefixes recognized for agent,
+// or nil if agent names no built-in driver (nothing curated to check against).
+func ModelFamilies(agent string) []string {
+	switch agent {
+	case "claude":
+		return ClaudeModels
+	case "agy":
+		return AgyModels
+	default:
+		return nil
+	}
+}
+
+// KnownModel reports whether model is empty, agent has no curated family list,
+// or model matches one of agent's curated prefixes.
+func KnownModel(agent, model string) bool {
+	if model == "" {
+		return true
+	}
+	families := ModelFamilies(agent)
+	if families == nil {
+		return true
+	}
+	for _, fam := range families {
+		if strings.HasPrefix(model, fam) {
+			return true
+		}
+	}
+	return false
+}
+
 // Task is one unit of backlog work. Tasks live either on the shared main
 // backlog (Backlog == MainBacklog) or on exactly one pipeline's exclusive
 // backlog (Backlog == pipeline name).
