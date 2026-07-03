@@ -1,0 +1,31 @@
+version: "2"
+
+# Static analysis for the Go engine. Kept to golangci-lint's "standard" set
+# (errcheck, govet, ineffassign, staticcheck, unused) — the codebase is
+# already clean against it; this file exists to pin the set and quiet a
+# handful of idiomatic defer-cleanup patterns that errcheck otherwise flags.
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        # best-effort handle cleanup on error/defer paths — nothing
+        # actionable if closing an already-doomed handle fails.
+        - golang.org/x/sys/windows.CloseHandle
+        - syscall.CloseHandle
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # defer tx.Rollback() after a successful commit / test cleanup Wait():
+      # the error is deliberately discarded, not overlooked.
+      - linters: [errcheck]
+        source: 'defer .*\.Rollback\(\)'
+      - linters: [errcheck]
+        path: _test\.go
+        source: '\.Wait\(\)'
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

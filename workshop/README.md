@@ -254,7 +254,27 @@ cd workshop
 go test ./...             # unit + integration (spawns real git repos + a scripted fake agent)
 go test -tags e2e ./e2e   # end-to-end: builds the REAL binary, drives it against scaffolded repos
 go build ./cmd/workshop
+go vet ./...               # also runs in CI
+golangci-lint run ./...    # static analysis — see .golangci.yml (install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest)
 ```
+
+No TypeScript tooling is set up: the project has no TS/JS build step by
+design (`web/ui/` is vendored, buildless ES modules — see above), so there's
+nothing for an ESLint/tsc-style linter to check.
+
+A pre-commit hook (`workshop/githooks/pre-commit`, runs `golangci-lint`) is
+available but **not enabled by default**: this repo self-hosts Workshop, and
+the engine's automated per-pass commits must never be blocked by a local
+tool that might be missing or briefly noisy. Opt in per clone if you want it
+on your own commits:
+
+```
+git config core.hooksPath workshop/githooks
+```
+
+CI (`.github/workflows/ci.yml`, outside `workshop/`) doesn't run
+`golangci-lint` yet — wiring that in is a follow-up for a human or a pass
+scoped to touch the workflow file.
 
 The `e2e` suite is the orchestrator-level proof: it builds `cmd/workshop`,
 scaffolds throwaway git repos with `.workshop/` configs routed to the fake

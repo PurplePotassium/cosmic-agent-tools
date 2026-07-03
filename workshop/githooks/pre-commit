@@ -1,0 +1,31 @@
+#!/bin/sh
+# Opt-in pre-commit check: golangci-lint over the workshop/ module.
+#
+# NOT enabled by default. This repo self-hosts Workshop (see
+# workshop/README.md "Self-hosting"): the engine commits every pass with a
+# plain `git commit`, no --no-verify. A hard-failing hook here would block
+# the autonomous loop's own commits on any machine where golangci-lint isn't
+# installed, or on a legitimate lint nit the agent can't see mid-pass. Human
+# contributors can opt in per clone:
+#
+#   git config core.hooksPath workshop/githooks
+#
+# CI does not run this yet (.github/workflows/ci.yml is outside workshop/'s
+# edit scope for this self-hosting loop) — until it does, this hook is the
+# only lint coverage, opt-in only.
+#
+# No gofmt check here on purpose: this repo checks .go files out with CRLF
+# on Windows (no `*.go text eol=lf` in .gitattributes), which makes a plain
+# `gofmt -l` false-positive on nearly every file. golangci-lint's checks
+# aren't line-ending sensitive.
+
+set -eu
+
+cd "$(git rev-parse --show-toplevel)/workshop"
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+	echo "pre-commit: golangci-lint not on PATH, skipping lint check" >&2
+	exit 0
+fi
+
+golangci-lint run ./...
