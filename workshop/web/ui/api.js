@@ -51,6 +51,11 @@ export const api = {
   runs: (pipeline) => req("GET", `/api/v1/runs${pipeline ? "?pipeline=" + pipeline : ""}`),
   runLog: (id) => req("GET", `/api/v1/runs/${id}/log`),
   setPipeline: (name, desired) => req("PATCH", `/api/v1/pipelines/${name}`, { desired }),
+  // addPipeline adds a new parallel-worktree agent lane to the runtime
+  // config; deletePipeline removes one. Neither takes effect until the next
+  // `workshop up`/`run` — the engine only builds worker/worktree at startup.
+  addPipeline: (p) => req("POST", "/api/v1/pipelines", p),
+  deletePipeline: (name) => req("DELETE", `/api/v1/pipelines/${name}`),
   // Live agent/model/effort override for the pipeline's NEXT pass; an empty
   // bundle {} clears it back to the configured routing.
   setPipelineBundle: (name, bundle) => req("PATCH", `/api/v1/pipelines/${name}`, { bundle }),

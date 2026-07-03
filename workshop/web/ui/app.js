@@ -293,7 +293,45 @@ function BundleEditor({ p, onApply, onClear, onClose }) {
 // follow-ups; discover only accepts follow-ups; drain only drains the backlog.
 const MODES = ["goal", "discover", "drain"];
 
-function PipelineCard({ p, log, onDesired, onBundle, onMode }) {
+// AddPipelineForm adds a new parallel-worktree agent lane. It writes to the
+// runtime config layer only — the lane's worker/worktree comes alive on the
+// next `workshop up`/`run`, so the confirmation copy says so up front rather
+// than implying the agent starts working immediately.
+function AddPipelineForm({ onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [agent, setAgent] = useState("");
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const models = MODEL_FAMILIES[agent] || [];
+  if (!open) {
+    return html`<button style="margin-bottom:10px" onClick=${() => setOpen(true)}
+      title="Add a new agent that works in parallel on its own git worktree/branch">+ agent</button>`;
+  }
+  const submit = async () => {
+    if (!name.trim()) return;
+    await onAdd({ name: name.trim(), agent: agent || undefined, model: model.trim() || undefined, effort: effort || undefined });
+    setName(""); setAgent(""); setModel(""); setEffort(""); setOpen(false);
+  };
+  return html`<div class="card bundle-editor" style="margin-bottom:10px">
+    <input placeholder="name" value=${name} onInput=${(e) => setName(e.target.value)} style="width:8rem" />
+    <select value=${agent} onChange=${(e) => setAgent(e.target.value)} title="agent ('' = claude)">
+      ${AGENTS.map((a) => html`<option value=${a}>${a || "agent (claude)"}</option>`)}
+    </select>
+    <input list="add-pipeline-models" placeholder="model (agent default)" value=${model} onInput=${(e) => setModel(e.target.value)} />
+    ${models.length > 0 && html`<datalist id="add-pipeline-models">
+      ${models.map((m) => html`<option value=${m} />`)}
+    </datalist>`}
+    <select value=${effort} onChange=${(e) => setEffort(e.target.value)} title="effort ('' = default)">
+      ${EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
+    </select>
+    <button class="primary" onClick=${submit}
+      title="Adds a new worktree/branch lane — takes effect on the next `workshop up`/`run`, not live">add</button>
+    <button onClick=${() => setOpen(false)}>✕</button>
+  </div>`;
+}
+
+function PipelineCard({ p, log, onDesired, onBundle, onMode, onDelete }) {
   const [editBundle, setEditBundle] = useState(false);
   const running = !!p.running;
   const stopped = p.halted === "operator";
@@ -323,7 +361,10 @@ function PipelineCard({ p, log, onDesired, onBundle, onMode }) {
       <button title="switch agent/model for the next pass" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
       ${stopped || halted
         ? html`<button class="primary" onClick=${() => onDesired(p.name, "running")}>resume</button>`
-        : html`<button onClick=${() => onDesired(p.name, "stopped")}>stop</button>`}
+        : html`<button onClick=${() => onDesired(p.name, "stopped")}
+            title="Pause after idle: stop this pipeline from claiming new work; if it's mid-pass, that pass finishes first">stop</button>`}
+      ${p.name.toLowerCase() !== "main" && html`<button class="danger" onClick=${() => onDelete(p.name)}
+        title="Remove this agent lane from the config — takes effect on the next `workshop up`/`run`, not live">remove</button>`}
     </div>
     ${editBundle && html`<${BundleEditor} p=${p}
       onApply=${async (b) => { await onBundle(p.name, b); setEditBundle(false); }}
@@ -510,10 +551,12 @@ function App() {
         <${Completions} completions=${status?.completions} />
       </div>
       <div>
+        <${AddPipelineForm} onAdd=${(p) => act(() => api.addPipeline(p))} />
         ${pipelines.map((p) => html`<${PipelineCard} key=${p.name} p=${p}
           log=${logs[p.name]} onDesired=${(name, desired) => act(() => api.setPipeline(name, desired))}
           onBundle=${(name, bundle) => act(() => api.setPipelineBundle(name, bundle))}
-          onMode=${(name, mode) => act(() => api.setPipelineMode(name, mode))} />`)}
+          onMode=${(name, mode) => act(() => api.setPipelineMode(name, mode))}
+          onDelete=${(name) => act(() => api.deletePipeline(name))} />`)}
         ${pipelines.length === 0 && html`<div class="card muted">no pipelines configured</div>`}
       </div>
       <div>

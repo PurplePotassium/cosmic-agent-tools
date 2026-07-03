@@ -136,6 +136,15 @@ const DefaultPipelineName = "main"
 
 var pipelineNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
+// ValidPipelineName reports whether name (case-insensitive) is a legal
+// pipeline name: matches pipelineNameRe and isn't the reserved shared-backlog
+// sentinel. It does not check for collisions with existing pipelines — that's
+// the caller's job (it needs the current list to say which name collided).
+func ValidPipelineName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return pipelineNameRe.MatchString(lower) && lower != SharedBacklogName
+}
+
 // ResolvedPipelines expands the configured pipelines into domain.Pipeline
 // values with defaults applied. With no [[pipelines]] configured it returns
 // the single implicit pipeline: all types, drains main, claude, invent on.

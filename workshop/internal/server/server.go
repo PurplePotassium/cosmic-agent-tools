@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
@@ -149,6 +150,12 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/tasks/{id}", guard(s.deleteTask))
 	mux.HandleFunc("POST /api/v1/tasks/reorder", guard(s.reorderTasks))
 	mux.HandleFunc("PATCH /api/v1/pipelines/{name}", guard(s.patchPipeline))
+	// POST /pipelines adds a new pipeline (agent lane) to the runtime-overrides
+	// config layer; DELETE removes one. Neither starts/stops a worker or
+	// worktree right away — the engine only builds those at RunHeadless
+	// startup, so the change takes effect on the next `workshop up`/`run`.
+	mux.HandleFunc("POST /api/v1/pipelines", guard(s.postPipeline))
+	mux.HandleFunc("DELETE /api/v1/pipelines/{name}", guard(s.deletePipeline))
 	mux.HandleFunc("POST /api/v1/server/stop", guard(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]bool{"stopping": true})
 		if s.OnStop != nil {
@@ -411,6 +418,33 @@ func (s *Server) patchPipeline(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, err, http.StatusBadRequest)
 			return
 		}
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) postPipeline(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name   *string `json:"name"`
+		Agent  string  `json:"agent"`
+		Model  string  `json:"model"`
+		Effort string  `json:"effort"`
+	}
+	if err := readBody(r, &body); err != nil || body.Name == nil || strings.TrimSpace(*body.Name) == "" {
+		httpErr(w, fmt.Errorf(`body needs {"name":"..."} and optionally {"agent","model","effort"}`), http.StatusBadRequest)
+		return
+	}
+	pc := config.PipelineConfig{Name: *body.Name, Agent: body.Agent, Model: body.Model, Effort: body.Effort}
+	if err := s.App.AddPipeline(pc); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) deletePipeline(w http.ResponseWriter, r *http.Request) {
+	if err := s.App.DeletePipeline(r.PathValue("name")); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }

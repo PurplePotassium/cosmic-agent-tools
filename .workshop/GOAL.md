@@ -15,5 +15,3 @@ Priorities, in order:
 2. Test coverage where it's thinnest: `internal/server` guards, `internal/bus`,
    `internal/app`, `supervisor`, `cmd/workshop`.
 3. Operator experience: dashboard, CLI ergonomics, actionable errors.
-
-Work ONLY on tasks from the backlog. Do not invent new directions.
