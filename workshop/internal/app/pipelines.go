@@ -31,6 +31,11 @@ func (a *App) AddPipeline(pc config.PipelineConfig) error {
 		return fmt.Errorf("effort %q is not one of %v", pc.Effort, domain.Efforts)
 	}
 
+	// The overrides file holds the COMPLETE pipeline list, so this
+	// read-modify-write must be serialized: two concurrent adds would both
+	// read the same base list and the loser's pipeline would vanish.
+	a.pipelineMu.Lock()
+	defer a.pipelineMu.Unlock()
 	pipelines := a.currentPipelineConfigs()
 	for _, existing := range pipelines {
 		if strings.EqualFold(existing.Name, name) {
@@ -48,6 +53,8 @@ func (a *App) DeletePipeline(name string) error {
 	if strings.EqualFold(name, config.DefaultPipelineName) {
 		return fmt.Errorf("the %q pipeline is Workshop's default lane and can't be deleted", config.DefaultPipelineName)
 	}
+	a.pipelineMu.Lock()
+	defer a.pipelineMu.Unlock()
 	pipelines := a.currentPipelineConfigs()
 	out := make([]config.PipelineConfig, 0, len(pipelines))
 	found := false
@@ -74,10 +81,11 @@ func (a *App) DeletePipeline(name string) error {
 // array wholesale (see config.WriteOverridePipelines) — silently deleting
 // the implicit "main" lane it was standing in for.
 func (a *App) currentPipelineConfigs() []config.PipelineConfig {
-	if len(a.Res.Config.Pipelines) > 0 {
-		return append([]config.PipelineConfig{}, a.Res.Config.Pipelines...)
+	cfg := a.Res().Config
+	if len(cfg.Pipelines) > 0 {
+		return append([]config.PipelineConfig{}, cfg.Pipelines...)
 	}
-	implicit := a.Res.Config.ResolvedPipelines()[0]
+	implicit := cfg.ResolvedPipelines()[0]
 	return []config.PipelineConfig{{
 		Name:   implicit.Name,
 		Agent:  implicit.Bundle.Agent,
@@ -103,6 +111,6 @@ func (a *App) reloadConfig() error {
 	if err != nil {
 		return err
 	}
-	a.Res = res
+	a.res.Store(res)
 	return nil
 }

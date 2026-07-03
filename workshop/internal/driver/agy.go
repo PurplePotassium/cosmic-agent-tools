@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -83,9 +84,9 @@ func (a *Agy) Plan(spec InvokeSpec) (ExecPlan, error) {
 	// chars, and blowing it fails the spawn opaquely (agy is blind) — refuse
 	// up front with an actionable error instead.
 	if runtime.GOOS == "windows" {
-		total := len(a.exe)
+		total := encodedArgLen(a.exe)
 		for _, s := range args {
-			total += len(s) + 3 // separator + worst-case quoting
+			total += 1 + encodedArgLen(s) // separator + encoded arg
 		}
 		if total > maxWindowsCommandLine {
 			return ExecPlan{}, fmt.Errorf(
@@ -98,6 +99,34 @@ func (a *Agy) Plan(spec InvokeSpec) (ExecPlan, error) {
 
 // maxWindowsCommandLine leaves headroom under the hard 32,767-char cap.
 const maxWindowsCommandLine = 30000
+
+// encodedArgLen is the length of s as Go encodes it on the Windows command
+// line (os/exec's appendEscapeArg: surrounding quotes, `\"` escapes, doubled
+// backslash runs). A flat "+3 per arg" undercounts quote/backslash-dense
+// prompts by almost 2x — exactly the ones that then blow the 32,767 cap and
+// fail the blind spawn this check exists to prevent.
+func encodedArgLen(s string) int {
+	if s == "" {
+		return 2 // ""
+	}
+	if !strings.ContainsAny(s, " \t\"") {
+		return len(s)
+	}
+	n := len(s) + 2 // surrounding quotes
+	slashes := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			slashes++
+		case '"':
+			n += slashes + 1 // backslash run doubles, quote gains an escape
+			slashes = 0
+		default:
+			slashes = 0
+		}
+	}
+	return n + slashes // trailing backslashes double before the closing quote
+}
 
 func findAgy() (string, error) {
 	if v := os.Getenv("WORKSHOP_AGY_BIN"); v != "" {

@@ -42,11 +42,28 @@ const (
 // failure or circuit breaker) rather than finishing its iterations.
 var ErrHalted = errors.New("engine: pipeline halted")
 
-// authRe spots auth-shaped failures in captured output. Deliberately narrow:
-// normal mentions of "token"/"login" in agent chatter must not trip it, and
-// "auth" is word-anchored so "author"/"OAuth" (e.g. git's "Author identity
-// unknown") never read as an auth failure.
-var authRe = regexp.MustCompile(`(?i)\bauth(entication|enticated?|oriz(e|ed|ation))?\b|credential|sign-?in|re-?authenticate|keyring|unauthenticated|unauthorized|\b401\b`)
+// authRe spots auth-shaped FAILURE PHRASES in captured output. It must never
+// match a pass that merely fails while WORKING ON auth-flavored code — paths
+// like internal/auth/, test names, 401-handler chatter — because an auth halt
+// is permanent until an operator intervenes. Every alternative is a failure
+// phrase seen in real agent-CLI output; extend it with captured lines, never
+// bare keywords.
+var authRe = regexp.MustCompile(`(?i)(` +
+	`invalid api[- ]?key` + `|` +
+	`api[- ]?key .{0,20}(invalid|expired|revoked|missing)` + `|` +
+	`(authentication|authorization)[_ ](error|failed|required)` + `|` +
+	`not (logged|signed) in` + `|` +
+	`please run .{0,30}\blog ?in\b` + `|` +
+	`(oauth|access|refresh) token .{0,25}(expired|invalid|revoked)` + `|` +
+	`credentials? (expired|invalid|revoked|not found)` + `|` +
+	`no credential helper` + `|` +
+	`keyring (locked|unavailable|denied)` + `|` +
+	`\bauth (error|failed|failure)\b` + `|` +
+	`\bnot authorized\b` + `|` +
+	`re-?authenticate` + `|` +
+	`sign-?in again` + `|` +
+	`401 unauthorized` +
+	`)`)
 
 // WorkerConfig wires one pipeline's worker.
 type WorkerConfig struct {
@@ -235,6 +252,15 @@ func (w *Worker) Loop(ctx context.Context, iterations int, untilDrained bool) er
 		res, err := w.RunPass(ctx)
 		if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return err
+		}
+		if err != nil {
+			// A store/setup failure is not "drained": a bounded run must
+			// exit nonzero, and even a live loop must say WHY it is idling
+			// instead of silently spinning on a dead database.
+			w.event(ctx, "pass.error", w.cfg.Pipeline.Name, 0, map[string]any{"error": err.Error()})
+			if bounded || untilDrained {
+				return err
+			}
 		}
 		switch res {
 		case PassHalted:
@@ -598,14 +624,7 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 
 	if exitCode != 0 {
 		if res.caps.AuthProbe && isAuthFailure(tail) {
-			// Auth won't self-heal: halt the pipeline, release the task.
-			if task != nil {
-				_ = w.st.ReleaseTask(ctx, task.ID)
-			}
-			_ = w.st.SetHalted(ctx, name, HaltAuth)
-			w.event(ctx, "auth.halt", name, pass.ID, map[string]any{"agent": res.drv.Name()})
-			w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailAuth, exitCode, "")
-			return PassHalted, nil
+			return w.haltAuth(ctx, pass, task, res, exitCode)
 		}
 		if blind {
 			// A blind driver can't tell us WHY it failed. A failure with
@@ -807,6 +826,20 @@ func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, 
 	fmt.Fprintf(f, "task   : %s\nspice  : %s\nstarted: %s\n%s\n",
 		passTaskTitle(task), spice.Mode, pass.Started.Format(time.RFC3339), strings.Repeat("-", 72))
 	return f, nil
+}
+
+// haltAuth parks the pipeline on an auth-shaped failure (auth never
+// self-heals — burning retries hides it), releases the task, and finishes
+// the pass as FailAuth. Shared by normal and conflict-resolution passes.
+func (w *Worker) haltAuth(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved, exitCode int) (PassResult, error) {
+	if task != nil {
+		_ = w.st.ReleaseTask(ctx, task.ID)
+	}
+	name := w.cfg.Pipeline.Name
+	_ = w.st.SetHalted(ctx, name, HaltAuth)
+	w.event(ctx, "auth.halt", name, pass.ID, map[string]any{"agent": res.drv.Name()})
+	w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailAuth, exitCode, "")
+	return PassHalted, nil
 }
 
 func isAuthFailure(tail []string) bool {

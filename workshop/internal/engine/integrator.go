@@ -143,6 +143,15 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 		ig.recordGreen(ctx)
 	}
 
+	// A previous round that died between its merges and the gate verdict
+	// left unvetted workshop merge commits on trunk. Landing on top of them
+	// would silently bless ungated work — and the next recordGreen would
+	// bake them into every lane's sync point. Strip them before anything
+	// else sees this round.
+	if err := ig.reconcileTrunk(ctx); err != nil {
+		return 0, err
+	}
+
 	pending, err := ig.collectPending(ctx)
 	if err != nil || len(pending) == 0 {
 		return 0, err
@@ -177,7 +186,7 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 		if conflict {
 			files, _ := gitx.UnmergedFiles(ctx, repo)
 			_ = gitx.MergeAbort(ctx, repo)
-			ig.handleConflict(ctx, lane, files)
+			ig.handleConflict(ctx, lane, files, preMerge)
 			continue
 		}
 		merged = append(merged, lane)
@@ -238,7 +247,10 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 		if err := gitx.ResetHard(ctx, repo, "HEAD^"); err != nil {
 			return landed, err
 		}
-		li, _ := ig.st.GetIntegration(ctx, lane.pipeline)
+		li := ig.integrationState(ctx, lane.pipeline)
+		if li == nil {
+			continue // bookkeeping skipped; the lane re-bisects next round
+		}
 		li.LastSeenTip = lane.laneTip
 		li.Blocked = true
 		li.ProvenCulprit = len(kept) == 0 // red ALONE on trunk: proven, not just suspected
@@ -247,6 +259,7 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 		} else {
 			li.BlockedBy = strings.Join(laneNames(kept), "+")
 		}
+		ig.retireResolution(ctx, lane, li)
 		_ = ig.st.PutIntegration(ctx, li)
 		ig.event(ctx, "integration.dropped", lane.pipeline, map[string]any{
 			"why": "gate-red", "provenCulprit": li.ProvenCulprit, "blockedBy": li.BlockedBy,
@@ -263,6 +276,100 @@ func (ig *Integrator) recordGreen(ctx context.Context) {
 	if head, err := gitx.RevParse(ctx, ig.cfg.RepoDir, "HEAD"); err == nil {
 		_ = gitx.UpdateRef(ctx, ig.cfg.RepoDir, GreenRef, head)
 	}
+}
+
+// integrationState fetches a lane's integration row for a read-modify-write.
+// On a store error (busy DB, cancelled ctx) it returns nil after surfacing an
+// event: callers must skip their bookkeeping for the round — the lane simply
+// retries next round — rather than write through a nil row and panic the
+// integrator mid-merge.
+func (ig *Integrator) integrationState(ctx context.Context, pipeline string) *domain.LaneIntegration {
+	li, err := ig.st.GetIntegration(ctx, pipeline)
+	if err != nil {
+		ig.event(ctx, "integration.error", pipeline, map[string]any{
+			"op": "get-lane-state", "error": err.Error(),
+		})
+		return nil
+	}
+	return li
+}
+
+// retireResolution deletes a resolution branch and unparks its lane. EVERY
+// terminal path for a resolution lane must run this: a parked lane whose
+// ConflictTaskID points at a finished task is otherwise re-offered each round
+// — re-gating a proven-red resolution forever, or minting a fresh conflict
+// task every time the branch re-conflicts.
+func (ig *Integrator) retireResolution(ctx context.Context, lane pendingLane, li *domain.LaneIntegration) {
+	if !lane.resolution {
+		return
+	}
+	_ = gitx.DeleteBranch(ctx, ig.cfg.RepoDir, lane.branch, true)
+	li.ConflictTaskID = ""
+}
+
+// reconcileTrunk strips unvetted workshop merge commits a crashed round left
+// on trunk. It walks first-parent from HEAD toward GreenRef, peeling only
+// commits that are 2-parent merges of workshop-prefixed branches, and stops
+// at the first human/intent commit. Stripped lanes get their seen-tip
+// forgotten so their (still committed) work re-enters the queue and lands
+// through the gate like any other round.
+func (ig *Integrator) reconcileTrunk(ctx context.Context) error {
+	repo := ig.cfg.RepoDir
+	green, err := gitx.RevParse(ctx, repo, GreenRef)
+	if err != nil {
+		return nil // no green ref yet: nothing to reconcile against
+	}
+	head, err := gitx.RevParse(ctx, repo, "HEAD")
+	if err != nil || head == green {
+		return nil
+	}
+	mergePrefix := "Merge branch '" + ig.cfg.BranchPrefix
+	target := head
+	var strippedBranches []string
+	for i := 0; target != green && i < 100; i++ {
+		parents, subject, err := gitx.CommitInfo(ctx, repo, target)
+		if err != nil || len(parents) != 2 || !strings.HasPrefix(subject, mergePrefix) {
+			break // human or intent commit: everything below it stays
+		}
+		strippedBranches = append(strippedBranches, mergeSubjectBranch(subject))
+		target = parents[0]
+	}
+	if target == head {
+		return nil
+	}
+	if err := gitx.ResetHard(ctx, repo, target); err != nil {
+		return fmt.Errorf("integrator: reconcile trunk: %w", err)
+	}
+	// Forget the stripped lanes' seen-tips: a crashed round may have already
+	// marked them landed, which would otherwise strand their work (0 ahead
+	// never happens again — the commits are gone from trunk).
+	for _, branch := range strippedBranches {
+		for _, p := range ig.cfg.Lanes {
+			if p.Branch != branch && !strings.HasPrefix(branch, ig.cfg.BranchPrefix+"resolve/"+p.Name+"-") {
+				continue
+			}
+			if li := ig.integrationState(ctx, p.Name); li != nil && li.LastSeenTip != "" {
+				li.LastSeenTip = ""
+				_ = ig.st.PutIntegration(ctx, li)
+			}
+		}
+	}
+	ig.event(ctx, "integration.reconciled", "", map[string]any{
+		"stripped": strippedBranches, "resetTo": target,
+	})
+	return nil
+}
+
+// mergeSubjectBranch extracts X from "Merge branch 'X'" / "Merge branch 'X' into Y".
+func mergeSubjectBranch(subject string) string {
+	rest, ok := strings.CutPrefix(subject, "Merge branch '")
+	if !ok {
+		return ""
+	}
+	if i := strings.IndexByte(rest, '\''); i >= 0 {
+		return rest[:i]
+	}
+	return ""
 }
 
 // collectPending decides which branches enter this round.
@@ -352,20 +459,31 @@ func (ig *Integrator) resolutionPending(ctx context.Context, p domain.Pipeline, 
 	}
 }
 
-// handleConflict reacts to a lane branch conflicting with trunk.
-func (ig *Integrator) handleConflict(ctx context.Context, lane pendingLane, files []string) {
-	li, _ := ig.st.GetIntegration(ctx, lane.pipeline)
+// handleConflict reacts to a branch conflicting with trunk during phase 1.
+// trunkPin is the pre-round trunk SHA the conflict task gets pinned to — NOT
+// live trunk, which mid-round holds other lanes' unvetted merges that the
+// gate may reset away (see GreenRef): pinning those would let bisected-out
+// commits ride back in through a resolution, or leave the pin unreachable.
+func (ig *Integrator) handleConflict(ctx context.Context, lane pendingLane, files []string, trunkPin string) {
+	li := ig.integrationState(ctx, lane.pipeline)
+	if li == nil {
+		return // no task minted this round; the conflict recurs and retries
+	}
 
-	trunkTip, err := gitx.RevParse(ctx, ig.cfg.RepoDir, ig.cfg.Trunk)
-	if err != nil {
-		return
+	if !lane.resolution {
+		// A lane-branch conflict opens a fresh cycle for this tip: attempts
+		// left from a previous tip's spent budget must not park it. (A
+		// resolution branch conflicting keeps counting against its lane
+		// tip's budget — that is what bounds the resolve->re-conflict loop.)
+		li.ConflictAttempts = 0
 	}
 
 	if !ig.cfg.ConflictTasks || li.ConflictAttempts >= ig.cfg.ConflictRetryBudget {
 		// Skip-until-advanced (the prior-art behavior, and the fallback
-		// once the retry budget is spent).
+		// once the retry budget is spent). Attempts stay spent for this
+		// tip; a new tip resets them above.
 		li.LastSeenTip = lane.laneTip
-		li.ConflictAttempts = 0
+		ig.retireResolution(ctx, lane, li)
 		_ = ig.st.PutIntegration(ctx, li)
 		ig.event(ctx, "integration.conflict", lane.pipeline, map[string]any{
 			"lane": lane.branch, "files": files, "action": "skip-until-advanced",
@@ -391,7 +509,7 @@ func (ig *Integrator) handleConflict(ctx context.Context, lane pendingLane, file
 			MetaLane:          lane.pipeline,
 			MetaLaneBranch:    lane.branch,
 			MetaLaneTip:       lane.laneTip,
-			MetaTrunkTip:      trunkTip,
+			MetaTrunkTip:      trunkPin,
 			MetaFiles:         strings.Join(files, ","),
 			MetaResolveBranch: resolveBranch,
 			MetaResolveDir:    resolveDir,
@@ -400,6 +518,8 @@ func (ig *Integrator) handleConflict(ctx context.Context, lane pendingLane, file
 	if err != nil {
 		return
 	}
+	// A re-conflicted resolution is superseded by the task just minted.
+	ig.retireResolution(ctx, lane, li)
 	li.ConflictTaskID = task.ID
 	li.ConflictAttempts++
 	_ = ig.st.PutIntegration(ctx, li)
@@ -410,7 +530,10 @@ func (ig *Integrator) handleConflict(ctx context.Context, lane pendingLane, file
 
 // land records a lane (or its resolution) as integrated.
 func (ig *Integrator) land(ctx context.Context, lane pendingLane) {
-	li, _ := ig.st.GetIntegration(ctx, lane.pipeline)
+	li := ig.integrationState(ctx, lane.pipeline)
+	if li == nil {
+		return // stale bookkeeping self-heals: a landed tip is 0 ahead
+	}
 	li.LastSeenTip = lane.laneTip
 	li.Blocked = false
 	li.BlockedBy = ""
@@ -425,8 +548,12 @@ func (ig *Integrator) land(ctx context.Context, lane pendingLane) {
 }
 
 func (ig *Integrator) markSeen(ctx context.Context, lane pendingLane) {
-	li, _ := ig.st.GetIntegration(ctx, lane.pipeline)
+	li := ig.integrationState(ctx, lane.pipeline)
+	if li == nil {
+		return
+	}
 	li.LastSeenTip = lane.laneTip
+	ig.retireResolution(ctx, lane, li)
 	_ = ig.st.PutIntegration(ctx, li)
 }
 

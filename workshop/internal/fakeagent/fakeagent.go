@@ -59,7 +59,11 @@ func resolveConflicts(repoDir string) error {
 		}
 		var out []string
 		for _, line := range strings.Split(string(data), "\n") {
-			if strings.HasPrefix(line, "<<<<<<< ") || strings.HasPrefix(line, "=======") || strings.HasPrefix(line, ">>>>>>> ") {
+			// The middle marker is EXACTLY seven '='s alone on its line —
+			// a prefix match would also eat setext underlines and similar
+			// legitimate content, corrupting what the tests then verify.
+			trimmed := strings.TrimRight(line, "\r")
+			if strings.HasPrefix(trimmed, "<<<<<<< ") || trimmed == "=======" || strings.HasPrefix(trimmed, ">>>>>>> ") {
 				continue
 			}
 			out = append(out, line)

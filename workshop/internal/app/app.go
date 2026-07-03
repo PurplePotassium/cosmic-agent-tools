@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -32,15 +33,34 @@ import (
 type App struct {
 	RepoDir  string
 	StateDir string
-	Res      *config.Result
 	Store    *store.Store
 	Bus      *bus.Bus
+
+	// res is written by reloadConfig (dashboard pipeline API) while HTTP
+	// handlers, snapshots, and Halt-relaunches read it concurrently — a
+	// plain field is a data race.
+	res        atomic.Pointer[config.Result]
+	pipelineMu sync.Mutex // serializes the overrides-file read-modify-write
 
 	// Self-evaluator state (see inquiry.go). Zero value ready.
 	inqMu     sync.Mutex
 	inqSeq    int64
 	inqList   []*Inquiry
 	inqCancel context.CancelFunc
+}
+
+// Res returns the current resolved-config snapshot. Grab it ONCE per
+// operation and read only that snapshot: the dashboard's pipeline API can
+// reload config live, and re-reading mid-operation may observe a different
+// resolution.
+func (a *App) Res() *config.Result { return a.res.Load() }
+
+// New assembles an App from parts. Open is the production path; New exists
+// for tests that stub the pieces.
+func New(repoDir, stateDir string, res *config.Result, st *store.Store, b *bus.Bus) *App {
+	a := &App{RepoDir: repoDir, StateDir: stateDir, Store: st, Bus: b}
+	a.res.Store(res)
+	return a
 }
 
 // Open resolves the repo (repoOverride or cwd), loads layered config, and
@@ -96,13 +116,7 @@ func Open(ctx context.Context, repoOverride string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{
-		RepoDir:  root,
-		StateDir: stateDir,
-		Res:      res,
-		Store:    st,
-		Bus:      bus.New(st),
-	}, nil
+	return New(root, stateDir, res, st, bus.New(st)), nil
 }
 
 // Close releases resources.
@@ -111,7 +125,7 @@ func (a *App) Close() error { return a.Store.Close() }
 // EnabledPipelines returns the enabled resolved pipelines.
 func (a *App) EnabledPipelines() []domain.Pipeline {
 	var out []domain.Pipeline
-	for _, p := range a.Res.Config.ResolvedPipelines() {
+	for _, p := range a.Res().Config.ResolvedPipelines() {
 		if p.Enabled {
 			out = append(out, p)
 		}
@@ -134,7 +148,7 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engi
 	if _, err := driver.New(p.Bundle.Agent); err != nil {
 		return nil, err
 	}
-	cfg := a.Res.Config
+	cfg := a.Res().Config
 	var err error
 
 	var personas, nouns []string
@@ -147,7 +161,7 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engi
 		}
 	}
 	known := map[string]bool{}
-	for _, pl := range a.Res.Config.ResolvedPipelines() {
+	for _, pl := range cfg.ResolvedPipelines() {
 		known[pl.Name] = true
 	}
 
@@ -269,7 +283,7 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 			}
 		}
 	}
-	cfg := a.Res.Config
+	cfg := a.Res().Config
 
 	trunk := cfg.Project.Trunk
 	if trunk == "" {
@@ -399,7 +413,8 @@ type Status struct {
 
 // Snapshot assembles the status.
 func (a *App) Snapshot(ctx context.Context) (*Status, error) {
-	st := &Status{Repo: a.RepoDir, StateDir: a.StateDir, Warnings: a.Res.Warnings}
+	res := a.Res()
+	st := &Status{Repo: a.RepoDir, StateDir: a.StateDir, Warnings: res.Warnings}
 
 	open, err := a.Store.ListTasks(ctx, store.TaskFilter{
 		Statuses: []domain.TaskStatus{domain.TaskOpen, domain.TaskClaimed},
@@ -413,7 +428,7 @@ func (a *App) Snapshot(ctx context.Context) (*Status, error) {
 	}
 	st.SharedBacklog = counts[domain.MainBacklog]
 
-	for _, p := range a.Res.Config.ResolvedPipelines() {
+	for _, p := range res.Config.ResolvedPipelines() {
 		override, _ := a.Store.PipelineBundle(ctx, p.Name)
 		eff := route.Effective(override, p.Bundle)
 		mode := p.Mode()

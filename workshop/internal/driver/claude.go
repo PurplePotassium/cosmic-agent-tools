@@ -52,7 +52,13 @@ func (c *Claude) Probe(ctx context.Context) (Capabilities, error) {
 	}
 	hctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	help, herr := exec.CommandContext(hctx, exe, "--help").CombinedOutput()
+	cmd := exec.CommandContext(hctx, exe, "--help")
+	// CombinedOutput returns on pipe EOF, not process exit. An npm shim
+	// (claude.cmd -> node) killed by the timeout leaves its node child
+	// holding the pipe write-end — without WaitDelay the probe hangs
+	// forever, well past the "15s timeout".
+	cmd.WaitDelay = 2 * time.Second
+	help, herr := cmd.CombinedOutput()
 	if herr == nil {
 		caps.Effort = parseEffortSupport(string(help))
 	}
@@ -126,7 +132,17 @@ func claudeTranscriptPath(workDir, sessionID string) string {
 
 func findClaude() (string, error) {
 	if v := os.Getenv("WORKSHOP_CLAUDE_BIN"); v != "" {
-		return v, nil
+		// Absolutize: a relative override would resolve against cmd.Dir —
+		// the agent's WORKTREE — so a previous pass committing a file at
+		// that relative path would get executed as the agent binary.
+		abs, err := filepath.Abs(v)
+		if err != nil {
+			return "", fmt.Errorf("driver: WORKSHOP_CLAUDE_BIN %q: %w", v, err)
+		}
+		if info, err := os.Stat(abs); err != nil || info.IsDir() {
+			return "", fmt.Errorf("driver: WORKSHOP_CLAUDE_BIN %q is not an executable file", v)
+		}
+		return abs, nil
 	}
 	exe, err := exec.LookPath("claude")
 	if err != nil {

@@ -102,6 +102,11 @@ func killTree(pid int) error {
 		terr := windows.TerminateJobObject(job, 137)
 		_ = windows.CloseHandle(job)
 		if terr == nil {
+			// Best-effort sweep for grandchildren spawned in the child's
+			// first milliseconds BEFORE the job assignment (adopt's
+			// documented race) — they are outside the job. Errors are
+			// expected (the tree is already dead) and ignored.
+			_ = exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
 			return nil
 		}
 		// Fall through to taskkill on a terminate failure.
@@ -111,6 +116,12 @@ func killTree(pid int) error {
 	// processes we spawned.
 	out, err := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").CombinedOutput()
 	if err != nil {
+		// "Already exited" is success, not failure (the Unix path forgives
+		// ESRCH the same way): the agent finishing in the same instant the
+		// wedge kill fires must not raise a kill-failed alert.
+		if !alive(pid) {
+			return nil
+		}
 		return fmt.Errorf("proc: taskkill %d: %v: %s", pid, err, out)
 	}
 	return nil

@@ -183,7 +183,7 @@ func (a *App) UpdateTask(ctx context.Context, id string, p store.TaskPatch) (*do
 // machinery: an unbounded worker parks on halt and resumes when cleared.
 func (a *App) SetPipelineDesired(ctx context.Context, name string, running bool) error {
 	found := false
-	for _, p := range a.Res.Config.ResolvedPipelines() {
+	for _, p := range a.Res().Config.ResolvedPipelines() {
 		if p.Name == name {
 			found = true
 		}
@@ -216,7 +216,7 @@ func (a *App) PauseAfter(ctx context.Context) error {
 // the old tool's agent.json workflow.
 func (a *App) SetPipelineBundle(ctx context.Context, name string, b domain.Bundle) error {
 	found := false
-	for _, p := range a.Res.Config.ResolvedPipelines() {
+	for _, p := range a.Res().Config.ResolvedPipelines() {
 		if p.Name == name {
 			found = true
 		}
@@ -246,7 +246,7 @@ func (a *App) SetPipelineBundle(ctx context.Context, name string, b domain.Bundl
 // effect on the NEXT pass without a restart or a config edit.
 func (a *App) SetPipelineMode(ctx context.Context, name, mode string) error {
 	found := false
-	for _, p := range a.Res.Config.ResolvedPipelines() {
+	for _, p := range a.Res().Config.ResolvedPipelines() {
 		if p.Name == name {
 			found = true
 		}
@@ -279,7 +279,7 @@ type QueueLane struct {
 
 // QueueState reports the merge queue (empty when worktrees are off).
 func (a *App) QueueState(ctx context.Context) ([]QueueLane, error) {
-	cfg := a.Res.Config
+	cfg := a.Res().Config
 	if !cfg.WorktreesEnabled() {
 		return nil, nil
 	}
@@ -317,10 +317,10 @@ type ConfigView struct {
 // ConfigSnapshot assembles the config view.
 func (a *App) ConfigSnapshot() ConfigView {
 	return ConfigView{
-		Effective:  a.Res.Config,
-		Provenance: a.Res.Provenance,
-		Warnings:   a.Res.Warnings,
-		Worktrees:  a.Res.Config.WorktreesEnabled(),
+		Effective:  a.Res().Config,
+		Provenance: a.Res().Provenance,
+		Warnings:   a.Res().Warnings,
+		Worktrees:  a.Res().Config.WorktreesEnabled(),
 	}
 }
 

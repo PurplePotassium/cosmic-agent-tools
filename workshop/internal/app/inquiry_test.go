@@ -86,7 +86,7 @@ func TestAskInquiryLifecycle(t *testing.T) {
 
 	// Route the inquiry to the fake driver, exactly as an operator would
 	// route it to another model: a [types.inquiry] entry.
-	a.Res.Config.Types["inquiry"] = domain.Bundle{Agent: "fake"}
+	a.Res().Config.Types["inquiry"] = domain.Bundle{Agent: "fake"}
 	t.Setenv("WORKSHOP_FAKE_BIN", os.Args[0])
 	// fakeagent refuses to run without the pass env; inquiry children
 	// inherit the test process environment.

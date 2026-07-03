@@ -46,7 +46,7 @@ func TestPostPipelineAddsLaneAlongsideImplicitMain(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("add pipeline: got %d, body=%s", rec.Code, rec.Body.String())
 	}
-	pl := s.App.Res.Config.ResolvedPipelines()
+	pl := s.App.Res().Config.ResolvedPipelines()
 	names := map[string]bool{}
 	for _, p := range pl {
 		names[p.Name] = true
@@ -62,7 +62,7 @@ func TestPostPipelineRequiresToken(t *testing.T) {
 	if rec.Code != 403 {
 		t.Fatalf("unauthorized add: got %d, want 403", rec.Code)
 	}
-	if pl := s.App.Res.Config.ResolvedPipelines(); len(pl) != 1 {
+	if pl := s.App.Res().Config.ResolvedPipelines(); len(pl) != 1 {
 		t.Fatalf("unauthorized add must not mutate config, got %+v", pl)
 	}
 }
@@ -92,7 +92,7 @@ func TestAddThenDeletePipelineRoundTrip(t *testing.T) {
 	if rec := doPipelineReq(t, s, "DELETE", "/api/v1/pipelines/art", s.token, ""); rec.Code != 200 {
 		t.Fatalf("delete: got %d, body=%s", rec.Code, rec.Body.String())
 	}
-	pl := s.App.Res.Config.ResolvedPipelines()
+	pl := s.App.Res().Config.ResolvedPipelines()
 	if len(pl) != 1 || pl[0].Name != config.DefaultPipelineName {
 		t.Fatalf("pipelines after add+delete = %+v, want just main", pl)
 	}

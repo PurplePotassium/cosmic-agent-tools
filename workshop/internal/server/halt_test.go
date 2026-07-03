@@ -21,12 +21,7 @@ func newTestServer(t *testing.T) (*Server, *app.App) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := &app.App{
-		StateDir: t.TempDir(),
-		Res:      &config.Result{Config: config.Default()},
-		Store:    st,
-		Bus:      bus.New(st),
-	}
+	a := app.New("", t.TempDir(), &config.Result{Config: config.Default()}, st, bus.New(st))
 	s := New(a, func() {}, func() {})
 	return s, a
 }

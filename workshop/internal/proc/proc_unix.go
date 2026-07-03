@@ -4,12 +4,15 @@ package proc
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"syscall"
 )
 
-func configure(cmd *exec.Cmd, mode SpawnMode) {
+// configure puts the child in its own process group. Consoled needs nothing
+// extra on Unix: there is no console concept, and a nil Stdin already means
+// the null device — opening os.DevNull here leaked one fd per spawn
+// (exec.Cmd never closes caller-supplied files).
+func configure(cmd *exec.Cmd, _ SpawnMode) {
 	attr := cmd.SysProcAttr
 	if attr == nil {
 		attr = &syscall.SysProcAttr{}
@@ -17,13 +20,6 @@ func configure(cmd *exec.Cmd, mode SpawnMode) {
 	}
 	// New process group so a negative-pid signal reaches the whole tree.
 	attr.Setpgid = true
-	if mode == Consoled {
-		// No console concept to allocate; just make sure nothing is
-		// attached so a blind driver can't wedge on a full pipe.
-		if cmd.Stdin == nil {
-			cmd.Stdin, _ = os.Open(os.DevNull)
-		}
-	}
 }
 
 func killTree(pid int) error {

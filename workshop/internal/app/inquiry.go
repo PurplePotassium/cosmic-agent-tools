@@ -95,7 +95,7 @@ func (a *App) AskInquiry(ctx context.Context, question string) (*Inquiry, error)
 
 	// Route: claude/high by default; an operator [types.inquiry] entry in
 	// config.toml overrides agent/model/effort like any other type route.
-	bundle := a.Res.Config.Types["inquiry"].Overlay(domain.Bundle{Agent: "claude", Effort: "high"})
+	bundle := a.Res().Config.Types["inquiry"].Overlay(domain.Bundle{Agent: "claude", Effort: "high"})
 	drv, err := driver.New(bundle.Agent)
 	if err != nil {
 		return nil, err

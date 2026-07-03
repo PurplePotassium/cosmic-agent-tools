@@ -6,6 +6,7 @@ package gitx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,7 +29,8 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-// run executes git in dir, returning trimmed combined output.
+// run executes git in dir, returning trimmed combined output. For commands
+// whose output is PARSED, use runOut instead — never this.
 func run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
@@ -40,15 +42,49 @@ func run(ctx context.Context, dir string, args ...string) (string, error) {
 	return s, nil
 }
 
+// runOut executes git in dir, returning trimmed stdout ONLY. Every helper
+// whose result is parsed must use this: CombinedOutput interleaves stderr
+// emitted on a SUCCESSFUL exit ("warning: refname 'x' is ambiguous",
+// fsmonitor chatter) into the value — turning a SHA into garbage or a warning
+// line into a "changed path". Stderr still reaches the Error wrapper on
+// failure.
+func runOut(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	s := strings.TrimRight(string(out), "\r\n")
+	if err != nil {
+		msg := s
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			msg = strings.TrimRight(string(ee.Stderr), "\r\n")
+		}
+		return s, &Error{Args: args, Output: msg, Err: err}
+	}
+	return s, nil
+}
+
+// rejectFlagLike guards ref/branch/path arguments assembled from config and
+// task data: git parses a leading-dash value as an option ("--detach",
+// "--keep"), silently changing a command's meaning instead of erroring.
+func rejectFlagLike(names ...string) error {
+	for _, n := range names {
+		if strings.HasPrefix(n, "-") {
+			return fmt.Errorf("gitx: ref/branch %q looks like an option flag", n)
+		}
+	}
+	return nil
+}
+
 // IsRepo reports whether dir is inside a git work tree.
 func IsRepo(ctx context.Context, dir string) bool {
-	out, err := run(ctx, dir, "rev-parse", "--is-inside-work-tree")
+	out, err := runOut(ctx, dir, "rev-parse", "--is-inside-work-tree")
 	return err == nil && out == "true"
 }
 
 // Root returns the top-level directory of the work tree containing dir.
 func Root(ctx context.Context, dir string) (string, error) {
-	out, err := run(ctx, dir, "rev-parse", "--show-toplevel")
+	out, err := runOut(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", err
 	}
@@ -59,7 +95,7 @@ func Root(ctx context.Context, dir string) (string, error) {
 // this resolves to .git/worktrees/<name>/ — where that worktree's index.lock
 // and MERGE_HEAD live.
 func GitDir(ctx context.Context, dir string) (string, error) {
-	out, err := run(ctx, dir, "rev-parse", "--git-dir")
+	out, err := runOut(ctx, dir, "rev-parse", "--git-dir")
 	if err != nil {
 		return "", err
 	}
@@ -72,7 +108,7 @@ func GitDir(ctx context.Context, dir string) (string, error) {
 
 // CurrentBranch returns the checked-out branch name ("" when detached).
 func CurrentBranch(ctx context.Context, dir string) (string, error) {
-	out, err := run(ctx, dir, "branch", "--show-current")
+	out, err := runOut(ctx, dir, "branch", "--show-current")
 	if err != nil {
 		return "", err
 	}
@@ -81,24 +117,33 @@ func CurrentBranch(ctx context.Context, dir string) (string, error) {
 
 // BranchExists reports whether a local branch exists.
 func BranchExists(ctx context.Context, dir, branch string) bool {
-	_, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	_, err := runOut(ctx, dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
 	return err == nil
 }
 
 // CheckoutBranch checks out an existing branch.
 func CheckoutBranch(ctx context.Context, dir, branch string) error {
+	if err := rejectFlagLike(branch); err != nil {
+		return err
+	}
 	_, err := run(ctx, dir, "checkout", "-q", branch)
 	return err
 }
 
 // CreateBranch creates (without checking out) a branch at base.
 func CreateBranch(ctx context.Context, dir, branch, base string) error {
+	if err := rejectFlagLike(branch, base); err != nil {
+		return err
+	}
 	_, err := run(ctx, dir, "branch", branch, base)
 	return err
 }
 
 // DeleteBranch deletes a local branch; force ignores unmerged state.
 func DeleteBranch(ctx context.Context, dir, branch string, force bool) error {
+	if err := rejectFlagLike(branch); err != nil {
+		return err
+	}
 	flag := "-d"
 	if force {
 		flag = "-D"
@@ -109,13 +154,30 @@ func DeleteBranch(ctx context.Context, dir, branch string, force bool) error {
 
 // RevParse resolves a ref to a full SHA.
 func RevParse(ctx context.Context, dir, ref string) (string, error) {
-	return run(ctx, dir, "rev-parse", ref)
+	if err := rejectFlagLike(ref); err != nil {
+		return "", err
+	}
+	return runOut(ctx, dir, "rev-parse", ref)
+}
+
+// CommitInfo returns ref's parent SHAs and subject line.
+func CommitInfo(ctx context.Context, dir, ref string) (parents []string, subject string, err error) {
+	if err := rejectFlagLike(ref); err != nil {
+		return nil, "", err
+	}
+	out, err := runOut(ctx, dir, "show", "-s", "--format=%P%x1f%s", ref)
+	if err != nil {
+		return nil, "", err
+	}
+	ps, subj, _ := strings.Cut(out, "\x1f")
+	return strings.Fields(ps), subj, nil
 }
 
 // StatusPorcelain returns the changed paths (git status --porcelain lines,
-// path portion only).
+// path portion only). quotepath=off keeps non-ASCII names verbatim instead of
+// C-quoted octal escapes that match nothing on disk.
 func StatusPorcelain(ctx context.Context, dir string) ([]string, error) {
-	out, err := run(ctx, dir, "status", "--porcelain")
+	out, err := runOut(ctx, dir, "-c", "core.quotepath=off", "status", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +206,10 @@ func IsDirty(ctx context.Context, dir string) (bool, error) {
 
 // AheadCount returns how many commits branch is ahead of base.
 func AheadCount(ctx context.Context, dir, base, branch string) (int, error) {
-	out, err := run(ctx, dir, "rev-list", "--count", base+".."+branch)
+	if err := rejectFlagLike(base, branch); err != nil {
+		return 0, err
+	}
+	out, err := runOut(ctx, dir, "rev-list", "--count", base+".."+branch)
 	if err != nil {
 		return 0, err
 	}
@@ -184,7 +249,7 @@ func CommitAll(ctx context.Context, dir, message string) (string, error) {
 			return "", err
 		}
 	}
-	return run(ctx, dir, "rev-parse", "--short", "HEAD")
+	return runOut(ctx, dir, "rev-parse", "--short", "HEAD")
 }
 
 func isIdentityError(err error, ge **Error) bool {
@@ -214,7 +279,7 @@ type Commit struct {
 
 // RecentCommits returns the newest n commits on HEAD.
 func RecentCommits(ctx context.Context, dir string, n int) ([]Commit, error) {
-	out, err := run(ctx, dir, "log", "-n", strconv.Itoa(n), "--format=%h%x1f%s%x1f%ct")
+	out, err := runOut(ctx, dir, "log", "-n", strconv.Itoa(n), "--format=%h%x1f%s%x1f%ct")
 	if err != nil {
 		// An empty repo (no commits yet) is not an error for a feed.
 		if strings.Contains(err.Error(), "does not have any commits") {
@@ -277,6 +342,9 @@ func HasMergeHead(ctx context.Context, dir string) bool {
 // identity (same as CommitAll) rather than failing the merge. Other failures
 // return an error.
 func Merge(ctx context.Context, dir, ref string, noFF bool) (conflict bool, err error) {
+	if err := rejectFlagLike(ref); err != nil {
+		return false, err
+	}
 	args := []string{"merge", "--no-edit"}
 	if noFF {
 		args = append(args, "--no-ff")
@@ -331,7 +399,7 @@ func MergeContinueCommit(ctx context.Context, dir string) error {
 
 // UnmergedFiles lists paths still in conflict.
 func UnmergedFiles(ctx context.Context, dir string) ([]string, error) {
-	out, err := run(ctx, dir, "diff", "--name-only", "--diff-filter=U")
+	out, err := runOut(ctx, dir, "-c", "core.quotepath=off", "diff", "--name-only", "--diff-filter=U")
 	if err != nil {
 		return nil, err
 	}
@@ -343,18 +411,27 @@ func UnmergedFiles(ctx context.Context, dir string) ([]string, error) {
 
 // ResetHard resets the work tree and HEAD to ref.
 func ResetHard(ctx context.Context, dir, ref string) error {
+	if err := rejectFlagLike(ref); err != nil {
+		return err
+	}
 	_, err := run(ctx, dir, "reset", "--hard", "-q", ref)
 	return err
 }
 
 // UpdateRef points a fully-qualified ref (e.g. refs/workshop/green) at target.
 func UpdateRef(ctx context.Context, dir, ref, target string) error {
+	if err := rejectFlagLike(ref, target); err != nil {
+		return err
+	}
 	_, err := run(ctx, dir, "update-ref", ref, target)
 	return err
 }
 
 // RefExists reports whether a ref resolves to a commit.
 func RefExists(ctx context.Context, dir, ref string) bool {
-	_, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if rejectFlagLike(ref) != nil {
+		return false
+	}
+	_, err := runOut(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	return err == nil
 }

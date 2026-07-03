@@ -85,10 +85,10 @@ verify = "npm test"
 		t.Fatalf("override layer lost: verify = %q", c.Project.Verify)
 	}
 	for key, want := range map[string]string{
-		"server.port":         LayerRepo,
-		"server.open_browser": LayerUser,
-		"project.verify":      LayerOverride,
-		"project.name":        LayerRepo,
+		"server.port":           LayerRepo,
+		"server.open_browser":   LayerUser,
+		"project.verify":        LayerOverride,
+		"project.name":          LayerRepo,
 		"safety.max_iterations": LayerBuiltin,
 	} {
 		if got := res.Source(key); got != want {
@@ -220,10 +220,10 @@ mode = "drain"
 		byName[p.Name] = struct{ invent, accept bool }{p.Invent, p.AcceptProposals}
 	}
 	cases := map[string]struct{ invent, accept bool }{
-		"goal-default":       {true, true},
-		"legacy-invent-off":  {false, true}, // pre-existing invent=false behavior: proposals still accepted
-		"discover":           {false, true},
-		"drain":              {false, false},
+		"goal-default":      {true, true},
+		"legacy-invent-off": {false, true}, // pre-existing invent=false behavior: proposals still accepted
+		"discover":          {false, true},
+		"drain":             {false, false},
 	}
 	for name, want := range cases {
 		if got := byName[name]; got != want {
@@ -249,14 +249,43 @@ name = "dup"
 effort = "gigantic"
 `)
 	res, err := Load("", repo, "", noEnv)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("malformed pipelines must BLOCK startup, got warnings only: %v", res.Warnings)
 	}
-	joined := strings.Join(res.Warnings, "\n")
 	for _, want := range []string{"reserved", "must match", "duplicate", "effort"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("warnings missing %q:\n%s", want, joined)
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("blocking error missing %q:\n%s", want, err)
 		}
+	}
+}
+
+// Safety knobs and agent-less type models are blocking too: an unattended
+// loop with a zero wedge timeout or a model overlaid on the wrong agent must
+// refuse to start, not WARN into the void.
+func TestValidateBlocksUnsafeConfig(t *testing.T) {
+	for name, body := range map[string]string{
+		"zero wedge":        "[safety]\nwedge_minutes = 0",
+		"negative breaker":  "[safety]\nbreaker_failures = -1",
+		"agent-less model":  "[types.art]\nmodel = \"gemini-3-flash\"",
+		"port out of range": "[server]\nport = 999999",
+	} {
+		dir := t.TempDir()
+		repo := writeFile(t, dir, "repo.toml", body)
+		if _, err := Load("", repo, "", noEnv); err == nil {
+			t.Errorf("%s: must block startup", name)
+		}
+	}
+
+	// Model-family mismatch stays a WARNING (documented: proxy aliases and
+	// brand-new ids must not block).
+	dir := t.TempDir()
+	repo := writeFile(t, dir, "repo.toml", "[[pipelines]]\nname = \"code\"\nagent = \"claude\"\nmodel = \"weird-model\"")
+	res, err := Load("", repo, "", noEnv)
+	if err != nil {
+		t.Fatalf("model mismatch must warn, not block: %v", err)
+	}
+	if joined := strings.Join(res.Warnings, "\n"); !strings.Contains(joined, "weird-model") {
+		t.Fatalf("model mismatch warning missing: %v", res.Warnings)
 	}
 }
 

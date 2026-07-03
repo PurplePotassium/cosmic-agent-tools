@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
@@ -85,7 +86,12 @@ func (s *Supervisor) Run(ctx context.Context, spec RunSpec) error {
 		// to resolve them).
 		for i := 0; i < 10; i++ {
 			landed, err := spec.Integrator.RunRound(ctx)
-			if err != nil || landed == 0 {
+			if err != nil {
+				// Committed lane work silently not landing while the CLI
+				// exits 0 is the worst outcome — surface the drain failure.
+				return fmt.Errorf("engine: integrator drain: %w", err)
+			}
+			if landed == 0 {
 				break
 			}
 		}

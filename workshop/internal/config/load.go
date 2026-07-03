@@ -99,8 +99,19 @@ func Load(userFile, repoFile, overridesFile string, env func(string) string) (*R
 
 	applyEnv(res, env)
 
-	for _, err := range res.Config.Validate() {
-		res.Warnings = append(res.Warnings, err.Error())
+	errs, warns := res.Config.Validate()
+	if len(errs) > 0 {
+		// Blocking: for an unattended tool, running with a malformed
+		// pipeline or safety knob is worse than refusing to start.
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
+		}
+		sort.Strings(msgs)
+		return nil, fmt.Errorf("config: %s", strings.Join(msgs, "; "))
+	}
+	for _, w := range warns {
+		res.Warnings = append(res.Warnings, w.Error())
 	}
 	sort.Strings(res.Warnings)
 	return res, nil

@@ -18,6 +18,7 @@ func cmdMigrate(args []string) int {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	repo := fs.String("repo", "", "repository path")
 	from := fs.String("from", "", "path to the OLD PowerShell workshop directory (holds workshop.config.ps1)")
+	force := fs.Bool("force", false, "re-run even though this state dir already imported a legacy backlog")
 	_ = fs.Parse(args)
 	if *from == "" {
 		fmt.Fprintln(os.Stderr, `usage: workshop migrate --from <old-workshop-dir>
@@ -42,8 +43,21 @@ equivalent — set project.trunk / project.verify / [spice] in
 	}
 	defer a.Close()
 
+	// Task/completion imports mint fresh IDs, so a re-run would duplicate
+	// the entire backlog and history — refuse unless forced.
+	marker := filepath.Join(a.StateDir, "migrated.json")
+	if _, err := os.Stat(marker); err == nil && !*force {
+		fmt.Fprintln(os.Stderr, "error: this state dir already imported a legacy workshop (re-running duplicates every task); pass --force to do it anyway")
+		return 1
+	}
+
+	failed := false
 	copied := func(what, dest string) { fmt.Printf("  %-18s -> %s\n", what, dest) }
 	skip := func(what, why string) { fmt.Printf("  %-18s    skipped (%s)\n", what, why) }
+	failw := func(what string, err error) {
+		failed = true
+		fmt.Fprintf(os.Stderr, "  %-18s    FAILED: %v\n", what, err)
+	}
 
 	fmt.Println("migrating from", *from)
 
@@ -56,6 +70,8 @@ equivalent — set project.trunk / project.verify / [spice] in
 			_ = os.MkdirAll(filepath.Dir(dest), 0o755)
 			if err := statedir.WriteFileAtomic(dest, data); err == nil {
 				copied("GOAL.md", dest)
+			} else {
+				failw("GOAL.md", err)
 			}
 		}
 	} else {
@@ -75,6 +91,8 @@ equivalent — set project.trunk / project.verify / [spice] in
 			_ = os.MkdirAll(filepath.Dir(dest), 0o755)
 			if err := statedir.WriteFileAtomic(dest, append([]byte(header), data...)); err == nil {
 				copied("PROMPT.md", dest)
+			} else {
+				failw("PROMPT.md", err)
 			}
 		}
 	} else {
@@ -102,6 +120,8 @@ equivalent — set project.trunk / project.verify / [spice] in
 			}
 			if _, err := a.Store.AddTask(ctx, task, false); err == nil {
 				n++
+			} else {
+				failw("backlog.json", err)
 			}
 		}
 		copied(fmt.Sprintf("backlog.json (%d)", n), "shared backlog")
@@ -129,11 +149,21 @@ equivalent — set project.trunk / project.verify / [spice] in
 			}
 			if err := a.Store.AddCompletion(ctx, c); err == nil {
 				n++
+			} else {
+				failw("completions.json", err)
 			}
 		}
 		copied(fmt.Sprintf("completions.json (%d)", n), "completion history")
 	} else {
 		skip("completions.json", "not found or empty")
+	}
+
+	_ = statedir.WriteJSON(marker, map[string]string{
+		"from": *from, "when": time.Now().UTC().Format(time.RFC3339),
+	})
+	if failed {
+		fmt.Fprintln(os.Stderr, "\nmigration finished WITH ERRORS — review the FAILED lines above")
+		return 1
 	}
 
 	fmt.Println(`

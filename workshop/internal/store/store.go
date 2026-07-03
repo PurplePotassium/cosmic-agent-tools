@@ -154,8 +154,13 @@ func (s *Store) migrate() error {
 	if err := s.ensureColumn("passes", "session_id", `TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
+	// DO UPDATE, not DO NOTHING: the stored version must track the binary
+	// that last migrated the schema forward, or the newer-workshop guard
+	// above compares against the version that first CREATED the database
+	// and can never fire.
 	_, err = s.db.Exec(
-		`INSERT INTO kv(k, v) VALUES('schema_version', ?) ON CONFLICT(k) DO NOTHING`,
+		`INSERT INTO kv(k, v) VALUES('schema_version', ?)
+		 ON CONFLICT(k) DO UPDATE SET v = excluded.v`,
 		fmt.Sprint(schemaVersion))
 	return err
 }
