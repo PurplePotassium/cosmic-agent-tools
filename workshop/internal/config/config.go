@@ -68,7 +68,16 @@ type PipelineConfig struct {
 	Agent     string   `toml:"agent"`
 	Model     string   `toml:"model"`
 	Effort    string   `toml:"effort"`
-	Invent    *bool    `toml:"invent"`   // default true
+	Invent    *bool    `toml:"invent"`   // default true; ignored when Mode is set
+	// Mode names the pipeline's goal-pursuit/backlog-growth stance:
+	//   "goal" (default) - invents work when idle (per Invent) AND accepts
+	//     agent-proposed follow-ups. Today's behavior.
+	//   "discover" - never invents idle work, but still accepts follow-ups an
+	//     agent notices immediately after finishing its assigned task.
+	//   "drain" - never invents idle work and never accepts follow-ups: the
+	//     pipeline can only shrink the backlog.
+	// Set, it overrides Invent.
+	Mode      string   `toml:"mode"`
 	Enabled   *bool    `toml:"enabled"`  // default true
 	Worktree  *bool    `toml:"worktree"` // per-pipeline override of [git].worktrees
 	ScopeHint string   `toml:"scope_hint"`
@@ -139,12 +148,13 @@ func (c *Config) ResolvedPipelines() []domain.Pipeline {
 	}
 	if len(c.Pipelines) == 0 {
 		return []domain.Pipeline{{
-			Name:        DefaultPipelineName,
-			Bundle:      domain.Bundle{Agent: "claude"},
-			DrainMain:   true,
-			Invent:      true,
-			Enabled:     true,
-			PassTimeout: time.Duration(c.Safety.WedgeMinutes) * time.Minute,
+			Name:            DefaultPipelineName,
+			Bundle:          domain.Bundle{Agent: "claude"},
+			DrainMain:       true,
+			Invent:          true,
+			AcceptProposals: true,
+			Enabled:         true,
+			PassTimeout:     time.Duration(c.Safety.WedgeMinutes) * time.Minute,
 		}}
 	}
 	out := make([]domain.Pipeline, 0, len(c.Pipelines))
@@ -157,20 +167,40 @@ func (c *Config) ResolvedPipelines() []domain.Pipeline {
 		if agent == "" {
 			agent = "claude"
 		}
+		invent, acceptProposals := resolveMode(pc)
 		out = append(out, domain.Pipeline{
-			Name:        pc.Name,
-			Bundle:      domain.Bundle{Agent: agent, Model: pc.Model, Effort: pc.Effort},
-			TaskTypes:   pc.Types,
-			DrainMain:   boolOr(pc.DrainMain, true),
-			ScopeHint:   pc.ScopeHint,
-			Invent:      boolOr(pc.Invent, true),
-			Enabled:     boolOr(pc.Enabled, true),
-			Worktree:    pc.Worktree,
-			PassTimeout: time.Duration(wedge) * time.Minute,
-			ExtraArgs:   pc.ExtraArgs,
+			Name:            pc.Name,
+			Bundle:          domain.Bundle{Agent: agent, Model: pc.Model, Effort: pc.Effort},
+			TaskTypes:       pc.Types,
+			DrainMain:       boolOr(pc.DrainMain, true),
+			ScopeHint:       pc.ScopeHint,
+			Invent:          invent,
+			AcceptProposals: acceptProposals,
+			Enabled:         boolOr(pc.Enabled, true),
+			Worktree:        pc.Worktree,
+			PassTimeout:     time.Duration(wedge) * time.Minute,
+			ExtraArgs:       pc.ExtraArgs,
 		})
 	}
 	return out
+}
+
+// resolveMode derives (Invent, AcceptProposals) from a pipeline's Mode, or —
+// with no Mode set — from the legacy Invent bool (proposals always accepted,
+// today's behavior).
+func resolveMode(pc PipelineConfig) (invent, acceptProposals bool) {
+	switch pc.Mode {
+	case "discover":
+		return false, true
+	case "drain":
+		return false, false
+	default: // "", "goal"
+		invent = true
+		if pc.Invent != nil {
+			invent = *pc.Invent
+		}
+		return invent, true
+	}
 }
 
 // WorktreesEnabled resolves the [git].worktrees tri-state against the number
@@ -223,6 +253,11 @@ func (c *Config) Validate() []error {
 		seen[name] = true
 		if !domain.ValidEffort(p.Effort) {
 			errs = append(errs, fmt.Errorf("pipelines.%s: effort %q is not one of %v", p.Name, p.Effort, domain.Efforts))
+		}
+		switch p.Mode {
+		case "", "goal", "discover", "drain":
+		default:
+			errs = append(errs, fmt.Errorf("pipelines.%s: mode %q is not goal/discover/drain", p.Name, p.Mode))
 		}
 	}
 	for t, b := range c.Types {

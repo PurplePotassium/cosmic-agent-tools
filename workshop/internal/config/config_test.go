@@ -190,6 +190,48 @@ drain_main = false
 	}
 }
 
+func TestPipelineModeResolution(t *testing.T) {
+	dir := t.TempDir()
+	repo := writeFile(t, dir, "repo.toml", `
+[[pipelines]]
+name = "goal-default"
+
+[[pipelines]]
+name = "legacy-invent-off"
+invent = false
+
+[[pipelines]]
+name = "discover"
+mode = "discover"
+
+[[pipelines]]
+name = "drain"
+mode = "drain"
+`)
+	res, err := Load("", repo, "", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("warnings: %v", res.Warnings)
+	}
+	byName := map[string]struct{ invent, accept bool }{}
+	for _, p := range res.Config.ResolvedPipelines() {
+		byName[p.Name] = struct{ invent, accept bool }{p.Invent, p.AcceptProposals}
+	}
+	cases := map[string]struct{ invent, accept bool }{
+		"goal-default":       {true, true},
+		"legacy-invent-off":  {false, true}, // pre-existing invent=false behavior: proposals still accepted
+		"discover":           {false, true},
+		"drain":              {false, false},
+	}
+	for name, want := range cases {
+		if got := byName[name]; got != want {
+			t.Errorf("%s: invent=%v accept=%v, want %+v", name, got.invent, got.accept, want)
+		}
+	}
+}
+
 func TestValidateCatchesProblems(t *testing.T) {
 	dir := t.TempDir()
 	repo := writeFile(t, dir, "repo.toml", `

@@ -168,6 +168,7 @@ nouns    = "gamedev"
 # model      = "gemini-3-flash"
 # invent     = false       # blind driver: only works operator-queued tasks
 # drain_main = true
+# mode       = "discover"  # goal (default, invents+proposes) | discover (proposes only) | drain (backlog-only)
 `)
 	} else {
 		for _, n := range pipelineNames {

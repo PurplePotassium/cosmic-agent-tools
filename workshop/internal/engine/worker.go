@@ -622,9 +622,11 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 		})
 	}
 
-	if added, err := w.bl.Ingest(ctx, name, statedir.ReadProposals(w.cfg.StateDir), w.cfg.KnownPipelines, 2); err == nil {
-		for _, t := range added {
-			w.event(ctx, "task.created", name, pass.ID, map[string]any{"task": t.ID, "title": t.Title, "origin": "agent"})
+	if w.cfg.Pipeline.AcceptProposals {
+		if added, err := w.bl.Ingest(ctx, name, statedir.ReadProposals(w.cfg.StateDir), w.cfg.KnownPipelines, 2); err == nil {
+			for _, t := range added {
+				w.event(ctx, "task.created", name, pass.ID, map[string]any{"task": t.ID, "title": t.Title, "origin": "agent"})
+			}
 		}
 	}
 

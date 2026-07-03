@@ -77,11 +77,12 @@ func newRig(t *testing.T, scenario fakeagent.Scenario, tweak func(*WorkerConfig)
 
 	cfg := WorkerConfig{
 		Pipeline: domain.Pipeline{
-			Name:        "main",
-			Bundle:      domain.Bundle{Agent: "fake"},
-			DrainMain:   true,
-			Enabled:     true,
-			PassTimeout: 2 * time.Minute,
+			Name:            "main",
+			Bundle:          domain.Bundle{Agent: "fake"},
+			DrainMain:       true,
+			AcceptProposals: true,
+			Enabled:         true,
+			PassTimeout:     2 * time.Minute,
 		},
 		RepoDir:      repo,
 		StateDir:     statedir.PipelineDir(stateRoot, "main"),
@@ -188,6 +189,28 @@ func TestProposalsIngestedWithDedupe(t *testing.T) {
 	// 2 open originally - 1 done + 2 accepted proposals = 3
 	if len(open) != 3 {
 		t.Fatalf("open tasks: %d (%v)", len(open), titles)
+	}
+}
+
+// Drain-mode pipelines (AcceptProposals = false) may only shrink the
+// backlog: a finished pass's proposals.json follow-ups must be dropped.
+func TestDrainModeSkipsProposalIngestion(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", Proposals: []domain.Proposal{
+		{Title: "shiny new idea", Type: "code"},
+	}}, func(cfg *WorkerConfig) {
+		cfg.Pipeline.AcceptProposals = false
+	})
+	ctx := context.Background()
+	r.addTask("work me")
+
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	open, _ := r.st.ListTasks(ctx, store.TaskFilter{Statuses: []domain.TaskStatus{domain.TaskOpen}})
+	for _, task := range open {
+		if task.Title == "shiny new idea" {
+			t.Fatalf("proposal ingested despite AcceptProposals=false: %+v", open)
+		}
 	}
 }
 

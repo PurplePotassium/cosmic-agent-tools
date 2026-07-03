@@ -107,8 +107,14 @@ type Pipeline struct {
 	DrainMain bool     // also claim from the main backlog
 	ScopeHint string   // soft file-ownership guidance appended to the prompt tail
 	Invent    bool     // idle + empty backlog => may invent one task toward GOAL
-	Enabled   bool
-	Worktree  *bool // per-pipeline override of the project worktree setting; nil = inherit
+	// AcceptProposals: whether a finished pass's proposals.json follow-ups get
+	// ingested into the backlog. Together with Invent this forms the pipeline's
+	// mode: goal (both true, the default), discover (Invent false, this true —
+	// only proposes follow-ups right after finishing an assigned task), or
+	// drain (both false — the pipeline only ever shrinks the backlog).
+	AcceptProposals bool
+	Enabled         bool
+	Worktree        *bool // per-pipeline override of the project worktree setting; nil = inherit
 
 	PassTimeout time.Duration // wedge threshold; 0 = driver default
 	ExtraArgs   []string      // raw args appended to every agent invocation

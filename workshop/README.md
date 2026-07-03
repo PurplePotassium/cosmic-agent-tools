@@ -150,6 +150,12 @@ model      = "gemini-3-flash"
 invent     = false           # blind driver: only works operator-queued tasks
 # drain_main = true          # default: also claim type-matching shared tasks
 # extra_args = ["--flag"]    # raw args appended to every agent invocation
+# mode = "drain"             # goal (default): invent idle work + accept agent
+                             # proposals. discover: never invent, but still
+                             # accept follow-ups proposed right after a task.
+                             # drain: never invent, never accept proposals —
+                             # the pipeline can only shrink the backlog.
+                             # Set, mode overrides invent.
 ```
 
 ## How multi-pipeline integration works
