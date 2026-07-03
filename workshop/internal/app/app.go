@@ -365,6 +365,7 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 // the raw override when one is active.
 type PipelineStatus struct {
 	Name            string          `json:"name"`
+	Mode            string          `json:"mode"` // goal | discover | drain — see domain.Pipeline.Mode
 	Enabled         bool            `json:"enabled"`
 	Agent           string          `json:"agent"`
 	Model           string          `json:"model,omitempty"`
@@ -409,7 +410,7 @@ func (a *App) Snapshot(ctx context.Context) (*Status, error) {
 		override, _ := a.Store.PipelineBundle(ctx, p.Name)
 		eff := route.Effective(override, p.Bundle)
 		ps := PipelineStatus{
-			Name: p.Name, Enabled: p.Enabled,
+			Name: p.Name, Mode: p.Mode(), Enabled: p.Enabled,
 			Agent: eff.Agent, Model: eff.Model, Effort: eff.Effort,
 			BacklogExclusive: counts[p.Name],
 		}

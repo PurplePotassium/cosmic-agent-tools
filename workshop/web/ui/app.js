@@ -220,6 +220,7 @@ function PipelineCard({ p, log, onDesired, onBundle }) {
       ${pill}
       <span class="chip" title=${p.override ? "live override active — applies from the next pass" : "configured bundle"}>
         ${bundle}${p.override ? " ⚡" : ""}</span>
+      <span class="chip" title="invent/accept-proposals mode">${p.mode}</span>
       ${p.backlogExclusive > 0 && html`<span class="chip">own backlog: ${p.backlogExclusive}</span>`}
       <span class="spacer"></span>
       <button title="switch agent/model for the next pass" onClick=${() => setEditBundle((v) => !v)}>⚙</button>

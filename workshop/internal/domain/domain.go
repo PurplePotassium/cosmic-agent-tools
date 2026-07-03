@@ -165,6 +165,20 @@ type Pipeline struct {
 	Dir    string // working dir (worktree dir, or the repo dir in simple mode)
 }
 
+// Mode reports the resolved operating mode implied by Invent and
+// AcceptProposals: "goal" (both true, the default), "discover" (Invent false,
+// AcceptProposals true), or "drain" (both false).
+func (p Pipeline) Mode() string {
+	switch {
+	case p.Invent:
+		return "goal"
+	case p.AcceptProposals:
+		return "discover"
+	default:
+		return "drain"
+	}
+}
+
 // HandlesType reports whether the pipeline claims tasks of type t from the
 // main backlog. Own-backlog tasks are always claimable regardless of type.
 func (p Pipeline) HandlesType(t string) bool {
