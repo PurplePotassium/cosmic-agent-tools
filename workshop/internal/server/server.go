@@ -129,6 +129,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/runs", s.getRuns)
 	mux.HandleFunc("GET /api/v1/runs/{id}/log", s.getRunLog)
 	mux.HandleFunc("GET /api/v1/events", s.getEvents) // SSE
+	mux.HandleFunc("GET /api/v1/attachments/{name}", s.getAttachment)
 
 	// --- mutating routes (token-gated) ---
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -294,6 +295,27 @@ func (s *Server) postAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"path": path})
+}
+
+// getAttachment serves a saved attachment by basename so the dashboard can
+// render a thumbnail: SaveAttachment's markdown reference embeds an absolute
+// host filesystem path, which the browser can't dereference directly. The
+// basename is re-joined under <StateDir>/attachments rather than trusted as a
+// path, so "../.." can't escape it.
+func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
+	dir := filepath.Join(s.App.StateDir, "attachments")
+	path := filepath.Join(dir, filepath.Base(r.PathValue("name")))
+	if filepath.Dir(path) != dir {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType(path))
+	_, _ = w.Write(data)
 }
 
 func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
@@ -515,6 +537,14 @@ func contentType(path string) string {
 		return "image/svg+xml"
 	case ".json", ".map":
 		return "application/json"
+	case ".png":
+		return "image/png"
+	case ".jpeg", ".jpg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
 	default:
 		return "application/octet-stream"
 	}

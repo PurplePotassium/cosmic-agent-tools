@@ -132,3 +132,61 @@ func TestPostAttachmentRejectsNonImageDataURL(t *testing.T) {
 		t.Fatalf("non-image data URL: got %d, want 400", rec.Code)
 	}
 }
+
+func TestGetAttachmentServesSavedFile(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := `{"name":"my shot.png","dataUrl":"data:image/png;base64,iVBORw0KGgowMDAw"}`
+	postReq := httptest.NewRequest("POST", "http://127.0.0.1/api/v1/tasks/attachments", strings.NewReader(body))
+	postReq.RemoteAddr = "127.0.0.1:5555"
+	postReq.Header.Set("X-Workshop-Token", s.token)
+	postRec := httptest.NewRecorder()
+	s.handler().ServeHTTP(postRec, postReq)
+	var resp struct{ Path string }
+	if err := json.Unmarshal(postRec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(resp.Path)
+
+	getReq := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/"+name, nil)
+	getReq.RemoteAddr = "127.0.0.1:5555"
+	getRec := httptest.NewRecorder()
+	s.handler().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200: %s", getRec.Code, getRec.Body.String())
+	}
+	if ct := getRec.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", ct)
+	}
+	if getRec.Body.String() != "\x89PNG\r\n\x1a\n0000" {
+		t.Fatalf("served content = %q, want decoded PNG bytes", getRec.Body.String())
+	}
+}
+
+func TestGetAttachmentUnknownNameNotFound(t *testing.T) {
+	s, _ := newTestServer(t)
+	req := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/nope.png", nil)
+	req.RemoteAddr = "127.0.0.1:5555"
+	rec := httptest.NewRecorder()
+	s.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got %d, want 404", rec.Code)
+	}
+}
+
+// TestGetAttachmentRejectsPathTraversal calls the handler directly with a
+// crafted PathValue (bypassing whatever ServeMux's own path cleaning would
+// do) to pin down that getAttachment's own dir check refuses to escape
+// <StateDir>/attachments, regardless of routing-layer behavior.
+func TestGetAttachmentRejectsPathTraversal(t *testing.T) {
+	s, a := newTestServer(t)
+	if err := os.WriteFile(filepath.Join(a.StateDir, "secret.json"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/x", nil)
+	req.SetPathValue("name", "../secret.json")
+	rec := httptest.NewRecorder()
+	s.getAttachment(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("path traversal attempt: got %d, want 404", rec.Code)
+	}
+}

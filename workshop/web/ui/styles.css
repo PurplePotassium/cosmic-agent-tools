@@ -207,6 +207,7 @@ select.chip { background: var(--bg); font: inherit; cursor: pointer; }
   overflow: hidden;
 }
 .attachment-chip img { display: block; width: 48px; height: 48px; object-fit: cover; }
+.attachment-chip.thumb img { width: 20px; height: 20px; }
 .attachment-chip button {
   position: absolute;
   top: 0;

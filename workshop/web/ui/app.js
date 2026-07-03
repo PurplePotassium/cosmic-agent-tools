@@ -187,11 +187,31 @@ function AddTask({ pipelines, types, onAdd }) {
   </form>`;
 }
 
+// attachmentRefRe matches the markdown image lines SaveAttachment's callers
+// write into a task's detail (see internal/app/surface.go's attachmentRefRe),
+// e.g. ![name](<StateDir>/attachments/xxx.png) — the path is an absolute host
+// path, so only its basename is usable to fetch it back over HTTP.
+const attachmentRefRe = /!\[([^\]]*)\]\(([^)]+)\)/g;
+
+function parseAttachments(detail) {
+  if (!detail) return [];
+  const out = [];
+  for (const m of detail.matchAll(attachmentRefRe)) {
+    const name = m[2].trim().split(/[\\/]/).pop();
+    if (name) out.push({ alt: m[1] || name, name });
+  }
+  return out;
+}
+
 function TaskRow({ task, pipelines, onTop, onMove, onDelete }) {
   const pinLabel = task.pin && (task.pin.agent || task.pin.model)
     ? [task.pin.agent, task.pin.model, task.pin.effort].filter(Boolean).join(":") : null;
+  const thumbs = parseAttachments(task.detail);
   return html`<div class="task-row">
     <span class="title" title=${task.detail || task.title}>${task.title}</span>
+    ${thumbs.map((a, i) => html`<span class="attachment-chip thumb" key=${i}>
+      <img src=${`/api/v1/attachments/${encodeURIComponent(a.name)}`} alt=${a.alt} />
+    </span>`)}
     ${task.type && html`<span class="chip type">${task.type}</span>`}
     ${pinLabel && html`<span class="chip pin" title="pinned bundle">${pinLabel}</span>`}
     ${task.status === "claimed" && html`<span class="chip claimed">▶ ${task.claimedBy}</span>`}
