@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
 // Config is the fully resolved configuration for one project.
@@ -31,7 +31,6 @@ type ProjectConfig struct {
 	Trunk     string `toml:"trunk"`      // branch pipelines fork from / merge into; "" = current
 	Verify    string `toml:"verify"`     // gate command, exit 0 = pass; "" = prompt-level verify only
 	VerifyDir string `toml:"verify_dir"` // cwd for verify, repo-relative
-	Preview   string `toml:"preview"`    // URL or repo-relative static dir for the UI preview pane
 }
 
 type GitConfig struct {
@@ -45,8 +44,9 @@ type SafetyConfig struct {
 	MaxIterations   int  `toml:"max_iterations"` // 0 = unbounded (supervised)
 	SkipPermissions bool `toml:"skip_permissions"`
 	BreakerFailures int  `toml:"breaker_failures"` // consecutive failed passes -> halt
-	WedgeMinutes    int  `toml:"wedge_minutes"`    // in-flight pass older than this -> killed
+	WedgeMinutes    int  `toml:"wedge_minutes"`    // in-flight pass older than this -> killed; must exceed agy's 30m --print-timeout
 	MaxConcurrent   int  `toml:"max_concurrent"`   // simultaneous agent passes across pipelines
+	SleepSeconds    int  `toml:"sleep_seconds"`    // pause between passes of one pipeline
 }
 
 type SpiceConfig struct {
@@ -74,12 +74,13 @@ type PipelineConfig struct {
 	ScopeHint string   `toml:"scope_hint"`
 	// WedgeMinutes overrides [safety].wedge_minutes for this pipeline (0 = inherit).
 	WedgeMinutes int `toml:"wedge_minutes"`
+	// ExtraArgs are appended verbatim to every agent invocation of this pipeline.
+	ExtraArgs []string `toml:"extra_args"`
 }
 
 type ServerConfig struct {
 	Port        int  `toml:"port"` // binds 127.0.0.1 only — by design, not configurable
 	OpenBrowser bool `toml:"open_browser"`
-	UpdateCheck bool `toml:"update_check"`
 }
 
 type AgentConfig struct {
@@ -93,11 +94,21 @@ func Default() Config {
 	return Config{
 		Project:    ProjectConfig{VerifyDir: "."},
 		Git:        GitConfig{Worktrees: "auto", BranchPrefix: "workshop/"},
-		Safety:     SafetyConfig{MaxIterations: 0, SkipPermissions: true, BreakerFailures: 5, WedgeMinutes: 20, MaxConcurrent: 2},
+		// WedgeMinutes must stay above agy's 30m --print-timeout or default
+		// config kills healthy agy passes (and can trip the breaker).
+		Safety:     SafetyConfig{MaxIterations: 0, SkipPermissions: true, BreakerFailures: 5, WedgeMinutes: 35, MaxConcurrent: 2},
 		Spice:      SpiceConfig{Enabled: true, Personas: "general", Nouns: "general"},
 		Classifier: ClassifierConfig{Mode: "heuristic"},
-		Types:      map[string]domain.Bundle{},
-		Server:     ServerConfig{Port: 4455, OpenBrowser: true, UpdateCheck: true},
+		// Built-in task types ship with EMPTY bundles: routing falls through
+		// to the pipeline's own bundle, so nothing changes about which agent
+		// runs. Their presence seeds the classifier vocabulary (tasks get
+		// typed out of the box) and provides the merge-conflict route the
+		// integrator's conflict-task machinery keys on. Operators override
+		// per-type bundles ([types.art] agent = "agy" ...) to route work.
+		Types: map[string]domain.Bundle{
+			"code": {}, "tests": {}, "docs": {}, "art": {}, "audio": {}, "merge-conflict": {},
+		},
+		Server:     ServerConfig{Port: 4455, OpenBrowser: true},
 		Agents:     map[string]AgentConfig{},
 	}
 }
@@ -152,6 +163,7 @@ func (c *Config) ResolvedPipelines() []domain.Pipeline {
 			Enabled:     boolOr(pc.Enabled, true),
 			Worktree:    pc.Worktree,
 			PassTimeout: time.Duration(wedge) * time.Minute,
+			ExtraArgs:   pc.ExtraArgs,
 		})
 	}
 	return out

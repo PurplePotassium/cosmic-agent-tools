@@ -6,11 +6,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/app"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/config"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 func cmdTask(args []string) int {
@@ -120,6 +121,13 @@ func parsePin(s string) (domain.Bundle, error) {
 	}
 	if !domain.ValidEffort(b.Effort) {
 		return b, fmt.Errorf("effort %q is not one of %v", b.Effort, domain.Efforts)
+	}
+	// Validate the agent NAME here, at pin time — a task pinned to an
+	// unknown agent would fail every pass at setup instead.
+	if b.Agent != "" {
+		if _, err := driver.New(b.Agent); err != nil {
+			return b, err
+		}
 	}
 	return b, nil
 }

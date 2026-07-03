@@ -204,3 +204,5 @@ code, .mono { font-family: ui-monospace, Consolas, monospace; }
 .muted { color: var(--dim); }
 .commit-row { font-size: 0.8rem; padding: 3px 0; }
 .commit-row .sha { color: var(--amber); }
+.bundle-editor { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.bundle-editor input { flex: 1; min-width: 140px; }

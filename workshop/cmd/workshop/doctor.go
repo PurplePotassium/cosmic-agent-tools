@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/app"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/config"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/driver"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/server"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/server"
 )
 
 type check struct {
@@ -56,7 +56,7 @@ func cmdDoctor(args []string) int {
 		add("config", "PASS", "no warnings", "")
 	}
 	for _, w := range a.Res.Warnings {
-		add("config", "WARN", w, "workshop config validate after editing .workshop/config.toml")
+		add("config", "WARN", w, "edit .workshop/config.toml and re-run workshop doctor")
 	}
 
 	// Each agent referenced by an enabled pipeline.

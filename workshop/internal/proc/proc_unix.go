@@ -34,3 +34,15 @@ func killTree(pid int) error {
 	}
 	return nil
 }
+
+// adopt/finished: Job Objects are Windows-only; process groups already give
+// Unix whole-tree kills.
+func adopt(pid int)    {}
+func finished(pid int) {}
+
+func alive(pid int) bool {
+	// Signal 0 probes existence without touching the process. EPERM means
+	// it exists but belongs to someone else — still alive.
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
+}

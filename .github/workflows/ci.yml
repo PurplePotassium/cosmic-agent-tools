@@ -11,7 +11,9 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # macOS matters: the Unix PID-liveness fallback is weakest on darwin,
+        # so it must at least be exercised by the suite.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -27,10 +29,25 @@ jobs:
           git config --global user.name ci
           git config --global user.email ci@workshop.local
       - run: go vet ./...
-      - name: test (race on linux)
-        if: runner.os == 'Linux'
+      - name: test (race on unix)
+        if: runner.os != 'Windows'
         run: go test -race ./...
       - name: test
         if: runner.os == 'Windows'
         run: go test ./...
       - run: go build ./cmd/workshop
+
+  # A broken .goreleaser.yaml otherwise only surfaces at the first tag.
+  release-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workshop/go.mod
+          cache-dependency-path: workshop/go.sum
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+          workdir: workshop

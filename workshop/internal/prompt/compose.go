@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
 // Inputs are the pieces of one pass's prompt, in composition order. Stable

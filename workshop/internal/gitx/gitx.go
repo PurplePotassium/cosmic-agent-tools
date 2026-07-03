@@ -273,7 +273,9 @@ func HasMergeHead(ctx context.Context, dir string) bool {
 
 // Merge merges ref into the current branch. It returns conflict=true when
 // the merge stopped on conflicts (caller decides: abort, or hand to an
-// agent). Other failures return an error.
+// agent). A missing committer identity is retried with the Workshop fallback
+// identity (same as CommitAll) rather than failing the merge. Other failures
+// return an error.
 func Merge(ctx context.Context, dir, ref string, noFF bool) (conflict bool, err error) {
 	args := []string{"merge", "--no-edit"}
 	if noFF {
@@ -281,6 +283,16 @@ func Merge(ctx context.Context, dir, ref string, noFF bool) (conflict bool, err 
 	}
 	args = append(args, ref)
 	_, err = run(ctx, dir, args...)
+	if err != nil {
+		var ge *Error
+		if isIdentityError(err, &ge) {
+			_ = MergeAbort(ctx, dir) // clear any half-started merge state first
+			withIdent := append([]string{
+				"-c", "user.name=Workshop", "-c", "user.email=workshop@localhost",
+			}, args...)
+			_, err = run(ctx, dir, withIdent...)
+		}
+	}
 	if err == nil {
 		return false, nil
 	}
@@ -333,4 +345,16 @@ func UnmergedFiles(ctx context.Context, dir string) ([]string, error) {
 func ResetHard(ctx context.Context, dir, ref string) error {
 	_, err := run(ctx, dir, "reset", "--hard", "-q", ref)
 	return err
+}
+
+// UpdateRef points a fully-qualified ref (e.g. refs/workshop/green) at target.
+func UpdateRef(ctx context.Context, dir, ref, target string) error {
+	_, err := run(ctx, dir, "update-ref", ref, target)
+	return err
+}
+
+// RefExists reports whether a ref resolves to a commit.
+func RefExists(ctx context.Context, dir, ref string) bool {
+	_, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	return err == nil
 }

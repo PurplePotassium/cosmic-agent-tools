@@ -7,8 +7,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // Service wraps the store with backlog semantics.

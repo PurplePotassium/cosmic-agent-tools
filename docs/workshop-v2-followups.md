@@ -1,4 +1,4 @@
-# Workshop v2 follow-ups — harvest from the PR #1 / PR #3 comparative review
+# Workshop v2 follow-ups — PR #1 / PR #3 comparative review
 
 **Date:** 2026-07-02
 **Decision:** PR #3 (`user/gewan/workshop-v2`) is the go-forward implementation. PR #1
@@ -9,6 +9,68 @@ in v2 to restore, defects both branches share, and v2's own must-fix list.
 Items marked **(v)** were hand-verified in the code during the review; unmarked items come
 from the deep review passes and should be re-confirmed at fix time. File references are
 against the two PR branches as of 2026-07-02.
+
+---
+
+## Resolution log — 2026-07-02 fix pass
+
+Every item below was re-verified against the code before fixing. Status of each:
+
+**Fixed.**
+- **A1** — live per-pass agent/model switching: store-backed override re-read every pass
+  (precedence: pin > override > types > pipeline), `PATCH /api/v1/pipelines/{name}`
+  `{"bundle":{...}}`, dashboard ⚙ editor per pipeline card. Engine test pins the behavior.
+- **A2** — types `code/tests/docs/art/audio/merge-conflict` now built in (empty bundles), so
+  the classifier works with zero config and the merge-conflict route exists by default.
+  Curated agent/model combos stay operator-set (README shows how); defaulting model ids was
+  judged too risky (agy fails silently on bad ids).
+- **A3/D9** — module path → `github.com/PurplePotassium/cosmic-agent-tools/workshop`.
+- **A4** — macOS in the CI matrix; `-race` now on both unix runners.
+- **A5 (partial)** — deb/rpm via nfpm (git dependency) + a `goreleaser --snapshot` CI job.
+  Homebrew/Scoop deferred: tap/bucket repos + token still don't exist; create them first.
+- **B1** — failure commits now happen only in gated (worktree) mode; simple mode leaves the
+  tree dirty like the old loop.
+- **B2** — `project.preview` and `server.update_check` deleted (dead knobs).
+- **B3** — `[safety] sleep_seconds` and per-pipeline `extra_args` wired.
+- **B4** — `workshop stop --force`: KillTree via server.json pid, or the engine.lock pid for
+  headless runs.
+- **B6** — RALPH_PASS removal documented in README (successors: `WORKSHOP_PASS_N` etc.).
+- **B8** — wedge kill semantics documented in README.
+- **C1** — authRe word-anchored; regression test covers "Author identity unknown"/"OAuth".
+- **C2** — Windows Job Object (kill-on-close) wraps every agent process; TerminateJobObject
+  first, taskkill fallback; stragglers reaped at pass end and on Workshop crash.
+- **C3** — agy refuses to plan a >30k-char command line with an actionable error (Windows).
+- **C4** — scanner errors now log a "output capture truncated" marker into log + tail.
+- **D1** — integrator maintains `refs/workshop/green` (baseline + after every green gate);
+  lanes sync from it, never live trunk. New `TestGreenRefTracksGatedTrunk`.
+- **D2/D3** — a lane-side sync conflict no longer skips the pass; the lane keeps working
+  (tip advances, its own worker can claim the resolution task). Livelock gone.
+- **D4** — setup failures burn a task attempt (backoff → stuck) and count toward the
+  breaker; agent names validated at `task pin`, the tasks API, and `[types.*]` load time.
+- **D5** — `CleanupOrphanPasses` moved from `app.Open` to engine startup (under the lock).
+- **D6** — engine singleton lock (`engine.lock`, pid-liveness-checked) guards `run`/`up`.
+- **D7** — `wedge_minutes` default 20 → 35.
+- **D8** — non-conflict merge failures emit `integration.merge_failed` and are retried (no
+  `markSeen` stranding); `gitx.Merge` got the same identity fallback as `CommitAll`.
+- **Minor** — exact-hostname origin allowlist + Host-header (DNS-rebinding) check with
+  tests; `?token=` channel removed; `.workshop` intent commit happens after the trunk
+  checkout; `AddWorktree` refuses to adopt a worktree on the wrong branch; newer
+  `schema_version` refuses to open; events/passes pruned at engine start (20k/5k);
+  moved-repo state-dir hint; doctor fix-text corrected; `up`'s already-running branch
+  honors `server.open_browser`.
+
+**Verified fine, no change.**
+- **B7** — custom pool files already work: `[spice] personas/nouns` accept repo-relative or
+  absolute paths (`app.resolvePool`).
+
+**Deferred (deliberately).**
+- **A5 (rest)** — Homebrew tap / Scoop bucket: external repos + `HOMEBREW_TAP_GITHUB_TOKEN`
+  must exist before wiring publishers.
+- **A6** — dashboard liveness ticker (elapsed/dirty-files/computing hint): nice-to-have.
+- **A7** — reference test pattern; no statedir UI-vs-agent reconcile races exist today.
+- **B5** — dedicated-branch middle mode: product decision needed before restoring.
+- **Test gaps (partial)** — server guard tests, green-ref test, live-override test, authRe
+  test added; `internal/bus`, `internal/app`, `supervisor`, `cmd/workshop` still untested.
 
 ---
 
@@ -83,4 +145,3 @@ against the two PR branches as of 2026-07-02.
 - v2's `migrate` correctly imports GOAL.md, PROMPT.md, backlog.json (order + dates preserved), completions.json; `agent.json`/`config.ps1` are intentionally manual with a documented mapping. Encoding/BOM handling is solid. (An earlier review claim of UTF-16 failures did not survive verification.)
 - v2's security posture is a large upgrade: loopback-only bind, per-session mutation token via URL fragment, no CORS surface, embedded-FS serving, `server.json` 0600. (PR #1 had **no** auth mechanism at all — the decisive disqualifier.)
 - v2's engine test harness (scripted fake agent covering happy/blocked/crash/auth/silent/wedge/blind paths, real multi-worktree integrator tests, torn-read hammer, grandchild-kill test) is genuinely strong.
-- PR #1 claims that were **refuted** during verification, recorded so they don't resurface: no CORS-wildcard middleware existed (there was simply no auth at all); `deleteProject` never called `os.RemoveAll`; repo paths *were* validated at registration; its diff-reconcile *did* preserve concurrent UI edits (tested).

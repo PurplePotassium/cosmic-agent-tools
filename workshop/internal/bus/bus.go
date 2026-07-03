@@ -8,8 +8,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 const subscriberBuffer = 128

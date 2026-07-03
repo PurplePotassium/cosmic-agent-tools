@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/config"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
 )
 
 // cmdMigrate imports state from the legacy PowerShell workshop directory.

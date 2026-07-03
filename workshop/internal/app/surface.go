@@ -8,10 +8,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/config"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
 )
 
 // Goal reads .workshop/GOAL.md ("" if absent).
@@ -78,6 +79,37 @@ func (a *App) SetPipelineDesired(ctx context.Context, name string, running bool)
 		return a.Store.SetHalted(ctx, name, "") // clears operator/breaker/auth halts
 	}
 	return a.Store.SetHalted(ctx, name, "operator")
+}
+
+// SetPipelineBundle sets (or, for a zero bundle, clears) the live
+// agent/model/effort override for a pipeline. Workers re-read it every pass,
+// so it takes effect on the NEXT pass without a restart — the successor of
+// the old tool's agent.json workflow.
+func (a *App) SetPipelineBundle(ctx context.Context, name string, b domain.Bundle) error {
+	found := false
+	for _, p := range a.Res.Config.ResolvedPipelines() {
+		if p.Name == name {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("no pipeline named %q", name)
+	}
+	if b.Agent != "" {
+		if _, err := driver.New(b.Agent); err != nil {
+			return err
+		}
+	}
+	if !domain.ValidEffort(b.Effort) {
+		return fmt.Errorf("effort %q is not one of %v", b.Effort, domain.Efforts)
+	}
+	if err := a.Store.SetPipelineBundle(ctx, name, b); err != nil {
+		return err
+	}
+	a.Bus.Publish(ctx, domain.Event{Type: "pipeline.bundle", Pipeline: name, Payload: map[string]any{
+		"agent": b.Agent, "model": b.Model, "effort": b.Effort, "cleared": b.IsZero(),
+	}})
+	return nil
 }
 
 // QueueLane is one lane's merge-queue view.

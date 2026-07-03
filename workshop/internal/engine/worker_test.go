@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/bus"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/fakeagent"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/bus"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/fakeagent"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // The test binary doubles as the fake agent.
@@ -434,4 +434,80 @@ func TestHaltedPipelineRefusesToRun(t *testing.T) {
 		t.Fatalf("after clear: res=%v err=%v", res, err)
 	}
 	_ = fmt.Sprint() // keep fmt import if assertions change
+}
+
+// TestAuthReAnchoring pins the word-boundary fix: substrings like "author"
+// (git's "Author identity unknown") and "OAuth" in ordinary output must not
+// read as auth failures, while real auth-shaped lines still must.
+func TestAuthReAnchoring(t *testing.T) {
+	trips := []string{
+		"Error: unauthorized - credential expired, please sign-in again",
+		"401 Unauthorized",
+		"authentication failed for host",
+		"Not authorized to access this resource",
+		"please re-authenticate and retry",
+		"no credential helper configured",
+		"keyring locked",
+		"auth error",
+	}
+	for _, line := range trips {
+		if !isAuthFailure([]string{line}) {
+			t.Errorf("should trip auth detection: %q", line)
+		}
+	}
+	clean := []string{
+		"Author identity unknown",
+		"fatal: unable to auto-detect email address (got 'Author identity unknown')",
+		"Co-Authored-By: Claude <noreply@anthropic.com>",
+		"refactored the OAuthor helper module",
+		"wrote docs for the authorship tracking feature",
+		"all tests passed",
+	}
+	for _, line := range clean {
+		if isAuthFailure([]string{line}) {
+			t.Errorf("must NOT trip auth detection: %q", line)
+		}
+	}
+}
+
+// TestLiveBundleOverrideAppliesNextPass pins the A1 behavior: a store-backed
+// override set mid-run switches the model on the very next pass, no restart.
+func TestLiveBundleOverrideAppliesNextPass(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy"}, nil)
+	ctx := context.Background()
+
+	r.addTask("first task")
+	if res, err := r.worker.RunPass(ctx); err != nil || res != PassRan {
+		t.Fatalf("pass 1: res=%v err=%v", res, err)
+	}
+
+	if err := r.st.SetPipelineBundle(ctx, "main", domain.Bundle{Model: "switched-model"}); err != nil {
+		t.Fatal(err)
+	}
+	r.addTask("second task")
+	if res, err := r.worker.RunPass(ctx); err != nil || res != PassRan {
+		t.Fatalf("pass 2: res=%v err=%v", res, err)
+	}
+
+	events, err := r.st.EventsSince(ctx, 0, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var models []string
+	for _, ev := range events {
+		if ev.Type == "pass.started" {
+			models = append(models, fmt.Sprint(ev.Payload["model"]))
+		}
+	}
+	if len(models) != 2 || models[0] == "switched-model" || models[1] != "switched-model" {
+		t.Fatalf("pass models = %v; want [<empty>, switched-model]", models)
+	}
+
+	// Clearing restores the configured bundle.
+	if err := r.st.SetPipelineBundle(ctx, "main", domain.Bundle{}); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := r.st.PipelineBundle(ctx, "main"); err != nil || !b.IsZero() {
+		t.Fatalf("override not cleared: %+v err=%v", b, err)
+	}
 }

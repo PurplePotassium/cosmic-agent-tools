@@ -19,16 +19,16 @@ import (
 
 	"golang.org/x/sync/semaphore"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/backlog"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/bus"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/driver"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/proc"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/prompt"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/route"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/backlog"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/bus"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/proc"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/prompt"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/route"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // Halt reasons recorded on a pipeline.
@@ -42,8 +42,10 @@ const (
 var ErrHalted = errors.New("engine: pipeline halted")
 
 // authRe spots auth-shaped failures in captured output. Deliberately narrow:
-// normal mentions of "token"/"login" in agent chatter must not trip it.
-var authRe = regexp.MustCompile(`(?i)auth|credential|sign-?in|re-?authenticate|keyring|unauthorized|\b401\b`)
+// normal mentions of "token"/"login" in agent chatter must not trip it, and
+// "auth" is word-anchored so "author"/"OAuth" (e.g. git's "Author identity
+// unknown") never read as an auth failure.
+var authRe = regexp.MustCompile(`(?i)\bauth(entication|enticated?|oriz(e|ed|ation))?\b|credential|sign-?in|re-?authenticate|keyring|unauthenticated|unauthorized|\b401\b`)
 
 // WorkerConfig wires one pipeline's worker.
 type WorkerConfig struct {
@@ -146,7 +148,10 @@ type resolved struct {
 }
 
 func (w *Worker) resolve(ctx context.Context, task *domain.Task) (*resolved, error) {
-	bundle := route.Resolve(task, w.cfg.Types, w.cfg.Pipeline.Bundle)
+	// The live override is re-read from the store EVERY pass so the
+	// operator can switch agent/model for the next pass without a restart.
+	override, _ := w.st.PipelineBundle(ctx, w.cfg.Pipeline.Name)
+	bundle := route.Resolve(task, override, w.cfg.Types, w.cfg.Pipeline.Bundle)
 	drv, ok := w.drivers[bundle.Agent]
 	if !ok {
 		var err error
@@ -267,16 +272,21 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		_ = gitx.MergeAbort(ctx, w.cfg.RepoDir)
 	}
 
-	// Worktree mode: pull the gated-green trunk into the lane before
-	// working. A sync conflict skips the pass — it resurfaces at
-	// integration, where the conflict-task machinery lives.
+	// Worktree mode: pull the last-known-green trunk ref into the lane
+	// before working. A sync conflict does NOT skip the pass: the pass
+	// proceeds on the un-synced lane so the tip keeps advancing (the
+	// integrator's conflict-task machinery owns the conflict, and
+	// skip-until-advanced needs new commits to release). Returning idle
+	// here would livelock the lane — it could never advance past the
+	// conflict, and could never claim its own resolution task either.
 	if w.cfg.SyncTrunk != "" {
 		if dirty, err := gitx.IsDirty(ctx, w.cfg.RepoDir); err == nil && !dirty {
 			if n, err := gitx.AheadCount(ctx, w.cfg.RepoDir, w.cfg.Pipeline.Branch, w.cfg.SyncTrunk); err == nil && n > 0 {
 				if conflict, err := gitx.Merge(ctx, w.cfg.RepoDir, w.cfg.SyncTrunk, false); err == nil && conflict {
 					_ = gitx.MergeAbort(ctx, w.cfg.RepoDir)
-					w.event(ctx, "integration.sync_conflict", name, 0, map[string]any{"trunk": w.cfg.SyncTrunk})
-					return PassIdle, nil
+					w.event(ctx, "integration.sync_conflict", name, 0, map[string]any{
+						"trunk": w.cfg.SyncTrunk, "action": "pass continues un-synced",
+					})
 				}
 			}
 		}
@@ -309,8 +319,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 	w.setState(ctx, pass, domain.PassPreparing)
 	res, err := w.resolve(ctx, task)
 	if err != nil {
-		w.failSetup(ctx, pass, task, err)
-		return PassRan, err
+		return w.failSetup(ctx, pass, task, err)
 	}
 
 	// Merge-conflict tasks run a dedicated resolution flow in an
@@ -321,8 +330,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 
 	full, spice, err := w.preparePass(ctx, task)
 	if err != nil {
-		w.failSetup(ctx, pass, task, err)
-		return PassRan, err
+		return w.failSetup(ctx, pass, task, err)
 	}
 	if spice.Mode != "" {
 		w.patchPass(ctx, pass.ID, store.PassPatch{Spice: &spice.Mode})
@@ -332,8 +340,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 	w.patchPass(ctx, pass.ID, store.PassPatch{LogPath: &logPath})
 	logFile, err := w.openPassLog(logPath, pass, task, res, spice)
 	if err != nil {
-		w.failSetup(ctx, pass, task, err)
-		return PassRan, err
+		return w.failSetup(ctx, pass, task, err)
 	}
 	defer logFile.Close()
 
@@ -485,6 +492,14 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fu
 					TS: time.Now().UTC(), Payload: map[string]any{"line": line},
 				})
 			}
+			if err := sc.Err(); err != nil {
+				// An over-long line (> the 1MB buffer cap) ends the scan
+				// early — the rest of the pass runs blind. Say so instead
+				// of silently presenting a truncated log/tail.
+				marker := fmt.Sprintf("(workshop: output capture truncated: %v)", err)
+				fmt.Fprintln(logFile, marker)
+				drainedTail = appendTail(drainedTail, marker)
+			}
 		}()
 	} else {
 		close(drained)
@@ -498,6 +513,8 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fu
 		}
 		return -1, nil, false, err
 	}
+	proc.Adopt(cmd.Process.Pid)
+	defer proc.Finished(cmd.Process.Pid)
 	if pw != nil {
 		pw.Close() // parent's write end; child holds its own dup
 	}
@@ -529,13 +546,12 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 	blind := res.caps.Capture == driver.CaptureNone
 
 	if runErr != nil {
-		w.failSetup(ctx, pass, task, runErr)
-		return PassRan, runErr
+		return w.failSetup(ctx, pass, task, runErr)
 	}
 
 	if timedOut {
 		w.event(ctx, "wedge.killed", name, pass.ID, map[string]any{"timeoutMin": int(w.cfg.Pipeline.PassTimeout.Minutes())})
-		w.commitIfDirty(ctx, pass, task, res) // keep pass boundaries bisectable
+		w.commitFailedWork(ctx, pass, task, res)
 		w.failTask(ctx, task)
 		w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailTimeout, exitCode, "")
 		return w.bumpBreaker(ctx, pass)
@@ -567,7 +583,7 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 				}
 			}
 		}
-		w.commitIfDirty(ctx, pass, task, res)
+		w.commitFailedWork(ctx, pass, task, res)
 		w.failTask(ctx, task)
 		w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailExit, exitCode, "")
 		return w.bumpBreaker(ctx, pass)
@@ -625,6 +641,19 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 
 // --- helpers ---
 
+// commitFailedWork commits a failed pass's half-done work only when this
+// worker writes to a gated lane (worktree mode), where the merge queue keeps
+// broken trees off trunk and the commit keeps pass boundaries bisectable. In
+// simple mode there is no gate — committing would land a broken tree directly
+// on the user's branch, so the tree is left dirty instead (the old loop's
+// behavior; the next pass builds on or sweeps it up).
+func (w *Worker) commitFailedWork(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved) {
+	if w.cfg.SyncTrunk == "" {
+		return
+	}
+	w.commitIfDirty(ctx, pass, task, res)
+}
+
 func (w *Worker) commitIfDirty(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved) string {
 	dirty, err := gitx.IsDirty(ctx, w.cfg.RepoDir)
 	if err != nil || !dirty {
@@ -664,12 +693,17 @@ func (w *Worker) bumpBreaker(ctx context.Context, pass *domain.Pass) (PassResult
 	return PassRan, nil
 }
 
-func (w *Worker) failSetup(ctx context.Context, pass *domain.Pass, task *domain.Task, err error) {
-	if task != nil {
-		_ = w.st.ReleaseTask(ctx, task.ID)
-	}
+// failSetup concludes a pass that never reached the agent. The task takes a
+// failure (attempts + retry backoff, stuck after MaxTaskAttempts) — releasing
+// it untouched would let e.g. a task pinned to an unknown agent be re-claimed
+// in a zero-sleep spin loop forever — and the failure counts toward the
+// breaker like any other failed pass.
+func (w *Worker) failSetup(ctx context.Context, pass *domain.Pass, task *domain.Task, err error) (PassResult, error) {
+	w.failTask(ctx, task)
 	w.event(ctx, "pass.setup_failed", w.cfg.Pipeline.Name, pass.ID, map[string]any{"error": err.Error()})
 	w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailSetup, -1, "")
+	res, _ := w.bumpBreaker(ctx, pass)
+	return res, err
 }
 
 func (w *Worker) finishPass(ctx context.Context, pass *domain.Pass, state domain.PassState, outcome domain.PassOutcome, failure domain.FailKind, exitCode int, sha string) {

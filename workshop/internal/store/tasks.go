@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
 const taskCols = `id, backlog, type, title, detail, files, pin_agent, pin_model, pin_effort,

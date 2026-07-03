@@ -2,6 +2,7 @@ package gitx
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -80,11 +81,17 @@ func normPath(p string) string {
 // AddWorktree creates (or adopts) a worktree at path on branch. If the branch
 // already exists it is checked out there; otherwise it is created at base.
 // Callers should PruneWorktrees first so stale admin data doesn't block the
-// add.
+// add. An existing worktree is adopted only when it has the expected branch
+// checked out — a stale worktree from a different branch_prefix would
+// otherwise commit to the wrong branch while the integrator watches the
+// right one.
 func AddWorktree(ctx context.Context, repoDir, path, branch, base string) error {
 	if wt, err := FindWorktree(ctx, repoDir, path); err != nil {
 		return err
 	} else if wt != nil {
+		if wt.Branch != branch {
+			return fmt.Errorf("gitx: worktree %s has branch %q checked out, expected %q — remove the directory (or fix git.branch_prefix) and retry", path, wt.Branch, branch)
+		}
 		return nil // already present — adopt
 	}
 	if BranchExists(ctx, repoDir, branch) {

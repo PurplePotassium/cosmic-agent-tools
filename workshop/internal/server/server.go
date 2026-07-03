@@ -14,17 +14,19 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/app"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
-	"github.com/gw1108/cosmic-agent-tools/workshop/web"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/web"
 )
 
 // ServerInfo is persisted to <stateDir>/server.json so CLI subcommands can
@@ -191,6 +193,24 @@ type taskBody struct {
 	First   bool           `json:"first"`
 }
 
+// validatePin rejects pins to unknown agents or efforts at the API boundary —
+// a task pinned to a typo'd agent would otherwise burn its retry attempts
+// failing pass setup.
+func validatePin(pin *domain.Bundle) error {
+	if pin == nil {
+		return nil
+	}
+	if pin.Agent != "" {
+		if _, err := driver.New(pin.Agent); err != nil {
+			return err
+		}
+	}
+	if !domain.ValidEffort(pin.Effort) {
+		return fmt.Errorf("effort %q is not one of %v", pin.Effort, domain.Efforts)
+	}
+	return nil
+}
+
 func (s *Server) postTask(w http.ResponseWriter, r *http.Request) {
 	var body taskBody
 	if err := readBody(r, &body); err != nil || body.Title == nil || strings.TrimSpace(*body.Title) == "" {
@@ -205,6 +225,10 @@ func (s *Server) postTask(w http.ResponseWriter, r *http.Request) {
 		task.Type = strings.ToLower(*body.Type)
 	}
 	if body.Pin != nil {
+		if err := validatePin(body.Pin); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
 		task.Pin = *body.Pin
 	}
 	if body.Backlog != nil {
@@ -227,6 +251,10 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body taskBody
 	if err := readBody(r, &body); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := validatePin(body.Pin); err != nil {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
@@ -285,18 +313,28 @@ func (s *Server) reorderTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) patchPipeline(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Desired *string `json:"desired"` // "running" | "stopped"
+		Desired *string        `json:"desired"` // "running" | "stopped"
+		Bundle  *domain.Bundle `json:"bundle"`  // live agent/model/effort override; {} clears
 	}
-	if err := readBody(r, &body); err != nil || body.Desired == nil {
-		httpErr(w, fmt.Errorf(`body needs {"desired":"running"|"stopped"}`), http.StatusBadRequest)
+	if err := readBody(r, &body); err != nil || (body.Desired == nil && body.Bundle == nil) {
+		httpErr(w, fmt.Errorf(`body needs {"desired":"running"|"stopped"} and/or {"bundle":{agent,model,effort}}`), http.StatusBadRequest)
 		return
 	}
-	running := *body.Desired == "running"
-	if err := s.App.SetPipelineDesired(r.Context(), r.PathValue("name"), running); err != nil {
-		httpErr(w, err, http.StatusBadRequest)
-		return
+	name := r.PathValue("name")
+	if body.Bundle != nil {
+		if err := s.App.SetPipelineBundle(r.Context(), name, *body.Bundle); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
 	}
-	writeJSON(w, map[string]string{"pipeline": r.PathValue("name"), "desired": *body.Desired})
+	if body.Desired != nil {
+		running := *body.Desired == "running"
+		if err := s.App.SetPipelineDesired(r.Context(), name, running); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) putGoal(w http.ResponseWriter, r *http.Request) {
@@ -375,12 +413,12 @@ func (s *Server) resolveBacklog(name string) (string, error) {
 	return "", fmt.Errorf("no pipeline named %q", name)
 }
 
+// authorized accepts the session token from the header only. It is
+// deliberately NOT read from a query parameter: URLs leak (history, logs,
+// Referer), and the dashboard already carries the token via the URL fragment
+// into sessionStorage, so a query channel buys nothing.
 func (s *Server) authorized(r *http.Request) bool {
-	tok := r.Header.Get("X-Workshop-Token")
-	if tok == "" {
-		tok = r.URL.Query().Get("token")
-	}
-	return tok == s.token
+	return r.Header.Get("X-Workshop-Token") == s.token
 }
 
 // serveUI serves the embedded dashboard with history fallback.
@@ -426,8 +464,13 @@ func contentType(path string) string {
 	}
 }
 
-// guardLoopback rejects anything that isn't loopback-addressed, plus obvious
-// cross-origin browser requests.
+// guardLoopback rejects anything that isn't loopback-addressed, anything
+// whose Host header names a non-loopback host, and cross-origin browser
+// requests. The Host check is the DNS-rebinding defense: a page at evil.com
+// whose DNS answer is 127.0.0.1 reaches us with a loopback RemoteAddr and NO
+// Origin header (the browser considers it same-origin) — the Host header is
+// the only tell. Origin matching is by exact parsed hostname, never
+// substring ("localhost.evil.com" must not pass).
 func guardLoopback(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -435,14 +478,37 @@ func guardLoopback(next http.Handler) http.Handler {
 			http.Error(w, "loopback only", http.StatusForbidden)
 			return
 		}
+		if !loopbackHostname(hostnameOf(r.Host)) {
+			http.Error(w, "bad host", http.StatusForbidden)
+			return
+		}
 		if origin := r.Header.Get("Origin"); origin != "" {
-			if !strings.Contains(origin, "127.0.0.1") && !strings.Contains(origin, "localhost") {
+			u, err := url.Parse(origin)
+			if err != nil || !loopbackHostname(u.Hostname()) {
 				http.Error(w, "cross-origin refused", http.StatusForbidden)
 				return
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hostnameOf strips an optional port (and IPv6 brackets) from a host:port.
+func hostnameOf(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return strings.Trim(hostport, "[]")
+}
+
+// loopbackHostname reports whether h names this machine's loopback:
+// "localhost" or a literal loopback IP. Nothing else qualifies.
+func loopbackHostname(h string) bool {
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 func readBody(r *http.Request, v any) error {

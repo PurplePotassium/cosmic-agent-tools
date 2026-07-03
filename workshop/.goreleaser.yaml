@@ -32,3 +32,17 @@ changelog:
 
 release:
   draft: false
+
+# deb/rpm attach straight to the GitHub release — no external repo needed.
+# (Homebrew tap / Scoop bucket publishing needs tap/bucket repos plus a token;
+# create those before wiring brews:/scoops: here.)
+nfpms:
+  - package_name: workshop
+    formats: [deb, rpm]
+    maintainer: PurplePotassium <noreply@github.com>
+    description: Autonomous coding-agent loops with a live dashboard.
+    homepage: https://github.com/PurplePotassium/cosmic-agent-tools
+    license: MIT
+    bindir: /usr/bin
+    dependencies:
+      - git

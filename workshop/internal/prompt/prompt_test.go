@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
 func stableInputs() Inputs {

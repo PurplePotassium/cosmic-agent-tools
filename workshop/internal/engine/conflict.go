@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/prompt"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/prompt"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // Meta keys on merge-conflict tasks, written by the integrator and pinned by
@@ -41,8 +41,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 	resolveDir := task.Meta[MetaResolveDir]
 	if laneBranch == "" || laneTip == "" || trunkTip == "" || resolveBranch == "" || resolveDir == "" {
 		err := fmt.Errorf("engine: conflict task %s has incomplete meta", task.ID)
-		w.failSetup(ctx, pass, task, err)
-		return PassRan, err
+		return w.failSetup(ctx, pass, task, err)
 	}
 
 	cleanup := func(deleteBranch bool) {
@@ -57,16 +56,14 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 	// Fresh attempt: clear any wreckage from a previous try.
 	cleanup(true)
 	if err := gitx.AddWorktree(ctx, w.cfg.RepoDir, resolveDir, resolveBranch, laneTip); err != nil {
-		w.failSetup(ctx, pass, task, err)
-		return PassRan, err
+		return w.failSetup(ctx, pass, task, err)
 	}
 
 	// Reproduce the conflict at the pinned SHAs.
 	conflict, err := gitx.Merge(ctx, resolveDir, trunkTip, false)
 	if err != nil {
 		cleanup(true)
-		w.failSetup(ctx, pass, task, err)
-		return PassRan, err
+		return w.failSetup(ctx, pass, task, err)
 	}
 	if !conflict {
 		// Trunk moved and the merge is clean now — nothing for an agent
@@ -85,8 +82,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 	completions, _ := w.st.ListCompletions(ctx, 10)
 	if err := statedir.Materialize(w.cfg.StateDir, task, snapshot, completions); err != nil {
 		cleanup(true)
-		w.failSetup(ctx, pass, task, err)
-		return PassRan, err
+		return w.failSetup(ctx, pass, task, err)
 	}
 	_, full := prompt.Compose(prompt.Inputs{
 		BaseContract: prompt.BaseContract(),
@@ -106,8 +102,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 	logFile, err := w.openPassLog(logPath, pass, task, res, prompt.Spice{})
 	if err != nil {
 		cleanup(true)
-		w.failSetup(ctx, pass, task, err)
-		return PassRan, err
+		return w.failSetup(ctx, pass, task, err)
 	}
 	defer logFile.Close()
 
@@ -135,8 +130,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 	switch {
 	case runErr != nil:
 		cleanup(true)
-		w.failSetup(ctx, pass, task, runErr)
-		return PassRan, runErr
+		return w.failSetup(ctx, pass, task, runErr)
 	case timedOut:
 		return fail(domain.FailTimeout, "wedged")
 	case exitCode != 0:

@@ -49,7 +49,7 @@ func TestLayerPrecedenceAndProvenance(t *testing.T) {
 	user := writeFile(t, dir, "user.toml", `
 [server]
 port = 5000
-update_check = false
+open_browser = false
 [spice]
 personas = "gamedev"
 `)
@@ -72,8 +72,8 @@ verify = "npm test"
 	if c.Server.Port != 6000 {
 		t.Fatalf("repo should beat user: port = %d", c.Server.Port)
 	}
-	if c.Server.UpdateCheck {
-		t.Fatal("user layer update_check=false lost")
+	if c.Server.OpenBrowser {
+		t.Fatal("user layer open_browser=false lost")
 	}
 	if c.Spice.Personas != "gamedev" {
 		t.Fatalf("personas = %q", c.Spice.Personas)
@@ -83,7 +83,7 @@ verify = "npm test"
 	}
 	for key, want := range map[string]string{
 		"server.port":         LayerRepo,
-		"server.update_check": LayerUser,
+		"server.open_browser": LayerUser,
 		"project.verify":      LayerOverride,
 		"project.name":        LayerRepo,
 		"safety.max_iterations": LayerBuiltin,

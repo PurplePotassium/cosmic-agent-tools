@@ -1,29 +1,37 @@
 // Package route resolves which {agent, model, effort} bundle runs a task:
-// per-task pin > [types.*] routing table > pipeline bundle. It also houses
-// the keyword classifier that assigns types to untyped tasks.
+// per-task pin > live pipeline override > [types.*] routing table > pipeline
+// bundle. It also houses the keyword classifier that assigns types to
+// untyped tasks.
 package route
 
 import (
 	"regexp"
 	"strings"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
-// Resolve applies the precedence chain for one task. A nil task (invent
-// pass) resolves to the pipeline bundle.
-func Resolve(task *domain.Task, types map[string]domain.Bundle, pipeline domain.Bundle) domain.Bundle {
+// Resolve applies the precedence chain for one task: per-task pin > the
+// operator's LIVE pipeline override (the UI's "switch model for the next
+// pass" dial) > [types.*] routing table > pipeline bundle. A nil task
+// (invent pass) resolves through the same chain minus the pin.
+func Resolve(task *domain.Task, override domain.Bundle, types map[string]domain.Bundle, pipeline domain.Bundle) domain.Bundle {
 	b := pipeline
-	if task == nil {
-		return b
-	}
-	if task.Type != "" {
+	if task != nil && task.Type != "" {
 		if tb, ok := types[task.Type]; ok {
 			b = merge(tb, b)
 		}
 	}
+	b = merge(override, b)
+	if task == nil {
+		return b
+	}
 	return merge(task.Pin, b)
 }
+
+// Effective overlays the live override on a configured bundle with the same
+// agent-switch guard Resolve uses (for status displays).
+func Effective(override, base domain.Bundle) domain.Bundle { return merge(override, base) }
 
 // merge overlays `over` on `base`, with one guard: when `over` switches to a
 // different agent, base's model and effort must NOT leak through — a model id

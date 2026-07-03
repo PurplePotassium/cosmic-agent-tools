@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/proc"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/proc"
 )
 
 func fakeClaudeBin(t *testing.T) string {
@@ -112,5 +114,18 @@ func TestRegistry(t *testing.T) {
 	}
 	if _, err := New("nonsense"); err == nil {
 		t.Fatal("unknown driver should error")
+	}
+}
+
+func TestAgyPlanRefusesOversizedPrompt(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("command-line cap is a Windows constraint")
+	}
+	a := &Agy{exe: `C:\bin\agy.exe`, probed: true}
+	if _, err := a.Plan(InvokeSpec{Prompt: strings.Repeat("x", 40000)}); err == nil {
+		t.Fatal("a 40k-char prompt must refuse to plan on windows")
+	}
+	if _, err := a.Plan(InvokeSpec{Prompt: "small prompt"}); err != nil {
+		t.Fatalf("small prompt must plan: %v", err)
 	}
 }

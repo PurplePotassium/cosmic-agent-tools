@@ -48,6 +48,9 @@ export const api = {
   runs: (pipeline) => req("GET", `/api/v1/runs${pipeline ? "?pipeline=" + pipeline : ""}`),
   runLog: (id) => req("GET", `/api/v1/runs/${id}/log`),
   setPipeline: (name, desired) => req("PATCH", `/api/v1/pipelines/${name}`, { desired }),
+  // Live agent/model/effort override for the pipeline's NEXT pass; an empty
+  // bundle {} clears it back to the configured routing.
+  setPipelineBundle: (name, bundle) => req("PATCH", `/api/v1/pipelines/${name}`, { bundle }),
   stopServer: () => req("POST", "/api/v1/server/stop", {}),
 };
 
@@ -67,6 +70,7 @@ export function subscribe(handlers) {
     "conflict.enqueued", "conflict.resolved", "conflict.attempt_failed", "conflict.abandoned",
     "breaker.tripped", "auth.halt", "auth.suspected", "wedge.killed",
     "gate.red", "driver.effort_ignored", "pass.setup_failed",
+    "pipeline.bundle", "integration.merge_failed",
   ];
   for (const t of types) {
     es.addEventListener(t, (msg) => {

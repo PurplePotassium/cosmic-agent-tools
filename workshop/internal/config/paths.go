@@ -96,3 +96,26 @@ func ProjectStateDir(repoPath string) string {
 func OverridesFile(repoPath string) string {
 	return filepath.Join(ProjectStateDir(repoPath), "overrides.toml")
 }
+
+// SiblingProjectDirs returns existing project state dirs whose slug shares
+// this repo's basename but not its path hash — the signature of a repo that
+// was moved or renamed on disk (state is keyed by absolute path).
+func SiblingProjectDirs(repoPath string) []string {
+	own := ProjectSlug(repoPath)
+	dash := strings.LastIndex(own, "-")
+	if dash < 0 {
+		return nil
+	}
+	base := own[:dash+1] // "name-"
+	entries, err := os.ReadDir(filepath.Join(StateRoot(), "projects"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != own && strings.HasPrefix(e.Name(), base) {
+			out = append(out, filepath.Join(StateRoot(), "projects", e.Name()))
+		}
+	}
+	return out
+}

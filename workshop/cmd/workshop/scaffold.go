@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/config"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
 )
 
 func cmdInit(args []string) int {
@@ -108,7 +108,7 @@ name = "` + name + `"
 # [safety]
 # max_concurrent   = 2     # simultaneous agent passes across pipelines
 # breaker_failures = 5     # consecutive failed passes -> pipeline halts
-# wedge_minutes    = 20    # in-flight pass older than this is killed
+# wedge_minutes    = 35    # in-flight pass older than this is killed (keep above agy's 30m print-timeout)
 
 `)
 	if game {

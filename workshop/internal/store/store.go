@@ -10,13 +10,17 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
 	_ "modernc.org/sqlite"
+
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
 // ErrNotFound is returned when a row does not exist.
@@ -126,19 +130,88 @@ var schema = []string{
 }
 
 func (s *Store) migrate() error {
+	// Refuse to touch a database written by a NEWER workshop: our schema
+	// statements are additive-only, so writing into a future layout could
+	// silently corrupt it. (Older versions are fine — migrating forward is
+	// exactly what this function does.)
+	var stored string
+	err := s.db.QueryRow(`SELECT v FROM kv WHERE k = 'schema_version'`).Scan(&stored)
+	if err == nil {
+		if v, perr := strconv.Atoi(stored); perr == nil && v > schemaVersion {
+			return fmt.Errorf("store: this database was created by a newer workshop (schema %d, this binary supports %d) — upgrade workshop", v, schemaVersion)
+		}
+	}
 	for _, stmt := range schema {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("store: migrate: %w\nstatement: %s", err, stmt)
 		}
 	}
-	_, err := s.db.Exec(
+	_, err = s.db.Exec(
 		`INSERT INTO kv(k, v) VALUES('schema_version', ?) ON CONFLICT(k) DO NOTHING`,
 		fmt.Sprint(schemaVersion))
 	return err
 }
 
+// Prune caps the unbounded-growth tables. Events beyond keepEvents and
+// finished passes beyond keepPasses (per whole table, newest kept) are
+// deleted. Run at engine startup, never from read-only CLI paths.
+func (s *Store) Prune(ctx context.Context, keepEvents, keepPasses int) error {
+	if keepEvents > 0 {
+		if _, err := s.db.ExecContext(ctx, `
+			DELETE FROM events WHERE seq < (
+				SELECT COALESCE(MIN(seq), 0) FROM (
+					SELECT seq FROM events ORDER BY seq DESC LIMIT ?))`,
+			keepEvents); err != nil {
+			return err
+		}
+	}
+	if keepPasses > 0 {
+		if _, err := s.db.ExecContext(ctx, `
+			DELETE FROM passes WHERE ended != 0 AND id < (
+				SELECT COALESCE(MIN(id), 0) FROM (
+					SELECT id FROM passes ORDER BY id DESC LIMIT ?))`,
+			keepPasses); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // NewID mints a sortable task/completion id: "ws-" + lowercase ULID.
 func NewID() string { return "ws-" + strings.ToLower(ulid.Make().String()) }
+
+// PipelineBundle returns the live agent/model/effort override for a pipeline
+// (zero bundle when unset). This is the operator's "switch model for the
+// NEXT pass" dial — stored, not config, so it takes effect without a restart
+// and is re-read every pass.
+func (s *Store) PipelineBundle(ctx context.Context, pipeline string) (domain.Bundle, error) {
+	var b domain.Bundle
+	v, err := s.GetKV(ctx, "bundle."+pipeline)
+	if errors.Is(err, ErrNotFound) {
+		return b, nil
+	}
+	if err != nil {
+		return b, err
+	}
+	if err := json.Unmarshal([]byte(v), &b); err != nil {
+		return domain.Bundle{}, err
+	}
+	return b, nil
+}
+
+// SetPipelineBundle stores the live override; a zero bundle clears it.
+func (s *Store) SetPipelineBundle(ctx context.Context, pipeline string, b domain.Bundle) error {
+	key := "bundle." + pipeline
+	if b.IsZero() {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM kv WHERE k = ?`, key)
+		return err
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	return s.SetKV(ctx, key, string(data))
+}
 
 // GetKV reads a kv value; ErrNotFound when absent.
 func (s *Store) GetKV(ctx context.Context, key string) (string, error) {

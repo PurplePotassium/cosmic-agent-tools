@@ -24,7 +24,7 @@ workshop           # dashboard opens; set the goal, add tasks, watch it work
 
 ## Install
 
-- **From source** (Go 1.26+): `go install github.com/gw1108/cosmic-agent-tools/workshop/cmd/workshop@latest`
+- **From source** (Go 1.26+): `go install github.com/PurplePotassium/cosmic-agent-tools/workshop/cmd/workshop@latest`
 - **Release binaries**: download from GitHub Releases and drop on your PATH
   (`%LOCALAPPDATA%\Programs\workshop\` is a good spot on Windows).
 
@@ -55,7 +55,7 @@ workshop init       scaffold .workshop/  (--game for gamedev spice pools, --pipe
 workshop run        headless bounded run: --iterations N (default 3), --until-drained, --timeout 45m
 workshop task       add | list | tag | pin | mv | rm     (see below)
 workshop status     one-shot snapshot (--json)
-workshop stop       stop the running server gracefully
+workshop stop       stop the running server gracefully (--force kills a hung engine's process tree)
 workshop doctor     environment health check (--json)
 workshop path       print resolved dirs and config files
 workshop migrate    import GOAL/PROMPT/backlog from the old PowerShell workshop (--from <dir>)
@@ -103,14 +103,19 @@ worktrees = "auto"           # auto | on | off — auto turns worktrees on when 
 [safety]
 max_concurrent   = 2         # simultaneous agent passes
 breaker_failures = 5         # consecutive failed passes -> pipeline halts
-wedge_minutes    = 20        # in-flight pass older than this is killed
+wedge_minutes    = 35        # in-flight pass older than this is KILLED (the old tool only
+                             # flagged "wedged?"). Keep it above agy's 30m --print-timeout.
+sleep_seconds    = 0         # pause between passes of one pipeline
 
 [spice]                      # anti-circling: a persona/word-prime per pass
 personas = "gamedev"         # general | gamedev | path/to/pool.txt
 nouns    = "gamedev"
 
 # ---- task-type routing: type -> {agent, model, effort} --------------------
-# Precedence per task: pin > this table > pipeline bundle.
+# Precedence per task: pin > live dashboard override > this table > pipeline
+# bundle. The types code/tests/docs/art/audio/merge-conflict are built in with
+# EMPTY bundles — the classifier types tasks out of the box and agent-resolved
+# merge conflicts are enabled by default; entries here override per type.
 [types.code]
 agent  = "claude"
 model  = "claude-opus-4-8"
@@ -120,7 +125,7 @@ effort = "high"              # low|medium|high|xhigh|max — ignored if the agen
 agent = "agy"                # blind headless: self-report only (see AGENTS.md)
 model = "gemini-3-flash"     # agy model ids fail SILENTLY when wrong — don't guess
 
-[types.merge-conflict]       # defining this route ENABLES agent-resolved conflicts
+[types.merge-conflict]       # built-in route; override to pick a stronger resolver
 agent  = "claude"
 model  = "claude-opus-4-8"
 effort = "high"
@@ -139,6 +144,7 @@ agent      = "agy"
 model      = "gemini-3-flash"
 invent     = false           # blind driver: only works operator-queued tasks
 # drain_main = true          # default: also claim type-matching shared tasks
+# extra_args = ["--flag"]    # raw args appended to every agent invocation
 ```
 
 ## How multi-pipeline integration works
@@ -182,6 +188,11 @@ claude; the agent's own progress report for blind drivers, which is all that
 exists) · merge queue, activity feed, and alert banners (auth halts, breaker
 trips, wedge kills, suspected agy auth loss).
 
+Each pipeline card's ⚙ button switches agent/model/effort **live**: the
+override is stored, applied from the next pass on (no restart), marked with ⚡
+on the card, and cleared back to configured routing with one click. Per-task
+pins still beat it.
+
 ## ⚠️ Unattended execution
 
 Agents run with `--dangerously-skip-permissions` by default
@@ -201,8 +212,18 @@ copies `GOAL.md`, your `PROMPT.md` edits (→ `prompts/project.md` — trim the
 boilerplate, the contract is built in), and imports `backlog.json` /
 `completions.json`. `workshop.config.ps1` knobs map onto `config.toml`
 (`Root` → run in the repo; `Branch` → `project.trunk`; `WedgeMinutes` →
-`safety.wedge_minutes`; `UiPort` → `server.port`; personas/nouns → `[spice]`).
-`agent.json` is superseded by the routing table + per-task pins.
+`safety.wedge_minutes`; `UiPort` → `server.port`; personas/nouns → `[spice]`;
+`-AgentExtraArgs` → per-pipeline `extra_args`; `-SleepSeconds` →
+`safety.sleep_seconds`). `agent.json` is superseded by the routing table,
+per-task pins, and the dashboard's live model switch.
+
+Behavior changes from the old tool worth knowing:
+
+- **Wedge handling**: the old loop only showed "wedged?" in the UI; v2
+  *kills* the pass at `wedge_minutes` and counts it as a failure.
+- **`RALPH_PASS`** is not exported anymore. Repo-side hooks that keyed on it
+  should use `WORKSHOP_PASS_N` (plus `WORKSHOP_PASS_STATE_DIR` /
+  `WORKSHOP_PASS_REPO_DIR`), which every agent process gets.
 
 ## Development
 

@@ -9,7 +9,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/proc"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/proc"
 )
 
 // PromptVia says how the prompt reaches the agent process.

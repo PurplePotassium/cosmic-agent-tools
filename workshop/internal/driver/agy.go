@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
@@ -78,8 +79,25 @@ func (a *Agy) Plan(spec InvokeSpec) (ExecPlan, error) {
 	}
 	args = append(args, spec.ExtraArgs...)
 	args = append(args, "-p", spec.Prompt)
+	// The whole prompt rides in argv. Windows caps a command line at 32,767
+	// chars, and blowing it fails the spawn opaquely (agy is blind) — refuse
+	// up front with an actionable error instead.
+	if runtime.GOOS == "windows" {
+		total := len(a.exe)
+		for _, s := range args {
+			total += len(s) + 3 // separator + worst-case quoting
+		}
+		if total > maxWindowsCommandLine {
+			return ExecPlan{}, fmt.Errorf(
+				"driver: agy invocation is %d chars — over the ~%d Windows command-line limit (agy takes the prompt as an argument); trim GOAL.md / prompt fragments, or route the task to claude, which reads the prompt from stdin",
+				total, maxWindowsCommandLine)
+		}
+	}
 	return ExecPlan{Exe: a.exe, Args: args, StdinPrompt: false, Mode: a.caps.SpawnMode()}, nil
 }
+
+// maxWindowsCommandLine leaves headroom under the hard 32,767-char cap.
+const maxWindowsCommandLine = 30000
 
 func findAgy() (string, error) {
 	if v := os.Getenv("WORKSHOP_AGY_BIN"); v != "" {

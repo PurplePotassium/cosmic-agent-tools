@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
 func openTest(t *testing.T) *Store {

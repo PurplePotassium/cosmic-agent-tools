@@ -5,24 +5,27 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/bus"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/config"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/driver"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/engine"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/prompt"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/route"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/bus"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/engine"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/proc"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/prompt"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/route"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // App is one opened project.
@@ -57,18 +60,36 @@ func Open(ctx context.Context, repoOverride string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Unknown agent names in the routing table surface at load, not at pass
+	// time — a task routed to a typo'd agent would burn retry attempts
+	// failing pass setup instead.
+	for t, b := range res.Config.Types {
+		if b.Agent != "" {
+			if _, derr := driver.New(b.Agent); derr != nil {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("types.%s: %v", t, derr))
+			}
+		}
+	}
 
 	stateDir := config.ProjectStateDir(root)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return nil, err
 	}
+	// A fresh state dir for a repo whose basename matches an existing
+	// project usually means the repo was moved on disk (state is keyed by
+	// absolute path) — say so instead of silently starting from scratch.
+	if _, serr := os.Stat(filepath.Join(stateDir, "workshop.db")); os.IsNotExist(serr) {
+		if twins := config.SiblingProjectDirs(root); len(twins) > 0 {
+			res.Warnings = append(res.Warnings, fmt.Sprintf(
+				"no workshop state for this repo path yet, but state exists for another repo named %q — if you moved the repo, copy %s to %s to keep its backlog and history",
+				filepath.Base(root), strings.Join(twins, " or "), stateDir))
+		}
+	}
+
 	st, err := store.Open(filepath.Join(stateDir, "workshop.db"))
 	if err != nil {
 		return nil, err
 	}
-	// A previous crash may have left pass rows open; close them so
-	// liveness is derived from truth.
-	_, _ = st.CleanupOrphanPasses(ctx)
 	return &App{
 		RepoDir:  root,
 		StateDir: stateDir,
@@ -139,8 +160,10 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engi
 		Verify:          cfg.Project.Verify,
 		VerifyDir:       cfg.Project.VerifyDir,
 		SkipPermissions: cfg.Safety.SkipPermissions,
+		ExtraArgs:       p.ExtraArgs,
 		KnownPipelines:  known,
 		BreakerLimit:    cfg.Safety.BreakerFailures,
+		SleepBetween:    time.Duration(cfg.Safety.SleepSeconds) * time.Second,
 		Types:           cfg.Types,
 		ClassifierMode:  cfg.Classifier.Mode,
 		Vocabulary:      route.Vocabulary(cfg.Types, cfg.ResolvedPipelines()),
@@ -152,6 +175,43 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engi
 		Sem:             opts.Sem,
 	}
 	return engine.NewWorker(wc, a.Store, a.Bus), nil
+}
+
+// EngineLockPath returns the engine singleton lock file for a state dir.
+func EngineLockPath(stateDir string) string { return filepath.Join(stateDir, "engine.lock") }
+
+type engineLock struct {
+	PID     int       `json:"pid"`
+	Started time.Time `json:"started"`
+}
+
+// ReadEngineLock returns the pid recorded in the engine lock, if any.
+func ReadEngineLock(stateDir string) (int, bool) {
+	var el engineLock
+	if err := statedir.ReadJSON(EngineLockPath(stateDir), &el); err != nil || el.PID == 0 {
+		return 0, false
+	}
+	return el.PID, true
+}
+
+// acquireEngineLock takes the per-repo engine singleton lock, clearing a
+// stale lock left by a crashed engine. It returns the release func.
+func (a *App) acquireEngineLock() (func(), error) {
+	path := EngineLockPath(a.StateDir)
+	for attempt := 0; attempt < 2; attempt++ {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			enc := json.NewEncoder(f)
+			_ = enc.Encode(engineLock{PID: os.Getpid(), Started: time.Now().UTC()})
+			f.Close()
+			return func() { _ = os.Remove(path) }, nil
+		}
+		if pid, ok := ReadEngineLock(a.StateDir); ok && pid != os.Getpid() && proc.Alive(pid) {
+			return nil, fmt.Errorf("another workshop engine is already running for this repo (pid %d) — stop it first (`workshop stop`, --force if wedged)", pid)
+		}
+		_ = os.Remove(path) // stale lock from a crashed engine
+	}
+	return nil, fmt.Errorf("cannot acquire the engine lock at %s", path)
 }
 
 // resolvePool resolves custom pool paths relative to the repo config dir.
@@ -174,6 +234,20 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained bool
 	if len(pipelines) == 0 {
 		return fmt.Errorf("no enabled pipelines")
 	}
+	// Exactly one engine per repo: a second `run`/`up` would put two
+	// workers on the same worktrees and branches.
+	release, err := a.acquireEngineLock()
+	if err != nil {
+		return err
+	}
+	defer release()
+	// A previous crash may have left pass rows open; close them so
+	// liveness is derived from truth. Scoped to engine startup (under the
+	// lock) — running it on every app.Open let a mere `workshop status`
+	// mark another process's in-flight pass as failed.
+	_, _ = a.Store.CleanupOrphanPasses(ctx)
+	// Cap the append-only tables; an always-on loop grows them unboundedly.
+	_ = a.Store.Prune(ctx, 20000, 5000)
 	cfg := a.Res.Config
 
 	trunk := cfg.Project.Trunk
@@ -215,7 +289,9 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained bool
 			if err := gitx.AddWorktree(ctx, a.RepoDir, p.Dir, p.Branch, trunk); err != nil {
 				return fmt.Errorf("worktree for %s: %w", p.Name, err)
 			}
-			w, err := a.BuildWorker(*p, multi, WorkerOpts{Dir: p.Dir, SyncTrunk: trunk, Sem: sem})
+			// Lanes sync from the gate-proven green ref, never live trunk
+			// (mid-round trunk holds unvetted merges that may be reset away).
+			w, err := a.BuildWorker(*p, multi, WorkerOpts{Dir: p.Dir, SyncTrunk: engine.GreenRef, Sem: sem})
 			if err != nil {
 				return err
 			}
@@ -269,13 +345,16 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained bool
 	})
 }
 
-// PipelineStatus is one pipeline's live snapshot.
+// PipelineStatus is one pipeline's live snapshot. Agent/Model/Effort are the
+// EFFECTIVE bundle (config with the live override applied); Override carries
+// the raw override when one is active.
 type PipelineStatus struct {
 	Name            string          `json:"name"`
 	Enabled         bool            `json:"enabled"`
 	Agent           string          `json:"agent"`
 	Model           string          `json:"model,omitempty"`
 	Effort          string          `json:"effort,omitempty"`
+	Override        *domain.Bundle  `json:"override,omitempty"`
 	Halted          string          `json:"halted,omitempty"`
 	Running         *domain.Pass    `json:"running,omitempty"` // the in-flight pass
 	LastPass        *domain.Pass    `json:"lastPass,omitempty"`
@@ -312,10 +391,16 @@ func (a *App) Snapshot(ctx context.Context) (*Status, error) {
 	st.SharedBacklog = counts[domain.MainBacklog]
 
 	for _, p := range a.Res.Config.ResolvedPipelines() {
+		override, _ := a.Store.PipelineBundle(ctx, p.Name)
+		eff := route.Effective(override, p.Bundle)
 		ps := PipelineStatus{
 			Name: p.Name, Enabled: p.Enabled,
-			Agent: p.Bundle.Agent, Model: p.Bundle.Model, Effort: p.Bundle.Effort,
+			Agent: eff.Agent, Model: eff.Model, Effort: eff.Effort,
 			BacklogExclusive: counts[p.Name],
+		}
+		if !override.IsZero() {
+			o := override
+			ps.Override = &o
 		}
 		ps.Halted, _ = a.Store.HaltedReason(ctx, p.Name)
 		ps.Running, _ = a.Store.RunningPass(ctx, p.Name)

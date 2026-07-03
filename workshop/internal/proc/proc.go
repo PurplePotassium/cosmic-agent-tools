@@ -31,3 +31,16 @@ func Configure(cmd *exec.Cmd, mode SpawnMode) { configure(cmd, mode) }
 
 // KillTree forcefully terminates pid and every descendant.
 func KillTree(pid int) error { return killTree(pid) }
+
+// Alive reports whether a process with the given pid currently exists.
+func Alive(pid int) bool { return alive(pid) }
+
+// Adopt places a just-started child in a kill-on-close Job Object (Windows)
+// so its whole subtree dies with the pass — even grandchildren whose
+// intermediate parent exited, and even if the Workshop itself crashes. No-op
+// on other platforms (process groups cover them). Call right after Start.
+func Adopt(pid int) { adopt(pid) }
+
+// Finished releases the pid's Job Object after the process exited, reaping
+// any stragglers it left behind. No-op if the pid was never adopted.
+func Finished(pid int) { finished(pid) }

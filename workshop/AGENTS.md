@@ -68,8 +68,11 @@ driver. This is how every engine path is tested without real agents.
   `completions.json` (engine-owned projections; a misbehaving agent's edits
   are diff-ingested harmlessly, never trusted).
 - Agent processes are spawned in their own process group and killed as a
-  **tree** (`taskkill /T /F` / negative pgid) — a wedged pass must not leak
-  builds or test servers.
-- Model/effort switching happens per pass via routing (pin > `[types.*]` >
+  **tree** — on Windows via a kill-on-close Job Object (reaches grandchildren
+  whose intermediate parent exited, and dies with the Workshop on a crash;
+  `taskkill /T /F` is the fallback), on Unix via negative-pgid SIGKILL. A
+  wedged pass must not leak builds or test servers.
+- Model/effort switching happens per pass via routing (pin > live pipeline
+  override (dashboard ⚙, re-read from the store every pass) > `[types.*]` >
   pipeline bundle); a bundle that switches agents never inherits the other
   agent's model or effort.

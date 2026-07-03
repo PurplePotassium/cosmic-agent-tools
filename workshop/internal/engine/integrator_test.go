@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/bus"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/fakeagent"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/statedir"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/bus"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/fakeagent"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // queueRig is a repo with a trunk, N worktree lanes, a store, and an
@@ -447,4 +447,43 @@ func (r *queueRig) clearBackoff(t *testing.T, id string) {
 	// FailTask sets not_before; tests shrink it via a tiny RetryBackoff,
 	// so a short sleep suffices.
 	time.Sleep(5 * time.Millisecond)
+}
+
+// TestGreenRefTracksGatedTrunk pins the D1 fix: workers sync lanes from
+// GreenRef (last gate-proven trunk), so the ref must exist after a round and
+// follow trunk only through green outcomes.
+func TestGreenRefTracksGatedTrunk(t *testing.T) {
+	r := newQueueRig(t, []string{"bad", "good"}, gateBreakCmd(), false)
+	ctx := context.Background()
+
+	// Round 1: all green — ref lands on the new trunk HEAD.
+	r.laneCommit(1, "good.txt", "ok", "good work")
+	if _, err := r.ig.RunRound(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !gitx.RefExists(ctx, r.repo, GreenRef) {
+		t.Fatal("GreenRef missing after a round")
+	}
+	head, _ := gitx.RevParse(ctx, r.repo, "HEAD")
+	green, _ := gitx.RevParse(ctx, r.repo, GreenRef)
+	if head != green {
+		t.Fatalf("after green round: green=%s head=%s", green, head)
+	}
+
+	// Round 2: the bad lane goes red alone; the good lane lands. The ref
+	// must end on the kept-set trunk (which contains good2, not BREAK).
+	r.laneCommit(0, "BREAK", "boom", "bad work")
+	r.laneCommit(1, "good2.txt", "ok", "more good work")
+	if _, err := r.ig.RunRound(ctx); err != nil {
+		t.Fatal(err)
+	}
+	head, _ = gitx.RevParse(ctx, r.repo, "HEAD")
+	green, _ = gitx.RevParse(ctx, r.repo, GreenRef)
+	if head != green {
+		t.Fatalf("after bisect round: green=%s head=%s", green, head)
+	}
+	files := r.trunkFiles()
+	if files["BREAK"] || !files["good2.txt"] {
+		t.Fatalf("trunk files after bisect: %v", files)
+	}
 }

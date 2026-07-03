@@ -52,6 +52,9 @@ function describeEvent(ev) {
     case "wedge.killed": return `wedged pass killed after ${p.timeoutMin}m`;
     case "gate.red": return `gate RED (${p.where})`;
     case "driver.effort_ignored": return `effort "${p.effort}" ignored — ${p.agent} has no effort knob`;
+    case "pipeline.bundle": return p.cleared ? "model override cleared"
+      : `model override → ${[p.agent, p.model, p.effort].filter(Boolean).join(":")}`;
+    case "integration.merge_failed": return `merge failed (will retry): ${p.error || ""}`.slice(0, 140);
     default: return JSON.stringify(p).slice(0, 120);
   }
 }
@@ -161,7 +164,35 @@ function BacklogBoard({ tasks, pipelines, onTop, onMove, onDelete }) {
   </div>`;
 }
 
-function PipelineCard({ p, log, onDesired }) {
+const EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];
+const AGENTS = ["", "claude", "agy"];
+
+// BundleEditor is the live agent/model dial: it writes a store-backed
+// override the worker re-reads every pass, so the NEXT pass switches with no
+// restart (the successor of the old agent.json workflow).
+function BundleEditor({ p, onApply, onClear, onClose }) {
+  const o = p.override || {};
+  const [agent, setAgent] = useState(o.agent || "");
+  const [model, setModel] = useState(o.model || "");
+  const [effort, setEffort] = useState(o.effort || "");
+  return html`<div class="bundle-editor">
+    <select value=${agent} onChange=${(e) => setAgent(e.target.value)} title="agent ('' = configured)">
+      ${AGENTS.map((a) => html`<option value=${a}>${a || "agent (config)"}</option>`)}
+    </select>
+    <input placeholder="model (agent default)" value=${model} onInput=${(e) => setModel(e.target.value)} />
+    <select value=${effort} onChange=${(e) => setEffort(e.target.value)} title="effort ('' = default)">
+      ${EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
+    </select>
+    <button class="primary" onClick=${() => onApply({
+      agent: agent || undefined, model: model.trim() || undefined, effort: effort || undefined,
+    })}>apply</button>
+    ${p.override && html`<button onClick=${onClear} title="back to configured routing">clear</button>`}
+    <button onClick=${onClose}>✕</button>
+  </div>`;
+}
+
+function PipelineCard({ p, log, onDesired, onBundle }) {
+  const [editBundle, setEditBundle] = useState(false);
   const running = !!p.running;
   const stopped = p.halted === "operator";
   const halted = p.halted && p.halted !== "operator";
@@ -178,13 +209,19 @@ function PipelineCard({ p, log, onDesired }) {
     <div class="pipeline-head">
       <span class="name">${p.name}</span>
       ${pill}
-      <span class="chip">${bundle}</span>
+      <span class="chip" title=${p.override ? "live override active — applies from the next pass" : "configured bundle"}>
+        ${bundle}${p.override ? " ⚡" : ""}</span>
       ${p.backlogExclusive > 0 && html`<span class="chip">own backlog: ${p.backlogExclusive}</span>`}
       <span class="spacer"></span>
+      <button title="switch agent/model for the next pass" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
       ${stopped || halted
         ? html`<button class="primary" onClick=${() => onDesired(p.name, "running")}>resume</button>`
         : html`<button onClick=${() => onDesired(p.name, "stopped")}>stop</button>`}
     </div>
+    ${editBundle && html`<${BundleEditor} p=${p}
+      onApply=${async (b) => { await onBundle(p.name, b); setEditBundle(false); }}
+      onClear=${async () => { await onBundle(p.name, {}); setEditBundle(false); }}
+      onClose=${() => setEditBundle(false)} />`}
     ${p.progress && p.progress.phase && html`<div class="selfreport">
       <span class=${"age" + (staleReport ? " stale" : "")}>${p.progressAgeSec}s ago${staleReport ? " (stale?)" : ""}</span>
       <span class="phase">${p.progress.phase}</span> — ${p.progress.task || ""}
@@ -362,7 +399,8 @@ function App() {
       </div>
       <div>
         ${pipelines.map((p) => html`<${PipelineCard} key=${p.name} p=${p}
-          log=${logs[p.name]} onDesired=${(name, desired) => act(() => api.setPipeline(name, desired))} />`)}
+          log=${logs[p.name]} onDesired=${(name, desired) => act(() => api.setPipeline(name, desired))}
+          onBundle=${(name, bundle) => act(() => api.setPipelineBundle(name, bundle))} />`)}
         ${pipelines.length === 0 && html`<div class="card muted">no pipelines configured</div>`}
       </div>
       <div>

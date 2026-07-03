@@ -111,6 +111,7 @@ type Pipeline struct {
 	Worktree  *bool // per-pipeline override of the project worktree setting; nil = inherit
 
 	PassTimeout time.Duration // wedge threshold; 0 = driver default
+	ExtraArgs   []string      // raw args appended to every agent invocation
 
 	// Computed at runtime by the engine:
 	Branch string // branch the pipeline commits to

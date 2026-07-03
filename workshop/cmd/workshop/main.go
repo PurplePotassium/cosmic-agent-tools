@@ -15,10 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/app"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/engine"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/fakeagent"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/server"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/engine"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/fakeagent"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/proc"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/server"
 )
 
 // Version is stamped by the release build (-ldflags "-X main.Version=...").
@@ -79,7 +80,7 @@ usage: workshop [command] [flags]
   init     scaffold .workshop/ (config.toml + GOAL.md) into this repo
   task     backlog operations: add, list, tag, pin, mv, rm
   status   one-shot snapshot (--json for machines)
-  stop     gracefully stop the running server
+  stop     gracefully stop the running server (--force kills a hung engine)
   doctor   check the environment (git, agents, config, state dir)
   path     print resolved directories and config files
   migrate  import GOAL/PROMPT/backlog from the old PowerShell workshop
@@ -166,7 +167,7 @@ func cmdUp(args []string) int {
 		url := fmt.Sprintf("http://127.0.0.1:%d/", si.Port)
 		if pingServer(si.Port) {
 			fmt.Printf("workshop already running for this repo (pid %d) — %s\n", si.PID, url)
-			if !*noOpen {
+			if !*noOpen && a.Res.Config.Server.OpenBrowser {
 				openBrowser(url + "#token=" + si.Token)
 			}
 			return 0
@@ -289,6 +290,7 @@ func cmdStatus(args []string) int {
 func cmdStop(args []string) int {
 	fs := flag.NewFlagSet("stop", flag.ExitOnError)
 	repo := fs.String("repo", "", "repository path")
+	force := fs.Bool("force", false, "kill the engine's process tree when it doesn't respond to a graceful stop")
 	_ = fs.Parse(args)
 
 	ctx, cancel := interruptCtx()
@@ -300,8 +302,28 @@ func cmdStop(args []string) int {
 	}
 	defer a.Close()
 
+	forceKill := func(pid int) int {
+		if err := proc.KillTree(pid); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		_ = os.Remove(server.InfoPath(a.StateDir))
+		_ = os.Remove(app.EngineLockPath(a.StateDir))
+		fmt.Printf("killed workshop engine (pid %d) and its process tree\n", pid)
+		return 0
+	}
+
 	si, err := server.ReadInfo(a.StateDir)
 	if err != nil {
+		// No server record — a headless `workshop run` may still hold the
+		// engine lock.
+		if pid, ok := app.ReadEngineLock(a.StateDir); ok && proc.Alive(pid) {
+			if *force {
+				return forceKill(pid)
+			}
+			fmt.Printf("a headless workshop engine is running (pid %d) — Ctrl+C it, or re-run with --force to kill it\n", pid)
+			return 1
+		}
 		fmt.Println("no workshop server is running for this repo")
 		return 0
 	}
@@ -310,6 +332,14 @@ func cmdStop(args []string) int {
 	req.Header.Set("X-Workshop-Token", si.Token)
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
+		if proc.Alive(si.PID) {
+			// A hung engine: server.json is live but the process ignores us.
+			if *force {
+				return forceKill(si.PID)
+			}
+			fmt.Printf("the server is not responding but its process (pid %d) is alive — re-run with --force to kill it\n", si.PID)
+			return 1
+		}
 		fmt.Println("server.json found but the server is not responding — removing the stale record")
 		_ = os.Remove(server.InfoPath(a.StateDir))
 		return 0

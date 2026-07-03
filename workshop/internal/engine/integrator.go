@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/bus"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/gitx"
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/bus"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // IntegratorConfig wires the merge queue.
@@ -32,6 +32,14 @@ type IntegratorConfig struct {
 	BranchPrefix string // e.g. "workshop/"
 	Interval     time.Duration
 }
+
+// GreenRef is the git ref recording the last trunk state a gate proved green
+// (or the pre-merge baseline before any round ran). Workers sync their lanes
+// from THIS ref, never from live trunk: mid-round trunk holds unvetted
+// combined merges for the whole gate duration and may be reset --hard, so a
+// lane syncing live trunk could absorb later-bisected-out commits and then be
+// blamed as "proven culprit" for work that was never its own.
+const GreenRef = "refs/workshop/green"
 
 // Integrator is the Bors-style merge queue: --no-ff merges in rotation, gate
 // the combined result, bisect out regressors. Conflicts are never
@@ -89,31 +97,50 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 	// --hard. Versioned intent edits (.workshop/**) get their own commit;
 	// ANY other dirty file means a human is mid-edit in the main checkout
 	// — skip the whole round rather than destroy their work.
+	intentDirty := false
 	if paths, err := gitx.StatusPorcelain(ctx, repo); err == nil && len(paths) > 0 {
-		intentOnly := true
+		intentDirty = true
 		for _, p := range paths {
 			if p != ".workshop" && !strings.HasPrefix(filepath.ToSlash(p), ".workshop/") {
-				intentOnly = false
+				intentDirty = false
 				break
 			}
 		}
-		if !intentOnly {
+		if !intentDirty {
 			ig.event(ctx, "integration.skipped", "", map[string]any{
 				"why": "main checkout has uncommitted changes", "files": paths,
 			})
 			return 0, nil
-		}
-		if _, err := gitx.CommitAll(ctx, repo, "workshop: goal/config update"); err != nil {
-			return 0, err
 		}
 	}
 
 	if cur, err := gitx.CurrentBranch(ctx, repo); err != nil {
 		return 0, err
 	} else if cur != ig.cfg.Trunk {
+		// Checkout BEFORE the intent commit: dirty .workshop files ride
+		// along, so a goal edit made while another branch was checked out
+		// lands on trunk, not on that branch.
 		if err := gitx.CheckoutBranch(ctx, repo, ig.cfg.Trunk); err != nil {
+			if intentDirty {
+				ig.event(ctx, "integration.skipped", "", map[string]any{
+					"why": "cannot switch to trunk with pending .workshop edits", "error": err.Error(),
+				})
+				return 0, nil
+			}
 			return 0, fmt.Errorf("integrator: checkout trunk: %w", err)
 		}
+	}
+	if intentDirty {
+		if _, err := gitx.CommitAll(ctx, repo, "workshop: goal/config update"); err != nil {
+			return 0, err
+		}
+	}
+
+	// Baseline the green ref on first contact: pre-round trunk is what
+	// lanes forked from, so it is the safest sync point until a gate says
+	// otherwise.
+	if !gitx.RefExists(ctx, repo, GreenRef) {
+		ig.recordGreen(ctx)
 	}
 
 	pending, err := ig.collectPending(ctx)
@@ -138,7 +165,13 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 	for _, lane := range rotated {
 		conflict, err := gitx.Merge(ctx, repo, lane.branch, true)
 		if err != nil {
+			// Non-conflict failure (lock contention, odd repo state):
+			// surface it and retry next round — never silently. The tip is
+			// NOT marked seen, so the lane stays pending.
 			_ = gitx.MergeAbort(ctx, repo)
+			ig.event(ctx, "integration.merge_failed", lane.pipeline, map[string]any{
+				"lane": lane.branch, "error": err.Error(),
+			})
 			continue
 		}
 		if conflict {
@@ -158,6 +191,7 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 		for _, lane := range merged {
 			ig.land(ctx, lane)
 		}
+		ig.recordGreen(ctx)
 		ig.event(ctx, "integration.landed", "", map[string]any{
 			"lanes": laneNames(merged), "count": len(merged),
 		})
@@ -174,7 +208,17 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 	var kept []pendingLane
 	for _, lane := range merged {
 		conflict, err := gitx.Merge(ctx, repo, lane.branch, true)
-		if err != nil || conflict {
+		if err != nil {
+			// Non-conflict failure: do NOT markSeen — that would strand the
+			// lane's committed work until a new commit appears. Surface and
+			// retry next round.
+			_ = gitx.MergeAbort(ctx, repo)
+			ig.event(ctx, "integration.merge_failed", lane.pipeline, map[string]any{
+				"lane": lane.branch, "error": err.Error(),
+			})
+			continue
+		}
+		if conflict {
 			_ = gitx.MergeAbort(ctx, repo)
 			// Conflicts only atop the kept set: skip until it advances.
 			ig.markSeen(ctx, lane)
@@ -208,7 +252,17 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 			"why": "gate-red", "provenCulprit": li.ProvenCulprit, "blockedBy": li.BlockedBy,
 		})
 	}
+	// The bisect leaves trunk at the kept set, which the gate proved green
+	// lane by lane (or at preMerge, the previous green, when nothing kept).
+	ig.recordGreen(ctx)
 	return landed, nil
+}
+
+// recordGreen points GreenRef at the current trunk HEAD.
+func (ig *Integrator) recordGreen(ctx context.Context) {
+	if head, err := gitx.RevParse(ctx, ig.cfg.RepoDir, "HEAD"); err == nil {
+		_ = gitx.UpdateRef(ctx, ig.cfg.RepoDir, GreenRef, head)
+	}
 }
 
 // collectPending decides which branches enter this round.

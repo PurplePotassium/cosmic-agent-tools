@@ -3,7 +3,7 @@ package route
 import (
 	"testing"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
 var (
@@ -32,7 +32,7 @@ func TestResolvePrecedence(t *testing.T) {
 			domain.Bundle{Agent: "claude", Model: "claude-sonnet-5", Effort: "low"}},
 	}
 	for _, c := range cases {
-		if got := Resolve(c.task, typesTable, pipelineBundle); got != c.want {
+		if got := Resolve(c.task, domain.Bundle{}, typesTable, pipelineBundle); got != c.want {
 			t.Errorf("%s: got %+v want %+v", c.name, got, c.want)
 		}
 	}
@@ -41,14 +41,14 @@ func TestResolvePrecedence(t *testing.T) {
 // The cross-agent guard: switching agents must never inherit the other
 // agent's model or effort (bad agy ids fail silently).
 func TestResolveCrossAgentDropsModel(t *testing.T) {
-	got := Resolve(&domain.Task{Type: "art"}, typesTable, pipelineBundle)
+	got := Resolve(&domain.Task{Type: "art"}, domain.Bundle{}, typesTable, pipelineBundle)
 	want := domain.Bundle{Agent: "agy", Model: "gemini-3-flash"}
 	if got != want {
 		t.Fatalf("got %+v want %+v", got, want)
 	}
 
 	// Pin to a different agent without a model: pipeline model must drop.
-	got = Resolve(&domain.Task{Pin: domain.Bundle{Agent: "agy"}}, typesTable, pipelineBundle)
+	got = Resolve(&domain.Task{Pin: domain.Bundle{Agent: "agy"}}, domain.Bundle{}, typesTable, pipelineBundle)
 	want = domain.Bundle{Agent: "agy"}
 	if got != want {
 		t.Fatalf("pin cross-agent: got %+v want %+v", got, want)

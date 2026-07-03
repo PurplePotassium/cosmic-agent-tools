@@ -7,7 +7,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/gw1108/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
 const passCols = `id, pipeline, n, task_id, spice, state, started, ended, exit_code, commit_sha, outcome, failure, log_path`
