@@ -136,6 +136,28 @@ select.chip { background: var(--bg); font: inherit; cursor: pointer; }
 .pipeline-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pipeline-head .name { font-weight: 700; font-size: 1rem; }
 .pipeline-head .spacer { flex: 1; }
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 5px 2px;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thinking .dot.pulse {
+  flex: none;
+  background: var(--accent);
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
 .selfreport {
   background: var(--panel2);
   border-radius: 8px;

@@ -326,7 +326,7 @@ function AddPipelineForm({ onAdd }) {
       ${EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
     </select>
     <button class="primary" onClick=${submit}
-      title="Adds a new worktree/branch lane — takes effect on the next `workshop up`/`run`, not live">add</button>
+      title="Adds a new worktree/branch lane — takes effect on the next \`workshop up\`/\`run\`, not live">add</button>
     <button onClick=${() => setOpen(false)}>✕</button>
   </div>`;
 }
@@ -345,6 +345,7 @@ function PipelineCard({ p, log, onDesired, onBundle, onMode, onDelete }) {
   const bundle = [p.agent, p.model, p.effort].filter(Boolean).join(" · ");
   const blind = p.agent === "agy";
   const staleReport = p.progressAgeSec > 300 && running;
+  const thinking = running && !blind ? currentActivity(log) : "";
   return html`<div class=${"card pipeline-card " + stateClass}>
     <div class="pipeline-head">
       <span class="name">${p.name}</span>
@@ -364,12 +365,13 @@ function PipelineCard({ p, log, onDesired, onBundle, onMode, onDelete }) {
         : html`<button onClick=${() => onDesired(p.name, "stopped")}
             title="Pause after idle: stop this pipeline from claiming new work; if it's mid-pass, that pass finishes first">stop</button>`}
       ${p.name.toLowerCase() !== "main" && html`<button class="danger" onClick=${() => onDelete(p.name)}
-        title="Remove this agent lane from the config — takes effect on the next `workshop up`/`run`, not live">remove</button>`}
+        title="Remove this agent lane from the config — takes effect on the next \`workshop up\`/\`run\`, not live">remove</button>`}
     </div>
     ${editBundle && html`<${BundleEditor} p=${p}
       onApply=${async (b) => { await onBundle(p.name, b); setEditBundle(false); }}
       onClear=${async () => { await onBundle(p.name, {}); setEditBundle(false); }}
       onClose=${() => setEditBundle(false)} />`}
+    ${thinking && html`<div class="thinking" title=${thinking}><span class="dot pulse"></span>${thinking}</div>`}
     ${p.progress && p.progress.phase && html`<div class="selfreport">
       <span class=${"age" + (staleReport ? " stale" : "")}>${p.progressAgeSec}s ago${staleReport ? " (stale?)" : ""}</span>
       <span class="phase">${p.progress.phase}</span> — ${p.progress.task || ""}
@@ -383,6 +385,19 @@ function PipelineCard({ p, log, onDesired, onBundle, onMode, onDelete }) {
       last: iter ${p.lastPass.N} ${p.lastPass.Outcome}${p.lastPass.CommitSHA ? " @ " + p.lastPass.CommitSHA : ""}
     </div>`}
   </div>`;
+}
+
+// currentActivity picks the most recent non-blank line out of a pipeline's
+// streamed stdout/stderr — claude -p's raw, human-readable narration of what
+// it's doing (tool calls, file reads, its own commentary). It's a live
+// preview, not a summary: just "what did the model print last."
+function currentActivity(lines) {
+  if (!lines) return "";
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line) return line.length > 200 ? line.slice(0, 200) + "…" : line;
+  }
+  return "";
 }
 
 function elapsed(startISO) {
