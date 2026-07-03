@@ -16,6 +16,7 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // Goal reads .workshop/GOAL.md ("" if absent).
@@ -117,6 +118,21 @@ func (a *App) SaveAttachment(name, dataURL string) (string, error) {
 // write into a task's detail, e.g. ![name](<StateDir>/attachments/xxx.png).
 var attachmentRefRe = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
 
+// attachmentPaths extracts the attachment file paths referenced by detail
+// that live under <StateDir>/attachments (SaveAttachment's directory);
+// references to anything else are ignored.
+func (a *App) attachmentPaths(detail string) map[string]bool {
+	dir := filepath.Join(a.StateDir, "attachments")
+	paths := make(map[string]bool)
+	for _, m := range attachmentRefRe.FindAllStringSubmatch(detail, -1) {
+		path := filepath.Clean(m[1])
+		if filepath.Dir(path) == dir {
+			paths[path] = true
+		}
+	}
+	return paths
+}
+
 // DeleteTask removes a task and best-effort unlinks any attachment files its
 // detail text references. An attachment's only owner is that markdown line —
 // once the task is gone the file would otherwise sit under
@@ -130,15 +146,37 @@ func (a *App) DeleteTask(ctx context.Context, id string) error {
 	if err := a.Store.DeleteTask(ctx, id); err != nil {
 		return err
 	}
-	dir := filepath.Join(a.StateDir, "attachments")
-	for _, m := range attachmentRefRe.FindAllStringSubmatch(t.Detail, -1) {
-		path := filepath.Clean(m[1])
-		if filepath.Dir(path) != dir {
-			continue
-		}
+	for path := range a.attachmentPaths(t.Detail) {
 		_ = os.Remove(path)
 	}
 	return nil
+}
+
+// UpdateTask patches a task and best-effort unlinks any attachment files that
+// were referenced by its old detail but are no longer referenced by the new
+// one — the same leak DeleteTask guards against, but triggered by an edit
+// (e.g. a dashboard PATCH) that drops or replaces an image reference instead
+// of removing the whole task.
+func (a *App) UpdateTask(ctx context.Context, id string, p store.TaskPatch) (*domain.Task, error) {
+	var before map[string]bool
+	if p.Detail != nil {
+		if old, err := a.Store.GetTask(ctx, id); err == nil {
+			before = a.attachmentPaths(old.Detail)
+		}
+	}
+	t, err := a.Store.UpdateTask(ctx, id, p)
+	if err != nil {
+		return nil, err
+	}
+	if p.Detail != nil {
+		after := a.attachmentPaths(*p.Detail)
+		for path := range before {
+			if !after[path] {
+				_ = os.Remove(path)
+			}
+		}
+	}
+	return t, nil
 }
 
 // SetPipelineDesired starts/stops one pipeline's loop live via the halt

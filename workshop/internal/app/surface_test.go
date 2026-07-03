@@ -8,6 +8,7 @@ import (
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
 // TestPauseAfterHaltsEveryEnabledPipeline: the dashboard's "pause-after"
@@ -69,6 +70,44 @@ func TestDeleteTaskRemovesReferencedAttachments(t *testing.T) {
 	}
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatalf("unrelated attachment %s was removed: %v", unrelated, err)
+	}
+}
+
+// TestUpdateTaskRemovesDroppedAttachments: editing a task's detail (e.g. via
+// the dashboard's PATCH endpoint) to drop or replace an image reference must
+// unlink the now-unreferenced attachment file the same way DeleteTask does,
+// or it leaks under <StateDir>/attachments forever. A reference that survives
+// the edit must be left alone.
+func TestUpdateTaskRemovesDroppedAttachments(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	ctx := context.Background()
+
+	dropped, err := a.SaveAttachment("shot.png", "data:image/png;base64,aGk=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := a.SaveAttachment("kept.png", "data:image/png;base64,aGk=")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	task, err := a.Store.AddTask(ctx, &domain.Task{
+		Title:  "with attachments",
+		Detail: fmt.Sprintf("![shot.png](%s)\n![kept.png](%s)", dropped, kept),
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newDetail := fmt.Sprintf("![kept.png](%s)", kept)
+	if _, err := a.UpdateTask(ctx, task.ID, store.TaskPatch{Detail: &newDetail}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dropped); !os.IsNotExist(err) {
+		t.Fatalf("dropped attachment %s still exists (err=%v)", dropped, err)
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Fatalf("kept attachment %s was removed: %v", kept, err)
 	}
 }
 

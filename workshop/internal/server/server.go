@@ -345,7 +345,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		lower := strings.ToLower(*body.Type)
 		patch.Type = &lower
 	}
-	task, err := s.App.Store.UpdateTask(r.Context(), id, patch)
+	task, err := s.App.UpdateTask(r.Context(), id, patch)
 	if err != nil {
 		httpErr(w, err, statusFor(err))
 		return
