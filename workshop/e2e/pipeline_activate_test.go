@@ -116,15 +116,13 @@ agent = "fake"
 		}
 	}
 
-	// Let the first run get past its startup git reads before adding: the add
-	// triggers Halt, and a Halt that lands mid-startup would kill an in-flight
-	// git child whose dying grip on repo/.git makes the relaunch's own git
-	// probe transiently fail (misreported as "trunk does not exist"). Once a
-	// pipeline is parked, its worker runs no git, so waiting for main to park
-	// then settling briefly clears that window. A parked worker is idle, so
-	// this is a bounded wait, not a busy race.
+	// Wait for the first run to come up parked, then add immediately. The add
+	// triggers a Halt+relaunch, and a Halt landing near startup can leave a
+	// killed git child briefly gripping repo/.git — but the relaunch's trunk
+	// probe now retries through that transient error (internal/app), so no
+	// settling sleep is needed and the add exercises the tighter relaunch race
+	// instead of avoiding it.
 	waitHalted("main")
-	time.Sleep(2 * time.Second)
 
 	// Add "art" through the same API the dashboard's "add pipeline" uses.
 	req, _ := http.NewRequest("POST", base+"/api/v1/pipelines", strings.NewReader(`{"name":"art","agent":"fake"}`))
