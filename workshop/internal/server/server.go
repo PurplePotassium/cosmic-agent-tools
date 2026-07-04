@@ -492,6 +492,14 @@ func (s *Server) postPipeline(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
+	// AddPipeline only edits config — the running engine built its workers at
+	// startup and won't back this new lane until it relaunches, so the card
+	// would sit idle forever with no hint why. Warn the operator (dashboard
+	// alert) that a halt/restart is what actually activates it.
+	s.App.Bus.Publish(r.Context(), domain.Event{
+		Type:     "pipeline.needs_restart",
+		Pipeline: strings.ToLower(strings.TrimSpace(*body.Name)),
+	})
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

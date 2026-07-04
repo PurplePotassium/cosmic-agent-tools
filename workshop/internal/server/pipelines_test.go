@@ -56,6 +56,32 @@ func TestPostPipelineAddsLaneAlongsideImplicitMain(t *testing.T) {
 	}
 }
 
+// TestPostPipelineWarnsNeedsRestart pins the operator-feedback contract for the
+// silent-idle trap: a lane added through the dashboard only edits config, so the
+// already-running engine won't back it until it relaunches. A successful add
+// must publish pipeline.needs_restart (the dashboard's "halt to activate" hint);
+// a rejected add must stay silent.
+func TestPostPipelineWarnsNeedsRestart(t *testing.T) {
+	s := newTestServerForPipelines(t)
+	events, cancel := s.App.Bus.Subscribe()
+	defer cancel()
+
+	if rec := doPipelineReq(t, s, "POST", "/api/v1/pipelines", s.token, `{"name":"art"}`); rec.Code != 200 {
+		t.Fatalf("add: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !drainHasEvent(events, "pipeline.needs_restart") {
+		t.Fatal("a successful add did not publish pipeline.needs_restart")
+	}
+
+	// A rejected add mutates nothing, so it must not warn about a restart.
+	if rec := doPipelineReq(t, s, "POST", "/api/v1/pipelines", s.token, `{"name":"bad name!"}`); rec.Code != 400 {
+		t.Fatalf("bad name: got %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if drainHasEvent(events, "pipeline.needs_restart") {
+		t.Fatal("a rejected add must not publish pipeline.needs_restart")
+	}
+}
+
 func TestPostPipelineRequiresToken(t *testing.T) {
 	s := newTestServerForPipelines(t)
 	rec := doPipelineReq(t, s, "POST", "/api/v1/pipelines", "", `{"name":"art"}`)
