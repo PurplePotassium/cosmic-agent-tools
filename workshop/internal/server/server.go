@@ -267,8 +267,14 @@ type taskBody struct {
 
 // validatePin rejects pins to unknown agents or efforts at the API boundary —
 // a task pinned to a typo'd agent would otherwise burn its retry attempts
-// failing pass setup.
-func validatePin(pin *domain.Bundle) error {
+// failing pass setup — and, for a pinned model that is off-family for its
+// agent, publishes the same non-blocking driver.model_unknown warning
+// SetPipelineBundle emits. A wrong-for-agent model id fails silently for blind
+// drivers (AGENTS.md), so warn but never block, matching config load's
+// warn-not-block policy; with no explicit agent the check is a no-op since the
+// running pipeline's agent isn't known here (KnownOrExtraModel treats an empty
+// agent as acceptable).
+func (s *Server) validatePin(ctx context.Context, pin *domain.Bundle) error {
 	if pin == nil {
 		return nil
 	}
@@ -279,6 +285,11 @@ func validatePin(pin *domain.Bundle) error {
 	}
 	if !domain.ValidEffort(pin.Effort) {
 		return fmt.Errorf("effort %q is not one of %v", pin.Effort, domain.Efforts)
+	}
+	if pin.Model != "" && !s.App.Res().Config.KnownOrExtraModel(pin.Agent, pin.Model) {
+		s.App.Bus.Publish(ctx, domain.Event{Type: "driver.model_unknown", Payload: map[string]any{
+			"agent": pin.Agent, "model": pin.Model, "families": domain.ModelFamilies(pin.Agent),
+		}})
 	}
 	return nil
 }
@@ -297,7 +308,7 @@ func (s *Server) postTask(w http.ResponseWriter, r *http.Request) {
 		task.Type = strings.ToLower(*body.Type)
 	}
 	if body.Pin != nil {
-		if err := validatePin(body.Pin); err != nil {
+		if err := s.validatePin(r.Context(), body.Pin); err != nil {
 			httpErr(w, err, http.StatusBadRequest)
 			return
 		}
@@ -375,7 +386,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
-	if err := validatePin(body.Pin); err != nil {
+	if err := s.validatePin(r.Context(), body.Pin); err != nil {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
@@ -564,7 +575,7 @@ func (s *Server) postInquiry(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, fmt.Errorf(`body needs {"question":"...", "bundle":{agent,model,effort}}`), http.StatusBadRequest)
 		return
 	}
-	if err := validatePin(body.Bundle); err != nil {
+	if err := s.validatePin(r.Context(), body.Bundle); err != nil {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
