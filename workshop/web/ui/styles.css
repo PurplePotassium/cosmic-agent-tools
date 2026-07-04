@@ -255,6 +255,7 @@ select.chip { background: var(--bg); font: inherit; cursor: pointer; }
 .commit-row .sha { color: var(--amber); }
 .bundle-editor { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
 .bundle-editor input { flex: 1; min-width: 140px; }
+.bundle-editor select.model { flex: 1; min-width: 140px; }
 
 /* ---- the self-evaluator ("ask why") card ---- */
 .inquiry { padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 0.82rem; }

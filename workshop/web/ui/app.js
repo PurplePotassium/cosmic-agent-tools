@@ -291,32 +291,66 @@ const EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];
 const AGENTS = ["", "claude", "agy"];
 
 // MODEL_FAMILIES mirrors internal/domain's curated prefixes (ClaudeModels,
-// AgyModels) with one representative id per family, for the model datalist
-// below. Off-list ids remain typeable — config.Validate only warns on those,
-// it never blocks, as long as they're in [agents.<agent>] extra_models.
+// AgyModels) with one representative id per family, for the model dropdown
+// below. The dropdown is extended at runtime by the user's
+// [agents.<agent>] extra_models (fetched from /api/v1/config) — that's how
+// off-list ids become selectable now that the field is a select, not a
+// free-text input.
 const MODEL_FAMILIES = {
   claude: ["claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"],
   agy: ["gemini-3-flash"],
 };
 
+// modelsFor unions an agent's curated representatives with the user's
+// configured extra_models for it.
+const modelsFor = (agent, extras) =>
+  [...new Set([...(MODEL_FAMILIES[agent] || []), ...((extras || {})[agent] || [])])];
+
+// ModelSelect is the model dropdown. With an agent pinned it lists that
+// agent's models; unpinned it lists every agent's models grouped by driver,
+// and onChange reports which family the pick belongs to so the caller can pin
+// the matching agent (a claude driver can't run a gemini id, and vice versa).
+function ModelSelect({ agent, extras, value, onChange }) {
+  const families = agent ? [agent] : Object.keys(MODEL_FAMILIES);
+  const owner = (m) => families.find((a) => modelsFor(a, extras).includes(m));
+  // A stored override can name an off-list model (e.g. extra_models edited
+  // since it was applied) — keep it selectable instead of snapping to default.
+  const offList = value && !owner(value);
+  return html`<select class="model" value=${value} title="model ('' = agent default)"
+    onChange=${(e) => onChange(e.target.value, owner(e.target.value))}>
+    <option value="">model (agent default)</option>
+    ${offList && html`<option value=${value}>${value}</option>`}
+    ${agent
+      ? modelsFor(agent, extras).map((m) => html`<option value=${m}>${m}</option>`)
+      : families.map((a) => html`<optgroup label=${a}>
+          ${modelsFor(a, extras).map((m) => html`<option value=${m}>${m}</option>`)}
+        </optgroup>`)}
+  </select>`;
+}
+
 // BundleEditor is the live agent/model dial: it writes a store-backed
 // override the worker re-reads every pass, so the NEXT pass switches with no
 // restart (the successor of the old agent.json workflow).
-function BundleEditor({ p, onApply, onClear, onClose }) {
+function BundleEditor({ p, extras, onApply, onClear, onClose }) {
   const o = p.override || {};
   const [agent, setAgent] = useState(o.agent || "");
   const [model, setModel] = useState(o.model || "");
   const [effort, setEffort] = useState(o.effort || "");
-  const models = MODEL_FAMILIES[agent] || [];
-  const listId = `models-${p.name}`;
+  // Keep agent and model consistent: repinning the agent drops a model the
+  // new driver can't run; picking a model from the other family pins its agent.
+  const pickAgent = (a) => {
+    setAgent(a);
+    if (a && model && !modelsFor(a, extras).includes(model)) setModel("");
+  };
+  const pickModel = (m, fam) => {
+    setModel(m);
+    if (m && fam && fam !== (agent || p.agent)) setAgent(fam);
+  };
   return html`<div class="bundle-editor">
-    <select value=${agent} onChange=${(e) => setAgent(e.target.value)} title="agent ('' = configured)">
+    <select value=${agent} onChange=${(e) => pickAgent(e.target.value)} title="agent ('' = configured)">
       ${AGENTS.map((a) => html`<option value=${a}>${a || "agent (config)"}</option>`)}
     </select>
-    <input list=${listId} placeholder="model (agent default)" value=${model} onInput=${(e) => setModel(e.target.value)} />
-    ${models.length > 0 && html`<datalist id=${listId}>
-      ${models.map((m) => html`<option value=${m} />`)}
-    </datalist>`}
+    <${ModelSelect} agent=${agent} extras=${extras} value=${model} onChange=${pickModel} />
     <select value=${effort} onChange=${(e) => setEffort(e.target.value)} title="effort ('' = default)">
       ${EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
     </select>
@@ -336,13 +370,20 @@ const MODES = ["goal", "discover", "drain"];
 // runtime config layer only — the lane's worker/worktree comes alive on the
 // next `workshop up`/`run`, so the confirmation copy says so up front rather
 // than implying the agent starts working immediately.
-function AddPipelineForm({ onAdd }) {
+function AddPipelineForm({ extras, onAdd }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
-  const models = MODEL_FAMILIES[agent] || [];
+  const pickAgent = (a) => {
+    setAgent(a);
+    if (a && model && !modelsFor(a, extras).includes(model)) setModel("");
+  };
+  const pickModel = (m, fam) => {
+    setModel(m);
+    if (m && fam && fam !== (agent || "claude")) setAgent(fam);
+  };
   if (!open) {
     return html`<button style="margin-bottom:10px" onClick=${() => setOpen(true)}
       title="Add a new agent that works in parallel on its own git worktree/branch">+ agent</button>`;
@@ -354,13 +395,10 @@ function AddPipelineForm({ onAdd }) {
   };
   return html`<div class="card bundle-editor" style="margin-bottom:10px">
     <input placeholder="name" value=${name} onInput=${(e) => setName(e.target.value)} style="width:8rem" />
-    <select value=${agent} onChange=${(e) => setAgent(e.target.value)} title="agent ('' = claude)">
+    <select value=${agent} onChange=${(e) => pickAgent(e.target.value)} title="agent ('' = claude)">
       ${AGENTS.map((a) => html`<option value=${a}>${a || "agent (claude)"}</option>`)}
     </select>
-    <input list="add-pipeline-models" placeholder="model (agent default)" value=${model} onInput=${(e) => setModel(e.target.value)} />
-    ${models.length > 0 && html`<datalist id="add-pipeline-models">
-      ${models.map((m) => html`<option value=${m} />`)}
-    </datalist>`}
+    <${ModelSelect} agent=${agent} extras=${extras} value=${model} onChange=${pickModel} />
     <select value=${effort} onChange=${(e) => setEffort(e.target.value)} title="effort ('' = default)">
       ${EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
     </select>
@@ -370,7 +408,7 @@ function AddPipelineForm({ onAdd }) {
   </div>`;
 }
 
-function PipelineCard({ p, log, onDesired, onBundle, onMode, onDelete }) {
+function PipelineCard({ p, log, extras, onDesired, onBundle, onMode, onDelete }) {
   const [editBundle, setEditBundle] = useState(false);
   const running = !!p.running;
   const stopped = p.halted === "operator";
@@ -406,7 +444,7 @@ function PipelineCard({ p, log, onDesired, onBundle, onMode, onDelete }) {
       ${p.name.toLowerCase() !== "main" && html`<button class="danger" onClick=${() => onDelete(p.name)}
         title="Remove this agent lane from the config — takes effect on the next \`workshop up\`/\`run\`, not live">remove</button>`}
     </div>
-    ${editBundle && html`<${BundleEditor} p=${p}
+    ${editBundle && html`<${BundleEditor} p=${p} extras=${extras}
       onApply=${async (b) => { await onBundle(p.name, b); setEditBundle(false); }}
       onClear=${async () => { await onBundle(p.name, {}); setEditBundle(false); }}
       onClose=${() => setEditBundle(false)} />`}
@@ -558,6 +596,9 @@ function App() {
   const [logs, setLogs] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [inquiries, setInquiries] = useState([]);
+  // extraModels: per-agent [agents.<agent>] extra_models from the config, so
+  // the model dropdowns list the user's own additions next to the curated ids.
+  const [extraModels, setExtraModels] = useState({});
   const [connected, setConnected] = useState(false);
   const [evaluatingGoal, setEvaluatingGoal] = useState(false);
   const refreshTimer = useRef(null);
@@ -584,6 +625,14 @@ function App() {
   useEffect(() => {
     refresh();
     api.goal().then((g) => setGoal(g.goal)).catch(() => {});
+    // Config is fetched once: extra_models only changes with a config edit,
+    // which means a server restart anyway.
+    api.config().then((c) => {
+      const agents = (c && c.effective && c.effective.Agents) || {};
+      const extras = {};
+      for (const [name, ac] of Object.entries(agents)) extras[name] = ac.ExtraModels || [];
+      setExtraModels(extras);
+    }).catch(() => {});
     const poll = setInterval(refresh, 7000);
     const close = subscribe({
       onOpen: () => { setConnected(true); scheduleRefresh(); },
@@ -674,8 +723,8 @@ function App() {
         <${Completions} completions=${status?.completions} />
       </div>
       <div>
-        <${AddPipelineForm} onAdd=${(p) => act(() => api.addPipeline(p))} />
-        ${pipelines.map((p) => html`<${PipelineCard} key=${p.name} p=${p}
+        <${AddPipelineForm} extras=${extraModels} onAdd=${(p) => act(() => api.addPipeline(p))} />
+        ${pipelines.map((p) => html`<${PipelineCard} key=${p.name} p=${p} extras=${extraModels}
           log=${logs[p.name]} onDesired=${(name, desired) => act(() => api.setPipeline(name, desired))}
           onBundle=${(name, bundle) => act(() => api.setPipelineBundle(name, bundle))}
           onMode=${(name, mode) => act(() => api.setPipelineMode(name, mode))}
