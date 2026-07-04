@@ -76,6 +76,12 @@ func normPath(p string) string {
 	if err != nil {
 		abs = p
 	}
+	// Resolve symlinks so both sides land on the same physical path: on
+	// macOS t.TempDir()-style paths live under /var, but git reports the
+	// resolved /private/var, and the two must compare equal.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
 	norm := filepath.ToSlash(filepath.Clean(abs))
 	// Case-fold only where the filesystem does: on a case-sensitive fs,
 	// folding would match a DIFFERENT directory's worktree and adopt it.
