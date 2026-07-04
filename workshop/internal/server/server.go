@@ -493,13 +493,19 @@ func (s *Server) postPipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// AddPipeline only edits config — the running engine built its workers at
-	// startup and won't back this new lane until it relaunches, so the card
-	// would sit idle forever with no hint why. Warn the operator (dashboard
-	// alert) that a halt/restart is what actually activates it.
+	// startup and won't back this new lane until it relaunches. Trigger the
+	// same cancel+relaunch the halt button does (OnHalt): RunHeadless rebuilds
+	// workers from the now-current config, so the new lane comes alive on its
+	// own. It relaunches PARKED (operator-halted, like any halt), so the new
+	// lane doesn't silently start running — the operator resumes it to work.
+	// The event tells the dashboard why the engine just blinked.
 	s.App.Bus.Publish(r.Context(), domain.Event{
 		Type:     "pipeline.needs_restart",
 		Pipeline: strings.ToLower(strings.TrimSpace(*body.Name)),
 	})
+	if s.OnHalt != nil {
+		go s.OnHalt()
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 )
@@ -79,6 +80,35 @@ func TestPostPipelineWarnsNeedsRestart(t *testing.T) {
 	}
 	if drainHasEvent(events, "pipeline.needs_restart") {
 		t.Fatal("a rejected add must not publish pipeline.needs_restart")
+	}
+}
+
+// TestPostPipelineRelaunchesEngine pins the auto-activation contract: a
+// successful add fires OnHalt (the same cancel+relaunch the halt button uses)
+// so RunHeadless rebuilds workers from current config and the new lane comes
+// alive without a manual restart. A rejected add must not touch the engine.
+func TestPostPipelineRelaunchesEngine(t *testing.T) {
+	s := newTestServerForPipelines(t)
+	halted := make(chan struct{}, 1)
+	s.OnHalt = func() { halted <- struct{}{} }
+
+	if rec := doPipelineReq(t, s, "POST", "/api/v1/pipelines", s.token, `{"name":"art"}`); rec.Code != 200 {
+		t.Fatalf("add: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-halted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a successful add did not relaunch the engine (OnHalt never fired)")
+	}
+
+	// A rejected add mutates nothing, so it must not relaunch the engine.
+	if rec := doPipelineReq(t, s, "POST", "/api/v1/pipelines", s.token, `{"name":"bad name!"}`); rec.Code != 400 {
+		t.Fatalf("bad name: got %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-halted:
+		t.Fatal("a rejected add must not relaunch the engine")
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 

@@ -76,7 +76,7 @@ function describeEvent(ev) {
     case "driver.model_unknown": return `model "${p.model}" may be wrong for agent ${p.agent} — off its known families`;
     case "pipeline.bundle": return p.cleared ? "model override cleared"
       : `model override → ${[p.agent, p.model, p.effort].filter(Boolean).join(":")}`;
-    case "pipeline.needs_restart": return `added — the engine won't run this lane until it relaunches; press stop (halt), then resume to activate it`;
+    case "pipeline.needs_restart": return `added — relaunching the engine to activate this lane; it comes up parked, so resume it to start running`;
     case "integration.merge_failed": return `merge failed (will retry): ${p.error || ""}`.slice(0, 140);
     case "inquiry.asked": return `asked: ${p.question || ""}`;
     case "inquiry.answered": return p.ok ? "inquiry answered" : "inquiry FAILED";
