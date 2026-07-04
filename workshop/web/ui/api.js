@@ -19,7 +19,9 @@ export function token() {
 async function req(method, path, body) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (method !== "GET") headers["X-Workshop-Token"] = token();
+  // Reads are token-gated too (repo intelligence lives behind them), so send
+  // the token on every request, not just mutations.
+  headers["X-Workshop-Token"] = token();
   const resp = await fetch(path, {
     method,
     headers,
@@ -76,9 +78,17 @@ export const api = {
   pauseAfter: () => req("POST", "/api/v1/server/pause-after", {}),
 };
 
+// attachmentURL builds the token-carrying URL for an attachment thumbnail. An
+// <img> can't set a header, so the read guard accepts the token as a query
+// parameter for this route (and the SSE route) only.
+export function attachmentURL(name) {
+  return `/api/v1/attachments/${encodeURIComponent(name)}?token=${encodeURIComponent(token())}`;
+}
+
 // subscribe wires the SSE stream; handlers: { onEvent(ev), onLog(ev), onOpen, onDown }.
 export function subscribe(handlers) {
-  const es = new EventSource("/api/v1/events");
+  // EventSource can't set headers, so the token rides a query parameter here.
+  const es = new EventSource("/api/v1/events?token=" + encodeURIComponent(token()));
   es.onopen = () => handlers.onOpen && handlers.onOpen();
   es.onerror = () => handlers.onDown && handlers.onDown();
   // The server names every SSE event by its type; a catch-all via

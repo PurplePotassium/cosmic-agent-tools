@@ -19,6 +19,47 @@ const positionStep = 1024.0
 
 type rowScanner interface{ Scan(dest ...any) error }
 
+// dbtx is the slice of *sql.DB / *sql.Tx that the task queries need, so a
+// statement can run directly or inside a transaction unchanged.
+type dbtx interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// TaskTx is a task-store handle bound to an open transaction. Because the
+// store shares ONE connection, an open transaction serializes every other
+// store access — so a read-modify-write run inside WithTx (dedupe-then-insert,
+// in backlog ingest) is atomic against concurrent writers, with no TOCTOU gap.
+type TaskTx struct{ tx *sql.Tx }
+
+// ListTasks lists within the transaction (see Store.ListTasks).
+func (t *TaskTx) ListTasks(ctx context.Context, f TaskFilter) ([]*domain.Task, error) {
+	return listTasks(ctx, t.tx, f)
+}
+
+// AddTask inserts within the transaction (see Store.AddTask).
+func (t *TaskTx) AddTask(ctx context.Context, task *domain.Task, top bool) (*domain.Task, error) {
+	return insertTask(ctx, t.tx, task, top)
+}
+
+// WithTx runs fn inside a transaction, committing on a nil error and rolling
+// back otherwise. fn must do ALL its store access through the TaskTx: the
+// transaction holds the store's only connection (SetMaxOpenConns(1)), so a
+// plain Store method called inside fn blocks on the pool forever — a
+// deadlock, not an error.
+func (s *Store) WithTx(ctx context.Context, fn func(context.Context, *TaskTx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(ctx, &TaskTx{tx: tx}); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func scanTask(r rowScanner) (*domain.Task, error) {
 	var t domain.Task
 	var files, meta string
@@ -49,6 +90,10 @@ func scanTask(r rowScanner) (*domain.Task, error) {
 // AddTask inserts a task. Empty ID gets a fresh one; zero Created gets now.
 // top=true places it before everything else in its backlog.
 func (s *Store) AddTask(ctx context.Context, t *domain.Task, top bool) (*domain.Task, error) {
+	return insertTask(ctx, s.db, t, top)
+}
+
+func insertTask(ctx context.Context, q dbtx, t *domain.Task, top bool) (*domain.Task, error) {
 	if t.ID == "" {
 		t.ID = NewID()
 	}
@@ -79,7 +124,7 @@ func (s *Store) AddTask(ctx context.Context, t *domain.Task, top bool) (*domain.
 	if top {
 		edge, sign = "MIN", "-"
 	}
-	err := s.db.QueryRowContext(ctx, `INSERT INTO tasks (`+taskCols+`)
+	err := q.QueryRowContext(ctx, `INSERT INTO tasks (`+taskCols+`)
 		VALUES (?,?,?,?,?,?,?,?,?,
 			(SELECT COALESCE(`+edge+`(position) `+sign+` ?, ?) FROM tasks
 			 WHERE backlog = ? AND status IN ('open','claimed')),
@@ -114,6 +159,10 @@ type TaskFilter struct {
 
 // ListTasks returns tasks ordered by backlog, then position.
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]*domain.Task, error) {
+	return listTasks(ctx, s.db, f)
+}
+
+func listTasks(ctx context.Context, db dbtx, f TaskFilter) ([]*domain.Task, error) {
 	q := `SELECT ` + taskCols + ` FROM tasks`
 	var conds []string
 	var args []any
@@ -133,7 +182,7 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]*domain.Task, er
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
 	q += " ORDER BY backlog, position, created"
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -295,21 +344,20 @@ func (s *Store) UpdateTask(ctx context.Context, id string, p TaskPatch) (*domain
 	return t, err
 }
 
-// MoveTask reassigns a task to another backlog, placing it last there.
+// MoveTask reassigns a task to another backlog, placing it last there. The
+// new position is computed INSIDE the UPDATE (a scalar subquery, exactly the
+// shape AddTask uses): a read-then-write races the engine, dashboard, and CLI
+// and can compute a stale edge, silently breaking the operator's "move" intent.
+// The subquery excludes this task itself so its current position never skews
+// the max (e.g. a move-to-bottom within the same backlog).
 func (s *Store) MoveTask(ctx context.Context, id, backlog string) (*domain.Task, error) {
-	var cur sql.NullFloat64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(position) FROM tasks WHERE backlog = ? AND status IN ('open','claimed')`,
-		backlog).Scan(&cur); err != nil {
-		return nil, err
-	}
-	pos := positionStep
-	if cur.Valid {
-		pos = cur.Float64 + positionStep
-	}
 	t, err := scanTask(s.db.QueryRowContext(ctx,
-		`UPDATE tasks SET backlog = ?, position = ?, updated = ? WHERE id = ? RETURNING `+taskCols,
-		backlog, pos, toMillis(time.Now().UTC()), id))
+		`UPDATE tasks SET backlog = ?,
+			position = (SELECT COALESCE(MAX(position) + ?, ?) FROM tasks
+				WHERE backlog = ? AND status IN ('open','claimed') AND id != ?),
+			updated = ?
+		 WHERE id = ? RETURNING `+taskCols,
+		backlog, positionStep, positionStep, backlog, id, toMillis(time.Now().UTC()), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -344,7 +392,7 @@ func (s *Store) ReorderBacklog(ctx context.Context, backlog string, ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			rows.Close() //nolint:sqlclosecheck // must close before the follow-up UPDATEs reuse the single conn — defer would deadlock
 			return err
 		}
 		rest = append(rest, id)

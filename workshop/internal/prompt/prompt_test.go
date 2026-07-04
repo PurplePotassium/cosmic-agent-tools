@@ -4,9 +4,26 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
+
+// A non-ASCII pool entry must not be byte-sliced mid-rune: the recode stem has
+// to stay valid UTF-8 (byte-slicing "Éclair" split the leading two-byte rune).
+func TestSpiceRecodeNonASCII(t *testing.T) {
+	nouns := []string{"Éclair", "Ångström", "Über"}
+	for seed := int64(0); seed < 200; seed++ {
+		rng := rand.New(rand.NewSource(seed))
+		s := NewSpice(rng, nil, nouns)
+		if !strings.HasPrefix(s.Mode, "recode:") {
+			t.Fatalf("nouns-only should recode, got %q", s.Mode)
+		}
+		if !utf8.ValidString(s.Mode) || !utf8.ValidString(s.Suffix) {
+			t.Fatalf("recode produced invalid UTF-8: mode=%q suffix=%q", s.Mode, s.Suffix)
+		}
+	}
+}
 
 func stableInputs() Inputs {
 	return Inputs{

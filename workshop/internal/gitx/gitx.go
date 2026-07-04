@@ -315,7 +315,7 @@ func CleanStaleLock(ctx context.Context, dir string, maxAge time.Duration) (bool
 	lock := filepath.Join(gd, "index.lock")
 	info, err := os.Stat(lock)
 	if err != nil {
-		return false, nil // no lock — nothing to do
+		return false, nil //nolint:nilerr // no lock file (the common case) — nothing to do
 	}
 	if time.Since(info.ModTime()) < maxAge {
 		return false, nil

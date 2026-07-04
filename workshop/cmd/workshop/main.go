@@ -166,7 +166,7 @@ func cmdUp(args []string) int {
 	// A second `workshop up` in the same repo just surfaces the running one.
 	if si, err := server.ReadInfo(a.StateDir); err == nil {
 		url := fmt.Sprintf("http://127.0.0.1:%d/", si.Port)
-		if pingServer(si.Port) {
+		if pingServer(si.Port, si.Token) {
 			fmt.Printf("workshop already running for this repo (pid %d) — %s\n", si.PID, url)
 			if !*noOpen && a.Res().Config.Server.OpenBrowser {
 				openBrowser(url + "#token=" + si.Token)
@@ -262,7 +262,7 @@ func cmdStatus(args []string) int {
 		return 1
 	}
 	serverUp := false
-	if si, err := server.ReadInfo(a.StateDir); err == nil && pingServer(si.Port) {
+	if si, err := server.ReadInfo(a.StateDir); err == nil && pingServer(si.Port, si.Token) {
 		serverUp = true
 	}
 
@@ -376,9 +376,16 @@ func cmdPath(args []string) int {
 	return 0
 }
 
-func pingServer(port int) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v1/status", port))
+func pingServer(port int, token string) bool {
+	req, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/api/v1/status", port), nil)
+	if err != nil {
+		return false
+	}
+	// /status is a token-gated read now, so the liveness probe must
+	// authenticate — the caller has the running instance's token from
+	// server.json.
+	req.Header.Set("X-Workshop-Token", token)
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
 	if err != nil {
 		return false
 	}

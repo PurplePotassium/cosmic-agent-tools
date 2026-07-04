@@ -147,7 +147,9 @@ func TestGetAttachmentServesSavedFile(t *testing.T) {
 	}
 	name := filepath.Base(resp.Path)
 
-	getReq := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/"+name, nil)
+	// <img> can't set a header, so the attachment route accepts the token as a
+	// query parameter.
+	getReq := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/"+name+"?token="+s.token, nil)
 	getReq.RemoteAddr = "127.0.0.1:5555"
 	getRec := httptest.NewRecorder()
 	s.handler().ServeHTTP(getRec, getReq)
@@ -164,12 +166,56 @@ func TestGetAttachmentServesSavedFile(t *testing.T) {
 
 func TestGetAttachmentUnknownNameNotFound(t *testing.T) {
 	s, _ := newTestServer(t)
-	req := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/nope.png", nil)
+	req := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/nope.png?token="+s.token, nil)
 	req.RemoteAddr = "127.0.0.1:5555"
 	rec := httptest.NewRecorder()
 	s.handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("got %d, want 404", rec.Code)
+	}
+}
+
+// Read routes leak repo intelligence, so they're token-gated like mutations:
+// no token → 403, header token → 200, and (for the SSE/img routes that can't
+// set a header) a ?token= query parameter → 200.
+func TestReadRoutesRequireToken(t *testing.T) {
+	s, _ := newTestServer(t)
+	do := func(url string, hdr bool) int {
+		req := httptest.NewRequest("GET", url, nil)
+		req.RemoteAddr = "127.0.0.1:5555"
+		if hdr {
+			req.Header.Set("X-Workshop-Token", s.token)
+		}
+		rec := httptest.NewRecorder()
+		s.handler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := do("http://127.0.0.1/api/v1/tasks", false); code != http.StatusForbidden {
+		t.Fatalf("GET /tasks without token: got %d, want 403", code)
+	}
+	if code := do("http://127.0.0.1/api/v1/tasks", true); code != http.StatusOK {
+		t.Fatalf("GET /tasks with header token: got %d, want 200", code)
+	}
+	if code := do("http://127.0.0.1/api/v1/tasks?token="+s.token, false); code != http.StatusOK {
+		t.Fatalf("GET /tasks with query token: got %d, want 200", code)
+	}
+	// The static SPA shell stays ungated — the browser can't send the
+	// fragment token on the initial navigation.
+	if code := do("http://127.0.0.1/", false); code != http.StatusOK {
+		t.Fatalf("GET / (SPA) without token: got %d, want 200", code)
+	}
+}
+
+// authorizedRead accepts a query-param token (SSE/img); authorized (writes)
+// still does not.
+func TestAuthorizedReadAcceptsQueryToken(t *testing.T) {
+	s := &Server{token: "sekrit"}
+	q := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/events?token=sekrit", nil)
+	if !s.authorizedRead(q) {
+		t.Error("read route must accept a query-param token")
+	}
+	if s.authorized(q) {
+		t.Error("write auth must still reject a query-param token")
 	}
 }
 

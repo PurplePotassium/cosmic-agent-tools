@@ -444,9 +444,24 @@ func (r *queueRig) conflictWorker(t *testing.T, behavior string) *Worker {
 
 func (r *queueRig) clearBackoff(t *testing.T, id string) {
 	t.Helper()
-	// FailTask sets not_before; tests shrink it via a tiny RetryBackoff,
-	// so a short sleep suffices.
-	time.Sleep(5 * time.Millisecond)
+	// FailTask parks the task with not_before = now + RetryBackoff (1ms in the
+	// rig). Poll the task's not_before instant rather than sleeping a fixed
+	// guess against production timing: this waits exactly until the task is
+	// claimable and asserts on state, so it can't flake on a loaded runner.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		task, err := r.st.GetTask(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !task.NotBefore.After(time.Now()) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s still backed off (not_before=%v) after 2s", id, task.NotBefore)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // TestGreenRefTracksGatedTrunk pins the D1 fix: workers sync lanes from

@@ -1,7 +1,7 @@
 import { h, render } from "preact";
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import htm from "htm";
-import { api, subscribe } from "/api.js";
+import { api, subscribe, attachmentURL } from "/api.js";
 
 const html = htm.bind(h);
 const SHARED = "shared";
@@ -249,7 +249,7 @@ function TaskRow({ task, pipelines, onTop, onMove, onDelete }) {
   return html`<div class="task-row">
     <span class="title" title=${task.detail || task.title}>${task.title}</span>
     ${thumbs.map((a, i) => html`<span class="attachment-chip thumb" key=${i}>
-      <img src=${`/api/v1/attachments/${encodeURIComponent(a.name)}`} alt=${a.alt} />
+      <img src=${attachmentURL(a.name)} alt=${a.alt} />
     </span>`)}
     ${task.type && html`<span class="chip type">${task.type}</span>`}
     ${pinLabel && html`<span class="chip pin" title="pinned bundle">${pinLabel}</span>`}

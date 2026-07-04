@@ -127,20 +127,26 @@ func killTree(pid int) error {
 	return nil
 }
 
-const (
-	processQueryLimitedInformation = 0x1000
-	stillActive                    = 259 // STILL_ACTIVE exit-code sentinel
-)
-
 func alive(pid int) bool {
-	h, err := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(pid))
+	// SYNCHRONIZE is needed to wait on the handle; QUERY_LIMITED_INFORMATION
+	// keeps the open permissive enough for processes we spawned. SYNCHRONIZE
+	// narrows who we can open: a PID reused by another user's (or a
+	// protected) process fails the open and reads as dead. Every caller
+	// probes a process this user spawned, so a foreign holder of the PID
+	// means the original is gone — dead is the correct answer.
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(pid))
 	if err != nil {
 		return false
 	}
-	defer syscall.CloseHandle(h)
-	var code uint32
-	if err := syscall.GetExitCodeProcess(h, &code); err != nil {
+	defer windows.CloseHandle(h)
+	// Wait with a 0 timeout instead of trusting GetExitCodeProcess: a running
+	// process's handle is unsignaled (WAIT_TIMEOUT); a process that has EXITED
+	// signals its handle (WAIT_OBJECT_0) — even one that genuinely exited with
+	// code 259, which crashed .NET/test hosts do and which the old exit-code
+	// check mistook for STILL_ACTIVE, reporting a dead process alive forever.
+	s, err := windows.WaitForSingleObject(h, 0)
+	if err != nil {
 		return false
 	}
-	return code == stillActive
+	return s == uint32(windows.WAIT_TIMEOUT)
 }

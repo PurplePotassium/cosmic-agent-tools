@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Fake is the test/smoke driver. It execs whatever WORKSHOP_FAKE_BIN points
@@ -17,9 +18,28 @@ func NewFake() *Fake { return &Fake{} }
 
 func (f *Fake) Name() string { return "fake" }
 
+// fakeBin resolves WORKSHOP_FAKE_BIN with the same absolutize+stat guard
+// findClaude applies to WORKSHOP_CLAUDE_BIN: a relative override would resolve
+// against the agent's worktree cwd, so a file a previous pass committed at that
+// path could be executed as the driver binary.
+func fakeBin() (string, error) {
+	v := os.Getenv("WORKSHOP_FAKE_BIN")
+	if v == "" {
+		return "", fmt.Errorf("driver: fake agent needs WORKSHOP_FAKE_BIN")
+	}
+	abs, err := filepath.Abs(v)
+	if err != nil {
+		return "", fmt.Errorf("driver: WORKSHOP_FAKE_BIN %q: %w", v, err)
+	}
+	if info, err := os.Stat(abs); err != nil || info.IsDir() {
+		return "", fmt.Errorf("driver: WORKSHOP_FAKE_BIN %q is not an executable file", v)
+	}
+	return abs, nil
+}
+
 func (f *Fake) Probe(context.Context) (Capabilities, error) {
-	if os.Getenv("WORKSHOP_FAKE_BIN") == "" {
-		return Capabilities{}, fmt.Errorf("driver: fake agent needs WORKSHOP_FAKE_BIN")
+	if _, err := fakeBin(); err != nil {
+		return Capabilities{}, err
 	}
 	if os.Getenv("WORKSHOP_FAKE_BLIND") == "1" {
 		// Simulate a blind driver (agy-shaped) for engine tests.
@@ -39,9 +59,9 @@ func (f *Fake) Probe(context.Context) (Capabilities, error) {
 }
 
 func (f *Fake) Plan(spec InvokeSpec) (ExecPlan, error) {
-	exe := os.Getenv("WORKSHOP_FAKE_BIN")
-	if exe == "" {
-		return ExecPlan{}, fmt.Errorf("driver: fake agent needs WORKSHOP_FAKE_BIN")
+	exe, err := fakeBin()
+	if err != nil {
+		return ExecPlan{}, err
 	}
 	caps, _ := f.Probe(context.Background())
 	args := append([]string{"_fake-agent"}, spec.ExtraArgs...)

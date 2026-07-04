@@ -38,10 +38,13 @@ func TestServerHaltRequiresToken(t *testing.T) {
 	if rec.Code != 403 {
 		t.Fatalf("unauthorized halt: got %d, want 403", rec.Code)
 	}
+	// ServeHTTP has already returned: the token guard rejects with 403 before
+	// the handler body ever spawns `go OnHalt()`, so a non-blocking check is
+	// deterministic — nothing is in flight that could still fire OnHalt.
 	select {
 	case <-halted:
 		t.Fatal("OnHalt must not fire without a valid token")
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 
 	req = httptest.NewRequest("POST", "http://127.0.0.1/api/v1/server/halt", nil)

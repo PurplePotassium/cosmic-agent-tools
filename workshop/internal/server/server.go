@@ -121,38 +121,53 @@ func (s *Server) Shutdown(ctx context.Context) {
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// --- read routes ---
-	mux.HandleFunc("GET /api/v1/status", s.getStatus)
-	mux.HandleFunc("GET /api/v1/config", func(w http.ResponseWriter, r *http.Request) {
+	// Reads are token-gated too: they expose the same repo intelligence (pass
+	// logs, GOAL, prompts, pasted screenshots) the mutating routes protect, so
+	// on a shared machine another OS user's loopback process must not read them
+	// without the token. guardRead also accepts a ?token= query param for the
+	// browser GETs that can't set a header (SSE EventSource, <img> thumbnails).
+	guardRead := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !s.authorizedRead(r) {
+				httpErr(w, fmt.Errorf("bad or missing token"), http.StatusForbidden)
+				return
+			}
+			h(w, r)
+		}
+	}
+
+	// --- read routes (token-gated) ---
+	mux.HandleFunc("GET /api/v1/status", guardRead(s.getStatus))
+	mux.HandleFunc("GET /api/v1/config", guardRead(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.App.ConfigSnapshot())
-	})
-	mux.HandleFunc("GET /api/v1/goal", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("GET /api/v1/goal", guardRead(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"goal": s.App.Goal()})
-	})
-	mux.HandleFunc("GET /api/v1/prompts/{frag...}", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("GET /api/v1/prompts/{frag...}", guardRead(func(w http.ResponseWriter, r *http.Request) {
 		body, err := s.App.Fragment(r.PathValue("frag"))
 		if err != nil {
 			httpErr(w, err, http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, map[string]string{"content": body})
-	})
-	mux.HandleFunc("GET /api/v1/tasks", s.getTasks)
-	mux.HandleFunc("GET /api/v1/queue", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("GET /api/v1/tasks", guardRead(s.getTasks))
+	mux.HandleFunc("GET /api/v1/queue", guardRead(func(w http.ResponseWriter, r *http.Request) {
 		lanes, err := s.App.QueueState(r.Context())
 		if err != nil {
 			httpErr(w, err, http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, lanes)
-	})
-	mux.HandleFunc("GET /api/v1/runs", s.getRuns)
-	mux.HandleFunc("GET /api/v1/runs/{id}/log", s.getRunLog)
-	mux.HandleFunc("GET /api/v1/events", s.getEvents) // SSE
-	mux.HandleFunc("GET /api/v1/attachments/{name}", s.getAttachment)
-	mux.HandleFunc("GET /api/v1/inquiries", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("GET /api/v1/runs", guardRead(s.getRuns))
+	mux.HandleFunc("GET /api/v1/runs/{id}/log", guardRead(s.getRunLog))
+	mux.HandleFunc("GET /api/v1/events", guardRead(s.getEvents)) // SSE
+	mux.HandleFunc("GET /api/v1/attachments/{name}", guardRead(s.getAttachment))
+	mux.HandleFunc("GET /api/v1/inquiries", guardRead(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.App.Inquiries())
-	})
+	}))
 
 	// --- mutating routes (token-gated) ---
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -573,13 +588,28 @@ func (s *Server) resolveBacklog(name string) (string, error) {
 	return "", fmt.Errorf("no pipeline named %q", name)
 }
 
-// authorized accepts the session token from the header only. It is
-// deliberately NOT read from a query parameter: URLs leak (history, logs,
-// Referer), and the dashboard already carries the token via the URL fragment
-// into sessionStorage, so a query channel buys nothing.
+// authorized accepts the session token from the header only. Mutating routes
+// use this: URLs leak (history, logs, Referer), and the dashboard carries the
+// token via the URL fragment into sessionStorage and sends it as a header on
+// every fetch, so a query channel buys nothing for writes.
 func (s *Server) authorized(r *http.Request) bool {
-	got := r.Header.Get("X-Workshop-Token")
-	return subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
+	return tokenEqual(r.Header.Get("X-Workshop-Token"), s.token)
+}
+
+// authorizedRead is authorized plus a ?token= query-parameter fallback, for
+// the two browser-driven GETs that can't set a header: the SSE EventSource and
+// the <img>-loaded attachment thumbnails. The token still isn't in any
+// navigable URL (it rides an EventSource/img request, never the address bar),
+// so it doesn't leak through history the way a page URL would.
+func (s *Server) authorizedRead(r *http.Request) bool {
+	if s.authorized(r) {
+		return true
+	}
+	return tokenEqual(r.URL.Query().Get("token"), s.token)
+}
+
+func tokenEqual(got, want string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // serveUI serves the embedded dashboard with history fallback.

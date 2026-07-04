@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
@@ -164,6 +166,7 @@ func taskAdd(args []string) int {
 		return 2
 	}
 	task := &domain.Task{Backlog: backlog, Type: strings.ToLower(*typ), Title: title, Detail: *detail}
+	warnUnknownType(a, task.Type)
 	if *pin != "" {
 		if task.Pin, err = parsePin(*pin); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -267,12 +270,53 @@ func taskTag(args []string) int {
 	if typ == "-" {
 		typ = ""
 	}
-	return patchTask(*repo, id, store.TaskPatch{Type: &typ}, func(t *domain.Task) string {
-		if t.Type == "" {
-			return "cleared type of " + t.ID + " (will be re-classified)"
-		}
-		return "tagged " + t.ID + " as " + t.Type
-	})
+	ctx, cancel := interruptCtx()
+	defer cancel()
+	a, err := openApp(ctx, *repo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	defer a.Close()
+	warnUnknownType(a, typ)
+	t, err := a.Store.UpdateTask(ctx, id, store.TaskPatch{Type: &typ})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	if t.Type == "" {
+		fmt.Println("cleared type of " + t.ID + " (will be re-classified)")
+	} else {
+		fmt.Println("tagged " + t.ID + " as " + t.Type)
+	}
+	return 0
+}
+
+// warnUnknownType prints an advisory (never blocking) when typ is outside the
+// project's type vocabulary: a task tagged with a type no pipeline filters on
+// sits in the backlog undrained. Empty type means "auto-classify" — always ok.
+func warnUnknownType(a *app.App, typ string) {
+	warnUnknownTypeTo(os.Stderr, a.Res().Config.Types, typ)
+}
+
+// warnUnknownTypeTo is the testable core of warnUnknownType: it takes the
+// vocabulary and sink explicitly so the CLI warning can be asserted without
+// standing up an App.
+func warnUnknownTypeTo(w io.Writer, types map[string]domain.Bundle, typ string) {
+	if typ == "" {
+		return
+	}
+	if _, ok := types[typ]; ok {
+		return
+	}
+	known := make([]string, 0, len(types))
+	for t := range types {
+		known = append(known, t)
+	}
+	sort.Strings(known)
+	fmt.Fprintf(w,
+		"warning: type %q is not a known type (%s) — no type-filtered pipeline will claim it\n",
+		typ, strings.Join(known, ", "))
 }
 
 func taskPin(args []string) int {

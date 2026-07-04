@@ -98,7 +98,7 @@ func cmdDoctor(args []string) int {
 
 	// Port / server state.
 	if si, err := server.ReadInfo(a.StateDir); err == nil {
-		if pingServer(si.Port) {
+		if pingServer(si.Port, si.Token) {
 			add("server", "PASS", fmt.Sprintf("running (pid %d, port %d)", si.PID, si.Port), "")
 		} else {
 			add("server", "WARN", "stale server.json (server not responding)", "workshop stop clears it")

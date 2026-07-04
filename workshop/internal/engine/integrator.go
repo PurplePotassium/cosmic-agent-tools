@@ -317,11 +317,11 @@ func (ig *Integrator) reconcileTrunk(ctx context.Context) error {
 	repo := ig.cfg.RepoDir
 	green, err := gitx.RevParse(ctx, repo, GreenRef)
 	if err != nil {
-		return nil // no green ref yet: nothing to reconcile against
+		return nil //nolint:nilerr // no green ref yet: nothing to reconcile against
 	}
 	head, err := gitx.RevParse(ctx, repo, "HEAD")
 	if err != nil || head == green {
-		return nil
+		return nil //nolint:nilerr // unparseable/empty HEAD: nothing to reconcile
 	}
 	mergePrefix := "Merge branch '" + ig.cfg.BranchPrefix
 	target := head

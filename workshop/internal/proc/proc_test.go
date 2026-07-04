@@ -16,6 +16,10 @@ func TestMain(m *testing.M) {
 	case "sleeper":
 		time.Sleep(60 * time.Second)
 		os.Exit(0)
+	case "exit259":
+		// Exit with the STILL_ACTIVE sentinel a healthy GetExitCodeProcess
+		// would return for a running process — crashed .NET/test hosts do.
+		os.Exit(259)
 	case "spawner":
 		child := exec.Command(os.Args[0])
 		child.Env = append(os.Environ(), "PROC_TEST_ROLE=sleeper")

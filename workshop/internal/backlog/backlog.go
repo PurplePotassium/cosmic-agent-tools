@@ -41,46 +41,57 @@ func (s *Service) Ingest(ctx context.Context, from string, proposals []domain.Pr
 	if len(proposals) == 0 {
 		return nil, nil
 	}
-	existing, err := s.Snapshot(ctx)
+	// The snapshot and the inserts run in ONE transaction: the store shares a
+	// single connection, so an open transaction serializes concurrent ingests.
+	// Without it, two workers finishing passes at once could both snapshot the
+	// backlog before either inserts and admit the same-titled proposal twice.
+	var added []*domain.Task
+	err := s.st.WithTx(ctx, func(ctx context.Context, tx *store.TaskTx) error {
+		existing, err := tx.ListTasks(ctx, store.TaskFilter{
+			Statuses: []domain.TaskStatus{domain.TaskOpen, domain.TaskClaimed},
+		})
+		if err != nil {
+			return err
+		}
+		seen := map[string]bool{}
+		for _, t := range existing {
+			seen[normTitle(t.Title)] = true
+		}
+		for _, p := range proposals {
+			if len(added) >= maxAccept {
+				break
+			}
+			key := normTitle(p.Title)
+			if key == "" || seen[key] {
+				continue
+			}
+			backlog := domain.MainBacklog
+			if p.Backlog != "" && p.Backlog != statedirSharedLabel {
+				if knownPipelines[p.Backlog] {
+					backlog = p.Backlog
+				}
+				// Unknown pipeline names fall back to the shared backlog
+				// rather than dropping the idea.
+			}
+			task, err := tx.AddTask(ctx, &domain.Task{
+				Backlog: backlog,
+				Type:    p.Type,
+				Title:   strings.TrimSpace(p.Title),
+				Detail:  p.Detail,
+				Files:   p.Files,
+				Origin:  domain.OriginAgent,
+				Meta:    map[string]string{"proposedBy": from},
+			}, false)
+			if err != nil {
+				return err
+			}
+			seen[key] = true
+			added = append(added, task)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	seen := map[string]bool{}
-	for _, t := range existing {
-		seen[normTitle(t.Title)] = true
-	}
-
-	var added []*domain.Task
-	for _, p := range proposals {
-		if len(added) >= maxAccept {
-			break
-		}
-		key := normTitle(p.Title)
-		if key == "" || seen[key] {
-			continue
-		}
-		backlog := domain.MainBacklog
-		if p.Backlog != "" && p.Backlog != statedirSharedLabel {
-			if knownPipelines[p.Backlog] {
-				backlog = p.Backlog
-			}
-			// Unknown pipeline names fall back to the shared backlog
-			// rather than dropping the idea.
-		}
-		task, err := s.st.AddTask(ctx, &domain.Task{
-			Backlog: backlog,
-			Type:    p.Type,
-			Title:   strings.TrimSpace(p.Title),
-			Detail:  p.Detail,
-			Files:   p.Files,
-			Origin:  domain.OriginAgent,
-			Meta:    map[string]string{"proposedBy": from},
-		}, false)
-		if err != nil {
-			return added, err
-		}
-		seen[key] = true
-		added = append(added, task)
 	}
 	return added, nil
 }

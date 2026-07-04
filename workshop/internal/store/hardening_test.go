@@ -73,6 +73,58 @@ func TestConcurrentAddTaskPositionsAreDistinct(t *testing.T) {
 	}
 }
 
+// MoveTask computes its new edge position inside the UPDATE; concurrent moves
+// into one backlog (racing adds) must never collide on a position — the old
+// SELECT-MAX-then-UPDATE could read the same stale edge from two goroutines.
+func TestConcurrentMoveTaskPositionsAreDistinct(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	const n = 12
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		task, err := st.AddTask(ctx, &domain.Task{Backlog: "code", Title: "seed"}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = task.ID
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(2)
+		go func(id string) {
+			defer wg.Done()
+			if _, err := st.MoveTask(ctx, id, domain.MainBacklog); err != nil {
+				t.Errorf("move: %v", err)
+			}
+		}(ids[i])
+		go func() {
+			defer wg.Done()
+			if _, err := st.AddTask(ctx, &domain.Task{Title: "add"}, false); err != nil {
+				t.Errorf("add: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	main := domain.MainBacklog
+	tasks, err := st.ListTasks(ctx, TaskFilter{Backlog: &main})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2*n {
+		t.Fatalf("shared backlog has %d tasks, want %d", len(tasks), 2*n)
+	}
+	seen := map[float64]bool{}
+	for _, task := range tasks {
+		if seen[task.Position] {
+			t.Fatalf("duplicate position %v after concurrent moves", task.Position)
+		}
+		seen[task.Position] = true
+	}
+}
+
 // Completing a task twice (retried finalization) must record exactly one
 // completion row.
 func TestCompleteTaskIsIdempotent(t *testing.T) {

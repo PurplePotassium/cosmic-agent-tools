@@ -1,15 +1,18 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
@@ -324,7 +327,14 @@ func (a *App) ConfigSnapshot() ConfigView {
 	}
 }
 
-// PassLog returns the captured log of a pass (header-only for blind drivers).
+// maxPassLogTail caps how much of a pass log PassLog returns. Agent passes can
+// write multi-hundred-MB logs; slurping one whole on a single dashboard click
+// would balloon the process. The dashboard only renders the tail anyway, so a
+// large log is truncated to its last maxPassLogTail bytes.
+const maxPassLogTail = 2 << 20 // 2 MiB
+
+// PassLog returns the captured log of a pass (header-only for blind drivers),
+// capped to the last maxPassLogTail bytes so a giant log can't blow up memory.
 func (a *App) PassLog(ctx context.Context, id int64) (string, error) {
 	p, err := a.Store.GetPass(ctx, id)
 	if err != nil {
@@ -333,14 +343,43 @@ func (a *App) PassLog(ctx context.Context, id int64) (string, error) {
 	if p.LogPath == "" {
 		return "", nil
 	}
-	data, err := os.ReadFile(p.LogPath)
+	f, err := os.Open(p.LogPath)
 	if os.IsNotExist(err) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	return string(data), nil
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if info.Size() <= maxPassLogTail {
+		data, err := io.ReadAll(f)
+		return string(data), err
+	}
+	if _, err := f.Seek(info.Size()-maxPassLogTail, io.SeekStart); err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxPassLogTail))
+	if err != nil {
+		return "", err
+	}
+	// Drop the leading partial line so the tail starts on a clean line
+	// boundary — that also guarantees we never split a multi-byte UTF-8 rune.
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		data = data[i+1:]
+	} else {
+		// No newline in the whole tail (one giant line): the seek point can
+		// still land mid-rune, so drop leading continuation bytes (≤3).
+		for len(data) > 0 && !utf8.RuneStart(data[0]) {
+			data = data[1:]
+		}
+	}
+	banner := fmt.Sprintf("… log truncated — showing the last %.1f MB of %.1f MB total …\n\n",
+		float64(maxPassLogTail)/(1<<20), float64(info.Size())/(1<<20))
+	return banner + string(data), nil
 }
 
 var _ = domain.MainBacklog

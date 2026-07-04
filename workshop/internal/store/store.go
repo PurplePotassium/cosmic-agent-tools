@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +35,7 @@ type Store struct {
 
 // Open opens (creating if needed) the database at path and migrates it.
 func Open(path string) (*Store, error) {
-	dsn := "file:" + strings.ReplaceAll(path, "\\", "/") +
+	dsn := "file:" + encodeURIPath(path) +
 		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -46,6 +48,20 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// encodeURIPath turns a filesystem path into the filename portion of a SQLite
+// "file:" URI. Reserved URI characters that are legal in Windows/Unix paths
+// (#, ?, %) would otherwise be misread — a '#' starts a fragment and a '?'
+// starts the query string, truncating the filename — so each '/'-separated
+// segment is percent-encoded (the separators and the drive colon are kept).
+// SQLite percent-decodes the filename, so it recovers the original path.
+func encodeURIPath(path string) string {
+	segs := strings.Split(filepath.ToSlash(path), "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
 }
 
 // Close closes the database.

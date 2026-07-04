@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -9,6 +10,37 @@ import (
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
+
+func TestEncodeURIPath(t *testing.T) {
+	// Reserved URI chars must be percent-encoded so they don't truncate the
+	// filename, but the '/' separators (and drive colon) stay literal.
+	got := encodeURIPath(`C:\repos\x#y%z\workshop.db`)
+	if want := "C:/repos/x%23y%25z/workshop.db"; got != want {
+		t.Fatalf("encodeURIPath = %q, want %q", got, want)
+	}
+}
+
+// A store path under a directory whose name holds URI-reserved characters
+// legal on Windows and Unix (#, %) must open and write to that exact file —
+// an unescaped '#' would start a URI fragment and truncate the DB filename.
+func TestOpenPathWithReservedChars(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "x#y%z")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open under %q: %v", dir, err)
+	}
+	defer s.Close()
+	if _, err := s.AddTask(context.Background(), &domain.Task{Title: "t"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("db did not land at %q: %v", dbPath, err)
+	}
+}
 
 func openTest(t *testing.T) *Store {
 	t.Helper()

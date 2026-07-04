@@ -80,6 +80,14 @@ func WriteFileAtomic(path string, data []byte) error {
 		tmp.Close()
 		return fmt.Errorf("statedir: write %s: %w", tmpName, err)
 	}
+	// Flush to disk before the rename: without it a crash can leave the
+	// rename durable while the data isn't, surfacing as a zero-length GOAL.md
+	// (or truncated server.json) after power loss. Dir-fsync is skipped — it's
+	// a no-op on Windows and the atomic rename already orders the replace.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("statedir: sync %s: %w", tmpName, err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("statedir: close %s: %w", tmpName, err)
 	}

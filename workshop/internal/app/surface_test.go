@@ -1,15 +1,124 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
+
+// A giant pass log must come back capped to its tail (bounded memory), on a
+// clean line boundary, with a banner — the dashboard renders the tail anyway.
+func TestPassLogTailCaps(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	ctx := context.Background()
+
+	pass, err := a.Store.StartPass(ctx, config.DefaultPipelineName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "pass.log")
+
+	var buf bytes.Buffer
+	buf.WriteString("FIRST-LINE-should-be-truncated\n")
+	for buf.Len() < maxPassLogTail+(1<<20) {
+		buf.WriteString("filler line to grow the log past the cap boundary\n")
+	}
+	buf.WriteString("LAST-LINE-must-survive\n")
+	if err := os.WriteFile(logPath, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpdatePass(ctx, pass.ID, store.PassPatch{LogPath: &logPath}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := a.PassLog(ctx, pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) > maxPassLogTail+512 {
+		t.Fatalf("returned %d bytes, want <= cap+banner (~%d)", len(got), maxPassLogTail)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("returned tail is not valid UTF-8")
+	}
+	if !strings.HasPrefix(got, "… log truncated") {
+		t.Fatalf("missing truncation banner; got prefix %q", got[:min(40, len(got))])
+	}
+	if strings.Contains(got, "FIRST-LINE") {
+		t.Fatal("head of the log leaked into the tail")
+	}
+	if !strings.Contains(got, "LAST-LINE-must-survive") {
+		t.Fatal("tail is missing the final line")
+	}
+}
+
+// A giant log with no newline anywhere in its tail (one minified line) can
+// put the seek point mid-rune; the tail must still come back as valid UTF-8.
+// The log is 3 MiB of "→" (3 bytes each): the 1 MiB seek offset ≡ 1 (mod 3),
+// so it always lands on a continuation byte.
+func TestPassLogTailNoNewlineStaysValidUTF8(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	ctx := context.Background()
+
+	pass, err := a.Store.StartPass(ctx, config.DefaultPipelineName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "oneline.log")
+	body := strings.Repeat("→", 1<<20) // 3 MiB, no newline
+	if err := os.WriteFile(logPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpdatePass(ctx, pass.ID, store.PassPatch{LogPath: &logPath}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := a.PassLog(ctx, pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("tail of a newline-free log is not valid UTF-8 (split rune survived)")
+	}
+	if !strings.Contains(got, "2.0 MB of 3.0 MB") {
+		t.Fatalf("banner should report fractional sizes; got prefix %q", got[:min(60, len(got))])
+	}
+}
+
+// A small log (under the cap) comes back whole, with no banner.
+func TestPassLogUnderCapReturnsWhole(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	ctx := context.Background()
+
+	pass, err := a.Store.StartPass(ctx, config.DefaultPipelineName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "small.log")
+	body := "only a few lines\nof output here\n"
+	if err := os.WriteFile(logPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpdatePass(ctx, pass.ID, store.PassPatch{LogPath: &logPath}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.PassLog(ctx, pass.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != body {
+		t.Fatalf("small log = %q, want it returned whole %q", got, body)
+	}
+}
 
 // TestPauseAfterHaltsEveryEnabledPipeline: the dashboard's "pause-after"
 // action is the bulk form of SetPipelineDesired(name, false) — it must park

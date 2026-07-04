@@ -61,6 +61,9 @@ func wordStem(rng *rand.Rand, source string) string {
 		return strings.ToUpper(word)
 	}
 	n := 2 + rng.Intn(max-1) // 2..max
-	stem := string(runes[:n])
-	return strings.ToUpper(stem[:1]) + strings.ToLower(stem[1:])
+	// Slice by rune, not byte: byte-slicing the first rune of a non-ASCII
+	// pool entry ("Éclair") splits a multibyte sequence and yields invalid
+	// UTF-8.
+	stem := runes[:n]
+	return strings.ToUpper(string(stem[:1])) + strings.ToLower(string(stem[1:]))
 }

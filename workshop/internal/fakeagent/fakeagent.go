@@ -55,7 +55,7 @@ func resolveConflicts(repoDir string) error {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil || !bytes.Contains(data, []byte("<<<<<<< ")) {
-			return nil
+			return nil //nolint:nilerr // unreadable or marker-free file: skip it
 		}
 		var out []string
 		for _, line := range strings.Split(string(data), "\n") {

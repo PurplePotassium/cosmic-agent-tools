@@ -40,10 +40,15 @@ func TestEngineControlHaltRelaunchesParked(t *testing.T) {
 		t.Fatal("Halt did not relaunch the run loop")
 	}
 
+	// Observing the relaunch is a happens-before for the swallow: the relaunch
+	// goroutine is spawned only from inside launch()'s `if swallow` branch, so
+	// by the time it reports its startStopped on `calls`, the old run's
+	// context.Canceled has already been swallowed instead of pushed to Done().
+	// A non-blocking check is therefore deterministic — no timing window.
 	select {
 	case err := <-ctl.Done():
 		t.Fatalf("Done() fired after Halt (err=%v); the loop must stay alive", err)
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 
 	cancelParent()
