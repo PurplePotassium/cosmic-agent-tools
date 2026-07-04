@@ -38,6 +38,9 @@ button.pause-after.active {
   box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.35);
 }
 button.pause-after.active:hover { border-color: var(--amber); }
+button.pause-after:disabled { opacity: 0.5; cursor: default; }
+button.pausing { border-color: var(--amber); color: var(--amber); }
+.conn.stopped { color: var(--amber); }
 input, select, textarea {
   background: var(--bg);
   color: var(--text);
@@ -156,6 +159,7 @@ select.chip { background: var(--bg); font: inherit; cursor: pointer; }
 .pipeline-card { border-left: 3px solid var(--accent); }
 .pipeline-card.halted { border-left-color: var(--red); }
 .pipeline-card.stopped { border-left-color: var(--amber); }
+.pipeline-card.pausing { border-left-color: var(--amber); }
 .pipeline-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pipeline-head .name { font-weight: 700; font-size: 1rem; }
 .pipeline-head .spacer { flex: 1; }

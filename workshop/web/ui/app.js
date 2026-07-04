@@ -83,14 +83,20 @@ function describeEvent(ev) {
 
 // ---------- components ----------
 
-function TopBar({ status, connected, pauseAfterPending, onHalt, onPauseAfter }) {
+function TopBar({ status, connected, pauseAfterPending, stopped, onHalt, onPauseAfter }) {
+  // "live - stopped" once every pipeline has actually parked (stop pressed, or
+  // a pause-after that has finished draining) — the server's up but no models
+  // are running. Plain "live" whenever anything is (or could be) working.
+  const liveText = connected ? (stopped ? "live - stopped" : "live") : "reconnecting…";
   return html`<div class="topbar">
     <h1>Workshop</h1>
     <span class="muted mono">${status?.repo || ""}</span>
     <span class="spacer"></span>
-    <span><span class=${"dot " + (connected ? "on" : "off")}></span>${connected ? "live" : "reconnecting…"}</span>
-    <button class=${"pause-after" + (pauseAfterPending ? " active" : "")} onClick=${onPauseAfter}
-      title=${pauseAfterPending
+    <span class=${"conn" + (stopped ? " stopped" : "")}><span class=${"dot " + (connected ? "on" : "off")}></span>${liveText}</span>
+    <button class=${"pause-after" + (pauseAfterPending ? " active" : "")} onClick=${onPauseAfter} disabled=${stopped}
+      title=${stopped
+        ? "Everything is already stopped — nothing left to pause"
+        : pauseAfterPending
         ? "Pause after is armed — every pipeline stops claiming new work once its current pass finishes"
         : "Stop every pipeline from claiming new work; whatever's running now finishes"}>pause after</button>
     <button class="danger" onClick=${onHalt} title="Kill every in-flight pass now — no models running, server stays up">stop</button>
@@ -441,11 +447,17 @@ function AddPipelineForm({ extras, onAdd }) {
 function PipelineCard({ p, log, extras, onDesired, onBundle, onMode, onDelete }) {
   const [editBundle, setEditBundle] = useState(false);
   const running = !!p.running;
-  const stopped = p.halted === "operator";
+  const operatorHalt = p.halted === "operator";
   const halted = p.halted && p.halted !== "operator";
-  const stateClass = halted ? "halted" : stopped ? "stopped" : "";
+  // A pause-after (operator halt) while a pass is still in flight is only
+  // ARMED, not stopped: the pass keeps working and only parks once it finishes.
+  // Until then we show it as "pausing…" and hide the resume button — the agent
+  // is still doing real work, so offering "resume" would be a lie.
+  const pausePending = operatorHalt && running;
+  const stopped = operatorHalt && !running;
+  const stateClass = halted ? "halted" : stopped ? "stopped" : pausePending ? "pausing" : "";
   const pill = running
-    ? html`<span class="pill running">pass ${p.running.N} · ${elapsed(p.running.Started)}</span>`
+    ? html`<span class="pill running">pass ${p.running.N} · ${elapsed(p.running.Started)}${pausePending ? " · pausing" : ""}</span>`
     : halted ? html`<span class="pill halted">HALTED: ${p.halted}</span>`
     : stopped ? html`<span class="pill stopped">stopped</span>`
     : html`<span class="pill idle">idle</span>`;
@@ -469,6 +481,9 @@ function PipelineCard({ p, log, extras, onDesired, onBundle, onMode, onDelete })
       <button title="switch agent/model for the next pass" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
       ${stopped || halted
         ? html`<button class="primary" onClick=${() => onDesired(p.name, "running")}>resume</button>`
+        : pausePending
+        ? html`<button class="pausing" onClick=${() => onDesired(p.name, "running")}
+            title="Pause-after armed — this pass finishes, then the pipeline parks. Click to cancel and keep claiming work.">pausing…</button>`
         : html`<button onClick=${() => onDesired(p.name, "stopped")}
             title="Pause after idle: stop this pipeline from claiming new work; if it's mid-pass, that pass finishes first">stop</button>`}
       ${p.name.toLowerCase() !== "main" && html`<button class="danger" onClick=${() => onDelete(p.name)}
@@ -749,10 +764,15 @@ function App() {
   }, [leftTab, doneEvalIds.join(",")]);
 
   const pipelines = status?.pipelines || [];
+  const enabled = pipelines.filter((p) => p.enabled);
   // Armed once a pause-after is requested (halted for "operator"), and only while
   // some pipeline is still finishing its in-flight pass — once everything is
   // actually idle, pausing is a done deal and the button drops back to normal.
-  const pauseAfterPending = pipelines.some((p) => p.enabled && p.halted === "operator" && p.running);
+  const pauseAfterPending = enabled.some((p) => p.halted === "operator" && p.running);
+  // "live - stopped": every enabled pipeline is parked (operator/breaker/auth
+  // halt) and nothing is mid-pass. This is what a completed pause-after drains
+  // into, and what the stop button forces immediately.
+  const allStopped = enabled.length > 0 && enabled.every((p) => p.halted && !p.running);
   const cfgTypes = [...new Set([
     ...(tasks.map((t) => t.type).filter(Boolean)),
     "code", "tests", "docs", "art", "audio",
@@ -788,7 +808,7 @@ function App() {
   };
 
   return html`<div>
-    <${TopBar} status=${status} connected=${connected} pauseAfterPending=${pauseAfterPending}
+    <${TopBar} status=${status} connected=${connected} pauseAfterPending=${pauseAfterPending} stopped=${allStopped}
       onHalt=${() => act(() => api.haltServer())}
       onPauseAfter=${() => act(() => api.pauseAfter())} />
     <div class="columns">
