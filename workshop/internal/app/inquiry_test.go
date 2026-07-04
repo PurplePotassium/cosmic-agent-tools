@@ -181,3 +181,53 @@ func TestAutoInquiryOnBreakerTripped(t *testing.T) {
 		t.Errorf("question should name the pipeline, breaker, and failure count: %q", inq.Question)
 	}
 }
+
+// TestAutoInquiryOnAuthEvents proves the same auto-diagnosis fires for the
+// other two red banners — auth.halt and auth.suspected — with a tailored,
+// auth-focused question that names the pipeline and the offending agent.
+func TestAutoInquiryOnAuthEvents(t *testing.T) {
+	for _, evType := range []string{"auth.halt", "auth.suspected"} {
+		t.Run(evType, func(t *testing.T) {
+			a := newTestApp(t, initRepo(t))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			a.Res().Config.Types["inquiry"] = domain.Bundle{Agent: "fake"}
+			t.Setenv("WORKSHOP_FAKE_BIN", os.Args[0])
+			t.Setenv("WORKSHOP_PASS_STATE_DIR", t.TempDir())
+			t.Setenv("WORKSHOP_PASS_REPO_DIR", a.RepoDir)
+
+			stop := a.StartAutoInquiry(ctx)
+			defer stop()
+			a.Bus.Publish(ctx, domain.Event{
+				Type: evType, Pipeline: "main",
+				Payload: map[string]any{"agent": "fake"},
+			})
+
+			var inq *Inquiry
+			deadline := time.Now().Add(15 * time.Second)
+			for {
+				if list := a.Inquiries(); len(list) > 0 && list[0].State != "running" {
+					inq = list[0]
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("auto-inquiry never fired/settled")
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+
+			if !inq.Auto {
+				t.Errorf("auto-fired inquiry must be flagged Auto: %+v", inq)
+			}
+			if inq.State != "done" || !strings.Contains(inq.Answer, "fake pass complete") {
+				t.Fatalf("auto-inquiry settled wrong: %+v", inq)
+			}
+			if !strings.Contains(inq.Question, "main") ||
+				!strings.Contains(strings.ToLower(inq.Question), "auth") ||
+				!strings.Contains(inq.Question, "fake") {
+				t.Errorf("question should name the pipeline, auth, and agent: %q", inq.Question)
+			}
+		})
+	}
+}
