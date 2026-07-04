@@ -687,7 +687,13 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 	}
 
 	if _, acceptProposals := w.modeFlags(ctx); acceptProposals {
-		if added, err := w.bl.Ingest(ctx, name, statedir.ReadProposals(w.cfg.StateDir), w.cfg.KnownPipelines, 2); err == nil {
+		props, perr := statedir.ReadProposals(w.cfg.StateDir)
+		if perr != nil {
+			// A malformed proposals.json must not fail the pass, but silence
+			// would hide the broken agent contract forever — surface it.
+			w.event(ctx, "proposals.invalid", name, pass.ID, map[string]any{"error": perr.Error()})
+		}
+		if added, err := w.bl.Ingest(ctx, name, props, w.cfg.KnownPipelines, 2); err == nil {
 			for _, t := range added {
 				w.event(ctx, "task.created", name, pass.ID, map[string]any{"task": t.ID, "title": t.Title, "origin": "agent"})
 			}

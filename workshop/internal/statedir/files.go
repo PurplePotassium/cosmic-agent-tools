@@ -108,12 +108,18 @@ func ReadProgress(dir string) domain.Progress {
 }
 
 // ReadProposals reads and validates the agent's follow-up suggestions.
-// Missing file = no proposals. A corrupt file is skipped (never fails a
-// pass); entries without a title are dropped.
-func ReadProposals(dir string) []domain.Proposal {
+// A missing or not-yet-written file means no proposals and a nil error. A
+// syntactically corrupt file returns the parse error so the caller can
+// surface it (silently dropping it would hide a broken agent contract
+// forever) — the pass itself must still not fail on it. Entries without a
+// title are dropped.
+func ReadProposals(dir string) ([]domain.Proposal, error) {
 	var raw []domain.Proposal
 	if err := ReadJSON(filepath.Join(dir, ProposalsFile), &raw); err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, ErrEmpty) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	var out []domain.Proposal
 	for _, p := range raw {
@@ -121,5 +127,5 @@ func ReadProposals(dir string) []domain.Proposal {
 			out = append(out, p)
 		}
 	}
-	return out
+	return out, nil
 }

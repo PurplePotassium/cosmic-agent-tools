@@ -32,6 +32,24 @@ func TestMain(m *testing.M) {
 		fmt.Println(child.Process.Pid)
 		child.Wait()
 		os.Exit(0)
+	case "gated-spawner":
+		// Waits for the test's go-ahead byte so Adopt() deterministically
+		// precedes the spawn (job membership is inherited only by children
+		// created after assignment), then spawns a sleeper and EXITS without
+		// waiting — orphaning it and breaking the parent-PID chain.
+		if _, err := bufio.NewReader(os.Stdin).ReadByte(); err != nil {
+			os.Exit(1)
+		}
+		child := exec.Command(os.Args[0])
+		child.Env = append(os.Environ(), "PROC_TEST_ROLE=sleeper")
+		child.Stdout = nil
+		child.Stderr = nil
+		if err := child.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(child.Process.Pid)
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }

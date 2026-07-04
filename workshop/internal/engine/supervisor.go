@@ -12,12 +12,22 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
 
+// integrator is the slice of *Integrator the supervisor drives — a seam so a
+// test can stub a failing drain (a RunRound error must surface out of Run).
+type integrator interface {
+	Loop(ctx context.Context)
+	RunRound(ctx context.Context) (int, error)
+}
+
 // RunSpec is one supervised run: N workers plus (in worktree mode) the
 // integrator.
 type RunSpec struct {
-	Workers      []*Worker
-	Integrator   *Integrator // nil in simple mode
-	Iterations   int         // per pipeline; 0 = until stopped
+	Workers []*Worker
+	// Integrator is nil in simple mode. Interface field: assign only a
+	// non-nil *Integrator — a typed nil would read as non-nil here and turn
+	// on the bounded drain against a nil receiver.
+	Integrator   integrator
+	Iterations   int // per pipeline; 0 = until stopped
 	UntilDrained bool
 }
 

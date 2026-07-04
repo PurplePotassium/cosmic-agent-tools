@@ -205,13 +205,18 @@ type engineLock struct {
 	Started time.Time `json:"started"`
 }
 
-// ReadEngineLock returns the pid recorded in the engine lock, if any.
-func ReadEngineLock(stateDir string) (int, bool) {
+// ReadEngineLock returns the pid recorded in the engine lock and when that
+// process wrote it. The instant matters: probe the pid with
+// proc.AliveSince(pid, started), never plain Alive — a reused PID would
+// otherwise read as a live engine (and `stop --force` would KillTree the
+// stranger holding it). A zero started (lock from an older binary) makes
+// AliveSince fall back to plain liveness.
+func ReadEngineLock(stateDir string) (pid int, started time.Time, ok bool) {
 	var el engineLock
 	if err := statedir.ReadJSON(EngineLockPath(stateDir), &el); err != nil || el.PID == 0 {
-		return 0, false
+		return 0, time.Time{}, false
 	}
-	return el.PID, true
+	return el.PID, el.Started, true
 }
 
 // acquireEngineLock takes the per-repo engine singleton lock, clearing a
@@ -226,7 +231,7 @@ func (a *App) acquireEngineLock() (func(), error) {
 			f.Close()
 			return func() { _ = os.Remove(path) }, nil
 		}
-		if pid, ok := ReadEngineLock(a.StateDir); ok && pid != os.Getpid() && proc.Alive(pid) {
+		if pid, started, ok := ReadEngineLock(a.StateDir); ok && pid != os.Getpid() && proc.AliveSince(pid, started) {
 			return nil, fmt.Errorf("another workshop engine is already running for this repo (pid %d) — stop it first (`workshop stop`, --force if wedged)", pid)
 		}
 		_ = os.Remove(path) // stale lock from a crashed engine
@@ -372,12 +377,17 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 		}, a.Store, a.Bus)
 	}
 
-	return engine.NewSupervisor(a.Store, a.Bus).Run(ctx, engine.RunSpec{
+	spec := engine.RunSpec{
 		Workers:      workers,
-		Integrator:   integ,
 		Iterations:   iterations,
 		UntilDrained: untilDrained,
-	})
+	}
+	if integ != nil {
+		// RunSpec.Integrator is an interface: assigning a nil *Integrator
+		// directly would make it non-nil and enable the bounded drain.
+		spec.Integrator = integ
+	}
+	return engine.NewSupervisor(a.Store, a.Bus).Run(ctx, spec)
 }
 
 // PipelineStatus is one pipeline's live snapshot. Agent/Model/Effort are the

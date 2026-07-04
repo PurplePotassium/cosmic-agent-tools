@@ -192,6 +192,43 @@ func TestProposalsIngestedWithDedupe(t *testing.T) {
 	}
 }
 
+// A syntactically corrupt proposals.json must not fail the pass — but it
+// must not vanish silently either: the worker publishes a proposals.invalid
+// event so the malformed agent contract is visible on the dashboard.
+func TestCorruptProposalsEmitsEventAndPassSucceeds(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", RawProposals: `{"not": "an array"`}, nil)
+	ctx := context.Background()
+	r.addTask("work me")
+
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+
+	passes, _ := r.st.RecentPasses(ctx, "main", 5)
+	if len(passes) != 1 || passes[0].Outcome != domain.OutcomeDone {
+		t.Fatalf("pass must succeed despite corrupt proposals: %+v", passes)
+	}
+	evs, err := r.st.EventsSince(ctx, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ev := range evs {
+		if ev.Type == "proposals.invalid" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no proposals.invalid event was published for a corrupt proposals.json")
+	}
+	// The garbage fabricated no tasks: only the drained original remains done.
+	open, _ := r.st.ListTasks(ctx, store.TaskFilter{Statuses: []domain.TaskStatus{domain.TaskOpen, domain.TaskClaimed}})
+	if len(open) != 0 {
+		t.Fatalf("corrupt proposals fabricated tasks: %v", open)
+	}
+}
+
 // Drain-mode pipelines (AcceptProposals = false) may only shrink the
 // backlog: a finished pass's proposals.json follow-ups must be dropped.
 func TestDrainModeSkipsProposalIngestion(t *testing.T) {

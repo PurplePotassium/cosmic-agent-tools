@@ -41,6 +41,9 @@ type Scenario struct {
 	Proposals []domain.Proposal `json:"proposals"` // written to proposals.json on happy passes
 	WriteFile string            `json:"writeFile"` // repo-relative file to touch (default fake-work.txt)
 	NoEdit    bool              `json:"noEdit"`    // happy pass without any repo edit
+	// RawProposals, when set, is written to proposals.json VERBATIM instead
+	// of Proposals — for tests that need a syntactically corrupt file.
+	RawProposals string `json:"rawProposals"`
 }
 
 // resolveConflicts rewrites files containing conflict markers with both
@@ -177,7 +180,9 @@ func Main() int {
 		fmt.Fprintf(f, "%s @ %s\n", title, time.Now().UTC().Format(time.RFC3339Nano))
 		f.Close()
 	}
-	if len(sc.Proposals) > 0 {
+	if sc.RawProposals != "" {
+		_ = os.WriteFile(filepath.Join(stateDir, statedir.ProposalsFile), []byte(sc.RawProposals), 0o644)
+	} else if len(sc.Proposals) > 0 {
 		_ = statedir.WriteJSON(filepath.Join(stateDir, statedir.ProposalsFile), sc.Proposals)
 	}
 	if sc.SleepMs > 0 {

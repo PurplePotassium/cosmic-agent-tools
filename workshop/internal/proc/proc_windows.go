@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -149,4 +150,23 @@ func alive(pid int) bool {
 		return false
 	}
 	return s == uint32(windows.WAIT_TIMEOUT)
+}
+
+func aliveSince(pid int, recorded time.Time) bool {
+	if recorded.IsZero() {
+		return alive(pid) // lock written by an older binary: no instant to compare
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	if s, err := windows.WaitForSingleObject(h, 0); err != nil || s != uint32(windows.WAIT_TIMEOUT) {
+		return false
+	}
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err != nil {
+		return true // alive but creation unknowable — don't misreport dead
+	}
+	return startConsistent(time.Unix(0, creation.Nanoseconds()), recorded)
 }

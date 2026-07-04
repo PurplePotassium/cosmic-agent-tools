@@ -327,7 +327,7 @@ func cmdStop(args []string) int {
 	if err != nil {
 		// No server record — a headless `workshop run` may still hold the
 		// engine lock.
-		if pid, ok := app.ReadEngineLock(a.StateDir); ok && proc.Alive(pid) {
+		if pid, started, ok := app.ReadEngineLock(a.StateDir); ok && proc.AliveSince(pid, started) {
 			if *force {
 				return forceKill(pid)
 			}
@@ -342,7 +342,7 @@ func cmdStop(args []string) int {
 	req.Header.Set("X-Workshop-Token", si.Token)
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
-		if proc.Alive(si.PID) {
+		if proc.AliveSince(si.PID, si.Started) {
 			// A hung engine: server.json is live but the process ignores us.
 			if *force {
 				return forceKill(si.PID)

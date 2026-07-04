@@ -11,7 +11,10 @@
 // (builds, test servers) outlives the Workshop.
 package proc
 
-import "os/exec"
+import (
+	"os/exec"
+	"time"
+)
 
 // SpawnMode selects how a child process is wired up.
 type SpawnMode int
@@ -34,6 +37,29 @@ func KillTree(pid int) error { return killTree(pid) }
 
 // Alive reports whether a process with the given pid currently exists.
 func Alive(pid int) bool { return alive(pid) }
+
+// AliveSince reports whether pid is alive AND is still the process that was
+// alive at `recorded` — its OS creation time must not be later. This defeats
+// PID reuse when probing a pid persisted in a lock file (engine.lock,
+// server.json): the recorder wrote the file *after* it started, so its
+// creation time is ≤ the recorded instant; a later creation time means the
+// pid has been recycled by a stranger, and treating that stranger as the
+// lock holder would defer to it — or `stop --force` would KillTree it.
+// A zero `recorded` (a file written by an older binary) and platforms where
+// creation time is unavailable (darwin) fall back to plain liveness.
+func AliveSince(pid int, recorded time.Time) bool { return aliveSince(pid, recorded) }
+
+// startSlack absorbs rounding between the recorded wall-clock instant and the
+// OS-reported creation time. Both come from the same machine's clock; the
+// margin only guards coarse timestamp granularity, so it stays far below any
+// realistic lock-write-to-reuse window.
+const startSlack = 2 * time.Second
+
+// startConsistent: a process created after the recorded instant cannot be the
+// process that recorded it.
+func startConsistent(created, recorded time.Time) bool {
+	return !created.After(recorded.Add(startSlack))
+}
 
 // Adopt places a just-started child in a kill-on-close Job Object (Windows)
 // so its whole subtree dies with the pass — even grandchildren whose

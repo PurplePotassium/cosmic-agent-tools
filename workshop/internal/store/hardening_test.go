@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -122,6 +124,60 @@ func TestConcurrentMoveTaskPositionsAreDistinct(t *testing.T) {
 			t.Fatalf("duplicate position %v after concurrent moves", task.Position)
 		}
 		seen[task.Position] = true
+	}
+}
+
+// A crash leaves pass rows open (ended = 0). CleanupOrphanPasses must close
+// them as setup-failures — and only them, exactly once, so a second engine
+// start doesn't rewrite history.
+func TestCleanupOrphanPassesClosesCrashLeftovers(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	p, err := st.StartPass(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := st.CleanupOrphanPasses(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("cleaned %d passes, want 1", n)
+	}
+	got, err := st.GetPass(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != domain.PassFailed {
+		t.Fatalf("orphan pass state = %q, want %q", got.State, domain.PassFailed)
+	}
+	if got.Ended.IsZero() {
+		t.Fatal("orphan pass still has no end time after cleanup")
+	}
+	// Idempotent: everything is closed now, a second sweep touches nothing.
+	n, err = st.CleanupOrphanPasses(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("second cleanup touched %d passes, want 0", n)
+	}
+}
+
+// A corrupted workshop.db (random bytes where SQLite expects its header) must
+// fail Open with a clean error — never a panic — so the CLI exits 2 with a
+// message instead of a stack trace.
+func TestOpenCorruptedDBFailsCleanly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workshop.db")
+	garbage := bytes.Repeat([]byte{0xDE, 0xAD, 0xBE, 0xEF}, 1024)
+	if err := os.WriteFile(path, garbage, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open succeeded on a garbage file; want a clean error")
 	}
 }
 
