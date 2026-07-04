@@ -100,7 +100,7 @@ export function subscribe(handlers) {
     "task.created", "task.claimed", "task.done", "task.failed", "task.stuck", "task.classified",
     "commit", "commit.failed",
     "integration.landed", "integration.dropped", "integration.conflict",
-    "integration.sync_conflict", "integration.skipped",
+    "integration.sync_conflict", "integration.skipped", "integration.drain_incomplete",
     "conflict.enqueued", "conflict.resolved", "conflict.attempt_failed", "conflict.abandoned",
     "breaker.tripped", "auth.halt", "auth.suspected", "wedge.killed",
     "gate.red", "driver.effort_ignored", "pass.setup_failed",

@@ -141,6 +141,18 @@ agent = "fake"
 		t.Fatalf("GET /app.js (active-agent count): code=%d, missing live active-count wiring", code)
 	}
 
+	// A bounded run that caps the merge-queue drain publishes
+	// integration.drain_incomplete; the dashboard raises it as an operator alert
+	// (not a raw-feed-only event). Pin both halves: app.js must register the
+	// alert + its message, and api.js must route the SSE type, or the event
+	// silently never reaches the UI.
+	if code, body := get(t, "/app.js", ""); code != 200 || !strings.Contains(body, "integration.drain_incomplete") {
+		t.Fatalf("GET /app.js (drain_incomplete alert): code=%d, missing drain-incomplete alert wiring", code)
+	}
+	if code, body := get(t, "/api.js", ""); code != 200 || !strings.Contains(body, "integration.drain_incomplete") {
+		t.Fatalf("GET /api.js (drain_incomplete SSE route): code=%d, missing drain-incomplete event routing", code)
+	}
+
 	// A read route is gated: 403 without the token, 200 with it.
 	if code, _ := get(t, "/api/v1/status", ""); code != 403 {
 		t.Fatalf("GET /api/v1/status without token: code=%d, want 403", code)

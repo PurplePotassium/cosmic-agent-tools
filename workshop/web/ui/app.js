@@ -41,7 +41,7 @@ function ago(iso) {
 function eventTone(type) {
   if (/done|landed|resolved|commit$|classified/.test(type)) return "good";
   if (/failed|halt|breaker|wedge|dropped|red|abandoned/.test(type)) return "bad";
-  if (/conflict|suspected|skipped|ignored|stuck/.test(type)) return "warn";
+  if (/conflict|suspected|skipped|ignored|stuck|incomplete/.test(type)) return "warn";
   return "";
 }
 
@@ -67,6 +67,7 @@ function describeEvent(ev) {
     case "conflict.attempt_failed": return `resolution failed: ${p.why}`;
     case "conflict.abandoned": return `resolution abandoned — lane skipped until it advances`;
     case "breaker.tripped": return `circuit breaker: ${p.consecutiveFails} consecutive failures`;
+    case "integration.drain_incomplete": return `lane work still queued — re-run to finish landing it`;
     case "auth.halt": return `AUTH FAILURE — pipeline halted (${p.agent})`;
     case "auth.suspected": return `suspected auth/model problem: ${p.note}`;
     case "wedge.killed": return `wedged pass killed after ${p.timeoutMin}m`;
@@ -694,6 +695,7 @@ const ALERT_TYPES = {
   "auth.halt": "bad",
   "auth.suspected": "warn",
   "breaker.tripped": "bad",
+  "integration.drain_incomplete": "warn",
   "wedge.killed": "warn",
   "task.stuck": "warn",
   "gate.red": "warn",
