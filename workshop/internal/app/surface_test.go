@@ -300,6 +300,63 @@ func TestSetPipelineBundleSetAndClear(t *testing.T) {
 	}
 }
 
+// drainHasEvent consumes every event currently buffered on ch and reports
+// whether any carried the given type. Publish is synchronous onto a buffered
+// channel, so by the time the call under test returns its events are already
+// readable — no sleep needed.
+func drainHasEvent(ch <-chan domain.Event, typ string) bool {
+	found := false
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == typ {
+				found = true
+			}
+		default:
+			return found
+		}
+	}
+}
+
+// TestSetPipelineBundleWarnsUnknownModel pins the operator-feedback contract
+// for the live model dial: an override whose model isn't a known (or
+// extra_models) id for its effective agent publishes a non-blocking
+// driver.model_unknown warning — the same check config load applies, since a
+// wrong id fails silently for blind drivers (AGENTS.md) — yet the override
+// still lands (warn, never block). A curated model stays silent.
+func TestSetPipelineBundleWarnsUnknownModel(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	ctx := context.Background()
+	events, cancel := a.Bus.Subscribe()
+	defer cancel()
+
+	// claude agent + a non-claude model id: off-family, so it must warn but
+	// still store the override.
+	bad := domain.Bundle{Agent: "claude", Model: "gpt-4o-mini"}
+	if err := a.SetPipelineBundle(ctx, config.DefaultPipelineName, bad); err != nil {
+		t.Fatalf("an off-family model must warn, not block: %v", err)
+	}
+	got, err := a.Store.PipelineBundle(ctx, config.DefaultPipelineName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != bad {
+		t.Fatalf("override did not land despite the warning: %+v", got)
+	}
+	if !drainHasEvent(events, "driver.model_unknown") {
+		t.Fatal("an off-family model override did not publish driver.model_unknown")
+	}
+
+	// A curated claude model id must NOT warn.
+	ok := domain.Bundle{Agent: "claude", Model: "claude-opus-4-8"}
+	if err := a.SetPipelineBundle(ctx, config.DefaultPipelineName, ok); err != nil {
+		t.Fatal(err)
+	}
+	if drainHasEvent(events, "driver.model_unknown") {
+		t.Fatal("a curated claude model must not warn")
+	}
+}
+
 // TestSetPipelineModeValidation mirrors TestSetPipelineBundleValidation for
 // the mode override: an unknown pipeline and an unrecognized mode must both
 // be rejected before the store is touched.

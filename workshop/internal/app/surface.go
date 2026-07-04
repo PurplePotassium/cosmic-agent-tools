@@ -219,9 +219,11 @@ func (a *App) PauseAfter(ctx context.Context) error {
 // the old tool's agent.json workflow.
 func (a *App) SetPipelineBundle(ctx context.Context, name string, b domain.Bundle) error {
 	found := false
+	pipelineAgent := ""
 	for _, p := range a.Res().Config.ResolvedPipelines() {
 		if p.Name == name {
 			found = true
+			pipelineAgent = p.Bundle.Agent
 		}
 	}
 	if !found {
@@ -237,6 +239,21 @@ func (a *App) SetPipelineBundle(ctx context.Context, name string, b domain.Bundl
 	}
 	if err := a.Store.SetPipelineBundle(ctx, name, b); err != nil {
 		return err
+	}
+	// A wrong-for-agent model id fails silently for blind drivers (AGENTS.md),
+	// so warn — but never block, matching config load's warn-not-block policy
+	// (proxy aliases and brand-new ids are legitimate; extra_models silences a
+	// deliberate off-list choice). The model runs against the override's own
+	// agent, or the pipeline's configured agent when the override doesn't
+	// switch it.
+	effectiveAgent := b.Agent
+	if effectiveAgent == "" {
+		effectiveAgent = pipelineAgent
+	}
+	if b.Model != "" && !a.Res().Config.KnownOrExtraModel(effectiveAgent, b.Model) {
+		a.Bus.Publish(ctx, domain.Event{Type: "driver.model_unknown", Pipeline: name, Payload: map[string]any{
+			"agent": effectiveAgent, "model": b.Model, "families": domain.ModelFamilies(effectiveAgent),
+		}})
 	}
 	a.Bus.Publish(ctx, domain.Event{Type: "pipeline.bundle", Pipeline: name, Payload: map[string]any{
 		"agent": b.Agent, "model": b.Model, "effort": b.Effort, "cleared": b.IsZero(),
