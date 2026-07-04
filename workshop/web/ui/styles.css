@@ -40,6 +40,8 @@ button.pause-after.active {
 button.pause-after.active:hover { border-color: var(--amber); }
 button.pause-after:disabled { opacity: 0.5; cursor: default; }
 button.pausing { border-color: var(--amber); color: var(--amber); }
+button.sound { padding: 4px 8px; }
+button.sound.active { border-color: var(--accent); }
 .conn.stopped { color: var(--amber); }
 input, select, textarea {
   background: var(--bg);

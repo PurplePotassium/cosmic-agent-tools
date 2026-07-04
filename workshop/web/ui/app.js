@@ -81,9 +81,39 @@ function describeEvent(ev) {
   }
 }
 
+// playChime emits a short rising two-note blip via the Web Audio API. It's
+// synthesized, not a fetched asset, so the dashboard stays a single
+// self-contained bundle (nothing to embed or serve). Used to notify the
+// operator that a task finished. Browsers gate audio behind a user gesture,
+// so the AudioContext is created/resumed lazily — the first successful play is
+// the operator toggling sound on, which is itself a gesture.
+let audioCtx = null;
+function playChime() {
+  try {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return;
+    audioCtx = audioCtx || new Ctor();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const now = audioCtx.currentTime;
+    [660, 880].forEach((freq, i) => { // E5 → A5
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t = now + i * 0.11;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.14, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    });
+  } catch { /* audio unavailable — stay silent */ }
+}
+
 // ---------- components ----------
 
-function TopBar({ status, connected, pauseAfterPending, stopped, onHalt, onPauseAfter }) {
+function TopBar({ status, connected, pauseAfterPending, stopped, soundOn, onHalt, onPauseAfter, onToggleSound }) {
   // "live - stopped" once every pipeline has actually parked (stop pressed, or
   // a pause-after that has finished draining) — the server's up but no models
   // are running. Plain "live" whenever anything is (or could be) working.
@@ -93,6 +123,10 @@ function TopBar({ status, connected, pauseAfterPending, stopped, onHalt, onPause
     <span class="muted mono">${status?.repo || ""}</span>
     <span class="spacer"></span>
     <span class=${"conn" + (stopped ? " stopped" : "")}><span class=${"dot " + (connected ? "on" : "off")}></span>${liveText}</span>
+    <button class=${"sound" + (soundOn ? " active" : "")} onClick=${onToggleSound}
+      title=${soundOn
+        ? "Sound on — a chime plays whenever a task completes. Click to mute."
+        : "Sound off — click to play a chime whenever a task completes."}>${soundOn ? "🔔" : "🔕"}</button>
     <button class=${"pause-after" + (pauseAfterPending ? " active" : "")} onClick=${onPauseAfter} disabled=${stopped}
       title=${stopped
         ? "Everything is already stopped — nothing left to pause"
@@ -680,6 +714,12 @@ function App() {
   // Goal-eval answer ids the operator has already viewed on the eval tab, so
   // the 'goal evaluation' tab can badge answers that landed while it was closed.
   const [seenEvalIds, setSeenEvalIds] = useState(() => new Set());
+  // Sound-on-completion preference, persisted so it survives reloads. A ref
+  // shadows it because the SSE onEvent closure is created once (empty-deps
+  // effect) and would otherwise capture the initial value forever.
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem("workshop.sound") === "1");
+  const soundOnRef = useRef(soundOn);
+  useEffect(() => { soundOnRef.current = soundOn; }, [soundOn]);
   const refreshTimer = useRef(null);
 
   const refresh = useCallback(async () => {
@@ -726,6 +766,7 @@ function App() {
       },
       onEvent: (ev) => {
         setFeed((prev) => [ev, ...prev].slice(0, 120));
+        if (ev.type === "task.done" && soundOnRef.current) playChime();
         const tone = ALERT_TYPES[ev.type];
         if (tone) {
           setAlerts((prev) => [...prev, {
@@ -780,6 +821,16 @@ function App() {
 
   const act = async (fn) => { try { await fn(); } catch (e) { alert(e.message); } await refresh(); };
 
+  // Toggling on both persists the choice and previews the chime — the click is
+  // the user gesture browsers require to unlock the AudioContext, so later
+  // event-driven plays work without further interaction.
+  const toggleSound = () => setSoundOn((v) => {
+    const next = !v;
+    localStorage.setItem("workshop.sound", next ? "1" : "0");
+    if (next) playChime();
+    return next;
+  });
+
   // Fires GOAL_EVAL_QUESTIONS as separate inquiries, all routed through the
   // same agent/model/effort bundle picked in the evaluation card (empty
   // fields fall back to the configured route, same as an unset pipeline
@@ -809,8 +860,10 @@ function App() {
 
   return html`<div>
     <${TopBar} status=${status} connected=${connected} pauseAfterPending=${pauseAfterPending} stopped=${allStopped}
+      soundOn=${soundOn}
       onHalt=${() => act(() => api.haltServer())}
-      onPauseAfter=${() => act(() => api.pauseAfter())} />
+      onPauseAfter=${() => act(() => api.pauseAfter())}
+      onToggleSound=${toggleSound} />
     <div class="columns">
       <div>
         <${Alerts} alerts=${alerts} dismiss=${(id) => setAlerts((a) => a.filter((x) => x.id !== id))} />
