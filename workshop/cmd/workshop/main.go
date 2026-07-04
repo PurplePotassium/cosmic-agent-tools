@@ -84,7 +84,7 @@ usage: workshop [command] [flags]
   status   one-shot snapshot (--json for machines)
   stop     gracefully stop the running server (--force kills a hung engine)
   doctor   check the environment (git, agents, config, state dir)
-  bug      write a self-contained bug report (env, git, config, status)
+  bug      write a self-contained bug report (env, git, config, status; --logs adds the last pass log)
   path     print resolved directories and config files
   migrate  import GOAL/PROMPT/backlog from the old PowerShell workshop
   version  print the version

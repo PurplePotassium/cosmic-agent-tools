@@ -350,4 +350,14 @@ agent = "fake"
 	if strings.Contains(strings.ToLower(jsonOut), "token") {
 		t.Fatalf("bug report leaked a token:\n%s", jsonOut)
 	}
+
+	// --logs is opt-in and must not appear unless asked: the default report
+	// carries no pass-log section, and the flag stays robust (no pass has run
+	// here, so it simply omits the section rather than erroring).
+	if strings.Contains(out, "## Pass log") {
+		t.Fatalf("default report should not include a pass log:\n%s", out)
+	}
+	if withLogs := r.mustWorkshop(time.Minute, "bug", desc, "--logs"); !strings.Contains(withLogs, "# Workshop bug report") {
+		t.Fatalf("bug --logs did not produce a report:\n%s", withLogs)
+	}
 }

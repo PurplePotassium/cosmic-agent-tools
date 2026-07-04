@@ -14,6 +14,7 @@ import (
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/server"
 )
@@ -33,6 +34,17 @@ type bugReport struct {
 	Paths       [][2]string    `json:"paths"`
 	Config      app.ConfigView `json:"config"`
 	Status      *app.Status    `json:"status,omitempty"`
+	Log         *bugLog        `json:"log,omitempty"`
+}
+
+// bugLog is the tail of one pass log, embedded only on --logs. It names the
+// pass it came from so a reader knows which pipeline and iteration produced the
+// output; Tail is already capped to app.PassLog's maxPassLogTail bytes.
+type bugLog struct {
+	Pipeline string `json:"pipeline"`
+	PassN    int    `json:"passN"`
+	Outcome  string `json:"outcome,omitempty"`
+	Tail     string `json:"tail"`
 }
 
 type workshopInfo struct {
@@ -70,6 +82,7 @@ func cmdBug(args []string) int {
 	fs := flag.NewFlagSet("bug", flag.ExitOnError)
 	repo := fs.String("repo", "", "repository path")
 	asJSON := fs.Bool("json", false, "machine-readable output")
+	logs := fs.Bool("logs", false, "append the tail of the most recent (or halted) pass log — off by default so the report stays small and secret-free")
 	out := fs.String("out", "", "write the report to this file (default: <state dir>/bug-report-<time>.md)")
 	pos := parseMixed(fs, args)
 	description := strings.TrimSpace(strings.Join(pos, " "))
@@ -83,7 +96,7 @@ func cmdBug(args []string) int {
 	}
 	defer a.Close()
 
-	rep := gatherBugReport(ctx, a, description)
+	rep := gatherBugReport(ctx, a, description, *logs)
 
 	if *asJSON {
 		printJSON(rep)
@@ -110,8 +123,10 @@ func cmdBug(args []string) int {
 
 // gatherBugReport collects the report. Every probe is best-effort: a broken
 // repo or a missing HEAD must still yield a usable report, since a broken state
-// is exactly when someone files a bug.
-func gatherBugReport(ctx context.Context, a *app.App, description string) *bugReport {
+// is exactly when someone files a bug. withLogs opts in to embedding the tail
+// of the most recent (or halted) pass log — off by default so a report stays
+// small and free of raw agent/gate output unless the operator asks.
+func gatherBugReport(ctx context.Context, a *app.App, description string, withLogs bool) *bugReport {
 	rep := &bugReport{
 		Generated:   time.Now().UTC().Format(time.RFC3339),
 		Description: description,
@@ -159,7 +174,50 @@ func gatherBugReport(ctx context.Context, a *app.App, description string) *bugRe
 	if snap, err := a.Snapshot(ctx); err == nil {
 		rep.Status = snap
 	}
+
+	if withLogs {
+		if p := selectLogPass(rep.Status); p != nil {
+			// PassLog already truncates to the last maxPassLogTail bytes, so a
+			// giant log can't bloat the report.
+			if tail, err := a.PassLog(ctx, p.ID); err == nil && strings.TrimSpace(tail) != "" {
+				rep.Log = &bugLog{
+					Pipeline: p.Pipeline,
+					PassN:    p.N,
+					Outcome:  string(p.Outcome),
+					Tail:     tail,
+				}
+			}
+		}
+	}
 	return rep
+}
+
+// selectLogPass picks which pass's log to embed with --logs: the last pass of a
+// halted pipeline (the one an operator most likely filed the bug about),
+// otherwise the most recent pass across all pipelines. Pass IDs are monotonic,
+// so the highest ID is the newest. Returns nil when no pass has run yet.
+func selectLogPass(st *app.Status) *domain.Pass {
+	if st == nil {
+		return nil
+	}
+	var best *domain.Pass
+	bestHalted := false
+	for _, p := range st.Pipelines {
+		lp := p.LastPass
+		if lp == nil {
+			continue
+		}
+		halted := p.Halted != ""
+		switch {
+		case best == nil:
+		case halted && !bestHalted: // a halted lane always wins over a running one
+		case halted == bestHalted && lp.ID > best.ID: // else prefer the newer pass
+		default:
+			continue
+		}
+		best, bestHalted = lp, halted
+	}
+	return best
 }
 
 func gitVersion(ctx context.Context) string {
@@ -250,6 +308,17 @@ func formatBugReport(r *bugReport) string {
 	b.WriteString("```json\n")
 	b.WriteString(jsonBlock(r.Config))
 	b.WriteString("\n```\n")
+
+	if r.Log != nil {
+		b.WriteString("\n## Pass log\n\n")
+		fmt.Fprintf(&b, "_pipeline `%s`, iter %d (%s)_\n\n", r.Log.Pipeline, r.Log.PassN, r.Log.Outcome)
+		b.WriteString("```\n")
+		b.WriteString(r.Log.Tail)
+		if !strings.HasSuffix(r.Log.Tail, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("```\n")
+	}
 	return b.String()
 }
 
