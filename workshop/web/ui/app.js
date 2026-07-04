@@ -573,18 +573,48 @@ function Commits({ commits }) {
 // ("why are the coin pickups so big?") and a read-only forensics agent
 // answers from commit trailers, pass logs, archived session transcripts, and
 // the project docs. It investigates the past — it never edits anything.
-function InquiryCard({ inquiries, log, onAsk, onStop }) {
+//
+// The agent/model/effort picker mirrors ${GoalEvaluation}: an empty field
+// falls back to the configured [types.inquiry] route, same as main's per-pass
+// bundle override does.
+function InquiryCard({ inquiries, log, extras, onAsk, onStop }) {
   const [q, setQ] = useState("");
+  const [editBundle, setEditBundle] = useState(false);
+  const [agent, setAgent] = useState("");
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const pickAgent = (a) => {
+    setAgent(a);
+    if (a && model && !modelsFor(a, extras).includes(model)) setModel("");
+  };
+  const pickModel = (m, fam) => {
+    setModel(m);
+    if (m && fam && fam !== agent) setAgent(fam);
+  };
+  const bundle = [agent, model, effort].filter(Boolean).join(" · ") || "default route";
   const running = inquiries.some((i) => i.state === "running");
   const submit = async (e) => {
     e.preventDefault();
     const question = q.trim();
     if (!question || running) return;
-    await onAsk(question);
+    await onAsk(question, { agent: agent || undefined, model: model.trim() || undefined, effort: effort || undefined });
     setQ("");
   };
   return html`<div class="card">
-    <h2>Ask why <span class="muted">(read-only forensics)</span></h2>
+    <h2>Ask why <span class="muted">(read-only forensics)</span>
+      <span class="chip" title="agent/model/effort used for the inquiry">${bundle}</span>
+      <button title="switch agent/model/effort for the inquiry" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
+    </h2>
+    ${editBundle && html`<div class="bundle-editor">
+      <select value=${agent} onChange=${(e) => pickAgent(e.target.value)} title="agent ('' = configured)">
+        ${AGENTS.map((a) => html`<option value=${a}>${a || "agent (config)"}</option>`)}
+      </select>
+      <${ModelSelect} agent=${agent} extras=${extras} value=${model} onChange=${pickModel} />
+      <select value=${effort} onChange=${(e) => setEffort(e.target.value)} title="effort ('' = default)">
+        ${EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
+      </select>
+      <button onClick=${() => setEditBundle(false)}>✕</button>
+    </div>`}
     <form onSubmit=${submit}>
       <textarea rows="2" placeholder="why did the workshop… (e.g. why are the coin pickups so big?)"
         value=${q} onInput=${(e) => setQ(e.target.value)}
@@ -773,8 +803,8 @@ function App() {
         <${QueuePanel} queue=${queue} />
         <${ActivityFeed} feed=${feed} />
         <${Commits} commits=${status?.recentCommits} />
-        <${InquiryCard} inquiries=${inquiries} log=${logs["inquiry"]}
-          onAsk=${(question) => act(() => api.ask(question))}
+        <${InquiryCard} inquiries=${inquiries} log=${logs["inquiry"]} extras=${extraModels}
+          onAsk=${(question, bundle) => act(() => api.ask(question, bundle))}
           onStop=${() => act(() => api.stopInquiry())} />
       </div>
     </div>
