@@ -9,8 +9,15 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/bus"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
+
+// maxDrainRounds bounds the post-run merge-queue drain. A resolution enqueued
+// mid-drain stays queued for the next run, so a run that can't converge in
+// this many rounds is surfaced (integration.drain_incomplete) rather than
+// silently exiting 0 with lane work still unlanded.
+const maxDrainRounds = 10
 
 // integrator is the slice of *Integrator the supervisor drives — a seam so a
 // test can stub a failing drain (a RunRound error must surface out of Run).
@@ -94,7 +101,8 @@ func (s *Supervisor) Run(ctx context.Context, spec RunSpec) error {
 		// Rounds until nothing more lands. Conflict tasks enqueued here
 		// stay queued for the next run (a bounded run has no workers left
 		// to resolve them).
-		for i := 0; i < 10; i++ {
+		drained := false
+		for i := 0; i < maxDrainRounds; i++ {
 			landed, err := spec.Integrator.RunRound(ctx)
 			if err != nil {
 				// Committed lane work silently not landing while the CLI
@@ -102,8 +110,15 @@ func (s *Supervisor) Run(ctx context.Context, spec RunSpec) error {
 				return fmt.Errorf("engine: integrator drain: %w", err)
 			}
 			if landed == 0 {
+				drained = true
 				break
 			}
+		}
+		if !drained {
+			// Hit the round cap with the queue still moving: don't exit 0 as
+			// if it drained. Surface it so the operator knows to re-run to
+			// finish landing the queued lane work.
+			s.publishDrainIncomplete(ctx)
 		}
 	}
 
@@ -111,4 +126,17 @@ func (s *Supervisor) Run(ctx context.Context, spec RunSpec) error {
 		return ErrHalted
 	}
 	return ctx.Err()
+}
+
+// publishDrainIncomplete emits a diagnostic when the bounded drain gives up
+// with the merge queue still landing work. Best-effort: nil bus (unit tests,
+// simple mode) is a no-op, mirroring the integrator's own event helper.
+func (s *Supervisor) publishDrainIncomplete(ctx context.Context) {
+	if s.bus == nil {
+		return
+	}
+	s.bus.Publish(ctx, domain.Event{
+		Type:    "integration.drain_incomplete",
+		Payload: map[string]any{"rounds": maxDrainRounds},
+	})
 }
