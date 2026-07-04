@@ -297,7 +297,27 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 			return fmt.Errorf("cannot determine trunk branch (set project.trunk, or check out a branch): %v", err)
 		}
 	}
-	if !gitx.BranchExists(ctx, a.RepoDir, trunk) {
+	// Probe the trunk, retrying through a transient git error rather than
+	// mislabelling a live repo's trunk as missing. When Halt (dashboard or
+	// add-pipeline auto-relaunch) cancels a run mid git-op, the killed git
+	// child keeps a brief grip on repo/.git on Windows, so this first probe of
+	// the relaunch can transiently fail; treating that as "absent" would take
+	// the whole engine down. A clean "ref absent" still fails fast.
+	var trunkExists bool
+	for attempt := 0; ; attempt++ {
+		var err error
+		if trunkExists, err = gitx.BranchExistsErr(ctx, a.RepoDir, trunk); err == nil {
+			break
+		} else if attempt >= 10 {
+			return fmt.Errorf("cannot verify trunk branch %q: %w", trunk, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if !trunkExists {
 		return fmt.Errorf("trunk branch %q does not exist", trunk)
 	}
 

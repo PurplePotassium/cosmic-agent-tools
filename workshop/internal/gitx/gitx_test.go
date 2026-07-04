@@ -71,6 +71,28 @@ func TestCommitAllWithTrailers(t *testing.T) {
 	}
 }
 
+func TestBranchExistsErr(t *testing.T) {
+	ctx := context.Background()
+	dir := initRepo(t)
+
+	// Present and absent both resolve cleanly (nil error); only the boolean
+	// differs. This is the distinction BranchExists collapses.
+	if ok, err := BranchExistsErr(ctx, dir, "main"); !ok || err != nil {
+		t.Fatalf("present branch: ok=%v err=%v", ok, err)
+	}
+	if ok, err := BranchExistsErr(ctx, dir, "nope"); ok || err != nil {
+		t.Fatalf("absent branch: ok=%v err=%v", ok, err)
+	}
+
+	// A git error (here: not a repo) must surface as an error, not as a false
+	// "branch absent" — the engine relies on this to retry through a transient
+	// Windows .git grip instead of taking itself down.
+	nonRepo := t.TempDir()
+	if ok, err := BranchExistsErr(ctx, nonRepo, "main"); ok || err == nil {
+		t.Fatalf("git error should not read as absent: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestStatusDirtyAndBranches(t *testing.T) {
 	ctx := context.Background()
 	dir := initRepo(t)

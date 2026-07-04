@@ -115,10 +115,31 @@ func CurrentBranch(ctx context.Context, dir string) (string, error) {
 	return out, nil
 }
 
-// BranchExists reports whether a local branch exists.
-func BranchExists(ctx context.Context, dir, branch string) bool {
+// BranchExistsErr reports whether a local branch exists, keeping a clean "ref
+// absent" (false, nil) distinct from git itself failing (false, err). With
+// --quiet, rev-parse exits 1 and stays silent when the ref simply does not
+// resolve; any other exit (128 fatal, lock contention, unreadable .git) is a
+// real error, not proof of absence. This matters at engine startup: on Windows
+// a git child killed when a prior run's ctx was cancelled (dashboard Halt,
+// add-pipeline relaunch) keeps a brief grip on .git, so a probe fired in that
+// window errors transiently and must NOT be read as "branch missing".
+func BranchExistsErr(ctx context.Context, dir, branch string) (bool, error) {
 	_, err := runOut(ctx, dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
-	return err == nil
+	if err == nil {
+		return true, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// BranchExists reports whether a local branch exists, collapsing a git error
+// to "absent". Callers that must not confuse the two use BranchExistsErr.
+func BranchExists(ctx context.Context, dir, branch string) bool {
+	ok, _ := BranchExistsErr(ctx, dir, branch)
+	return ok
 }
 
 // CheckoutBranch checks out an existing branch.
