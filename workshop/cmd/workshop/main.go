@@ -215,6 +215,12 @@ func cmdUp(args []string) int {
 
 	ctl.Start(ctx, startStopped)
 
+	// Auto-diagnose circuit-breaker halts: when a pipeline trips its breaker,
+	// fire the read-only self-evaluator so its answer lands beside the halt in
+	// the dashboard without the operator having to ask.
+	stopAutoInquiry := a.StartAutoInquiry(ctx)
+	defer stopAutoInquiry()
+
 	if !*noOpen && a.Res().Config.Server.OpenBrowser {
 		openBrowser(url + "#token=" + srv.Token())
 	}

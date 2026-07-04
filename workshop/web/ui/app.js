@@ -598,7 +598,7 @@ function InquiryCard({ inquiries, log, onAsk, onStop }) {
     </form>
     ${running && log && log.length > 0 && html`<${LogTail} lines=${log} />`}
     ${inquiries.map((i) => html`<div class="inquiry" key=${i.id}>
-      <div class="inquiry-q">${i.question}</div>
+      <div class="inquiry-q">${i.auto && html`<span class="muted">[auto-diagnosis] </span>`}${i.question}</div>
       ${i.state === "running" && html`<div class="muted">investigating… ${elapsed(i.started)}</div>`}
       ${i.state === "failed" && html`<div class="inquiry-a bad">${i.error}</div>`}
       ${i.state === "done" && html`<div class="inquiry-a">${i.answer}</div>`}

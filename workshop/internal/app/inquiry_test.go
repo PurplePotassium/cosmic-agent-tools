@@ -132,3 +132,52 @@ func TestAskInquiryLifecycle(t *testing.T) {
 	}
 	settle()
 }
+
+// TestAutoInquiryOnBreakerTripped proves the engine fires the self-evaluator
+// on a breaker halt without anyone asking: the emitted inquiry references the
+// halted pipeline and its failure count, is flagged Auto for the dashboard,
+// and settles with a real captured answer.
+func TestAutoInquiryOnBreakerTripped(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	a.Res().Config.Types["inquiry"] = domain.Bundle{Agent: "fake"}
+	t.Setenv("WORKSHOP_FAKE_BIN", os.Args[0])
+	t.Setenv("WORKSHOP_PASS_STATE_DIR", t.TempDir())
+	t.Setenv("WORKSHOP_PASS_REPO_DIR", a.RepoDir)
+
+	// Subscribe synchronously, then publish — so the trip can't slip past the
+	// watcher before it registers.
+	stop := a.StartAutoInquiry(ctx)
+	defer stop()
+	a.Bus.Publish(ctx, domain.Event{
+		Type: "breaker.tripped", Pipeline: "main",
+		Payload: map[string]any{"consecutiveFails": 5},
+	})
+
+	var inq *Inquiry
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if list := a.Inquiries(); len(list) > 0 && list[0].State != "running" {
+			inq = list[0]
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("auto-inquiry never fired/settled")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	if !inq.Auto {
+		t.Errorf("auto-fired inquiry must be flagged Auto: %+v", inq)
+	}
+	if inq.State != "done" || !strings.Contains(inq.Answer, "fake pass complete") {
+		t.Fatalf("auto-inquiry settled wrong: %+v", inq)
+	}
+	if !strings.Contains(inq.Question, "main") ||
+		!strings.Contains(strings.ToLower(inq.Question), "breaker") ||
+		!strings.Contains(inq.Question, "5") {
+		t.Errorf("question should name the pipeline, breaker, and failure count: %q", inq.Question)
+	}
+}

@@ -51,6 +51,7 @@ type Inquiry struct {
 	ID       int64     `json:"id"`
 	Question string    `json:"question"`
 	State    string    `json:"state"` // running | done | failed
+	Auto     bool      `json:"auto,omitempty"` // fired by the engine (e.g. a breaker halt), not the operator
 	Answer   string    `json:"answer,omitempty"`
 	Error    string    `json:"error,omitempty"`
 	Started  time.Time `json:"started"`
@@ -89,6 +90,13 @@ func (a *App) StopInquiry() bool {
 // (e.g. the operator's per-request choice in the UI); any field left empty
 // falls through to the configured [types.inquiry] route, then the default.
 func (a *App) AskInquiry(ctx context.Context, question string, override domain.Bundle) (*Inquiry, error) {
+	return a.ask(ctx, question, override, false)
+}
+
+// ask is the shared body behind AskInquiry (operator-initiated) and
+// autoInquire (engine-initiated). auto records who fired it so the dashboard
+// can distinguish an auto-diagnosis from a question the operator typed.
+func (a *App) ask(ctx context.Context, question string, override domain.Bundle, auto bool) (*Inquiry, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return nil, fmt.Errorf("an inquiry needs a question")
@@ -119,7 +127,7 @@ func (a *App) AskInquiry(ctx context.Context, question string, override domain.B
 		return nil, ErrInquiryBusy
 	}
 	a.inqSeq++
-	inq := &Inquiry{ID: a.inqSeq, Question: question, State: "running", Started: time.Now().UTC()}
+	inq := &Inquiry{ID: a.inqSeq, Question: question, State: "running", Auto: auto, Started: time.Now().UTC()}
 	a.inqList = append(a.inqList, inq)
 	if len(a.inqList) > inquiryHistory {
 		a.inqList = a.inqList[len(a.inqList)-inquiryHistory:]
