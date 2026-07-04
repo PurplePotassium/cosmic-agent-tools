@@ -134,6 +134,13 @@ agent = "fake"
 		t.Fatalf("GET / (dashboard shell): code=%d len=%d", code, len(body))
 	}
 
+	// The top-right liveness label reports how many agents are mid-pass
+	// ("live - N agents active"), never a hardcoded count — pin the served
+	// bundle so a revert to a static label is caught.
+	if code, body := get(t, "/app.js", ""); code != 200 || !strings.Contains(body, "agent${active === 1") {
+		t.Fatalf("GET /app.js (active-agent count): code=%d, missing live active-count wiring", code)
+	}
+
 	// A read route is gated: 403 without the token, 200 with it.
 	if code, _ := get(t, "/api/v1/status", ""); code != 403 {
 		t.Fatalf("GET /api/v1/status without token: code=%d, want 403", code)

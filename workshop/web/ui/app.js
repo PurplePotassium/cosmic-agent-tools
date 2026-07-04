@@ -113,11 +113,14 @@ function playChime() {
 
 // ---------- components ----------
 
-function TopBar({ status, connected, pauseAfterPending, stopped, soundOn, onHalt, onPauseAfter, onToggleSound }) {
+function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn, onHalt, onPauseAfter, onToggleSound }) {
   // "live - stopped" once every pipeline has actually parked (stop pressed, or
   // a pause-after that has finished draining) — the server's up but no models
-  // are running. Plain "live" whenever anything is (or could be) working.
-  const liveText = connected ? (stopped ? "live - stopped" : "live") : "reconnecting…";
+  // are running. Otherwise "live - N agents active", the live count of
+  // pipelines mid-pass, so the operator sees at a glance how many are working.
+  const liveText = connected
+    ? (stopped ? "live - stopped" : `live - ${active} agent${active === 1 ? "" : "s"} active`)
+    : "reconnecting…";
   return html`<div class="topbar">
     <h1>Workshop</h1>
     <span class="muted mono">${status?.repo || ""}</span>
@@ -814,6 +817,9 @@ function App() {
   // halt) and nothing is mid-pass. This is what a completed pause-after drains
   // into, and what the stop button forces immediately.
   const allStopped = enabled.length > 0 && enabled.every((p) => p.halted && !p.running);
+  // How many agents are actually working right now: enabled pipelines with an
+  // in-flight pass (p.running is the live Pass, nil between passes).
+  const activeCount = enabled.filter((p) => p.running).length;
   const cfgTypes = [...new Set([
     ...(tasks.map((t) => t.type).filter(Boolean)),
     "code", "tests", "docs", "art", "audio",
@@ -859,7 +865,7 @@ function App() {
   };
 
   return html`<div>
-    <${TopBar} status=${status} connected=${connected} pauseAfterPending=${pauseAfterPending} stopped=${allStopped}
+    <${TopBar} status=${status} connected=${connected} active=${activeCount} pauseAfterPending=${pauseAfterPending} stopped=${allStopped}
       soundOn=${soundOn}
       onHalt=${() => act(() => api.haltServer())}
       onPauseAfter=${() => act(() => api.pauseAfter())}
