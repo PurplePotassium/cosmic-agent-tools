@@ -98,6 +98,18 @@ code, .mono { font-family: ui-monospace, Consolas, monospace; }
 .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
 .tabs .tab { flex: 1; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.75rem; }
 .tabs .tab.active { background: #1d3a6e; border-color: #2b5cad; }
+.tabs .tab .tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 16px;
+}
 
 .chip {
   display: inline-block;

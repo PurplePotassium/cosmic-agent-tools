@@ -662,6 +662,9 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [evaluatingGoal, setEvaluatingGoal] = useState(false);
   const [leftTab, setLeftTab] = useState("main");
+  // Goal-eval answer ids the operator has already viewed on the eval tab, so
+  // the 'goal evaluation' tab can badge answers that landed while it was closed.
+  const [seenEvalIds, setSeenEvalIds] = useState(() => new Set());
   const refreshTimer = useRef(null);
 
   const refresh = useCallback(async () => {
@@ -723,6 +726,28 @@ function App() {
     return () => { clearInterval(poll); close(); };
   }, []);
 
+  // GoalEvaluation answers are the inquiries whose question matches a fixed
+  // GOAL_EVAL_QUESTIONS prompt. A "done" answer the operator hasn't yet viewed
+  // on the eval tab is "unread" and badges the 'goal evaluation' tab button.
+  const doneEvalIds = GOAL_EVAL_QUESTIONS
+    .map((q) => inquiries.find((i) => i.question === q))
+    .filter((a) => a && a.state === "done")
+    .map((a) => a.id);
+  const unreadEval = leftTab === "eval"
+    ? 0
+    : doneEvalIds.filter((id) => !seenEvalIds.has(id)).length;
+
+  // Opening the eval tab marks every answer shown there as seen, so the badge
+  // only ever counts answers that landed while the tab was closed.
+  useEffect(() => {
+    if (leftTab !== "eval" || doneEvalIds.length === 0) return;
+    setSeenEvalIds((prev) => {
+      const next = new Set(prev);
+      for (const id of doneEvalIds) next.add(id);
+      return next.size === prev.size ? prev : next;
+    });
+  }, [leftTab, doneEvalIds.join(",")]);
+
   const pipelines = status?.pipelines || [];
   // Armed once a pause-after is requested (halted for "operator"), and only while
   // some pipeline is still finishing its in-flight pass — once everything is
@@ -771,7 +796,7 @@ function App() {
         <${Alerts} alerts=${alerts} dismiss=${(id) => setAlerts((a) => a.filter((x) => x.id !== id))} />
         <div class="tabs">
           <button class=${"tab" + (leftTab === "main" ? " active" : "")} onClick=${() => setLeftTab("main")}>goal</button>
-          <button class=${"tab" + (leftTab === "eval" ? " active" : "")} onClick=${() => setLeftTab("eval")}>goal evaluation</button>
+          <button class=${"tab" + (leftTab === "eval" ? " active" : "")} onClick=${() => setLeftTab("eval")}>goal evaluation${unreadEval > 0 && html`<span class="tab-badge" title=${`${unreadEval} new evaluation answer${unreadEval === 1 ? "" : "s"}`}>${unreadEval}</span>`}</button>
         </div>
         ${leftTab === "main" && html`<${GoalCard} goal=${goal} onSave=${async (text) => { await api.setGoal(text); setGoal(text); }} />
         <div class="card">
