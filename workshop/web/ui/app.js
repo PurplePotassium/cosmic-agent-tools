@@ -41,7 +41,7 @@ function ago(iso) {
 function eventTone(type) {
   if (/done|landed|resolved|commit$|classified/.test(type)) return "good";
   if (/failed|halt|breaker|wedge|dropped|red|abandoned/.test(type)) return "bad";
-  if (/conflict|suspected|skipped|ignored|stuck|incomplete/.test(type)) return "warn";
+  if (/conflict|suspected|skipped|ignored|stuck|incomplete|unknown/.test(type)) return "warn";
   return "";
 }
 
@@ -73,6 +73,7 @@ function describeEvent(ev) {
     case "wedge.killed": return `wedged pass killed after ${p.timeoutMin}m`;
     case "gate.red": return `gate RED (${p.where})`;
     case "driver.effort_ignored": return `effort "${p.effort}" ignored — ${p.agent} has no effort knob`;
+    case "driver.model_unknown": return `model "${p.model}" may be wrong for agent ${p.agent} — off its known families`;
     case "pipeline.bundle": return p.cleared ? "model override cleared"
       : `model override → ${[p.agent, p.model, p.effort].filter(Boolean).join(":")}`;
     case "integration.merge_failed": return `merge failed (will retry): ${p.error || ""}`.slice(0, 140);
@@ -696,6 +697,7 @@ const ALERT_TYPES = {
   "auth.suspected": "warn",
   "breaker.tripped": "bad",
   "integration.drain_incomplete": "warn",
+  "driver.model_unknown": "warn",
   "wedge.killed": "warn",
   "task.stuck": "warn",
   "gate.red": "warn",

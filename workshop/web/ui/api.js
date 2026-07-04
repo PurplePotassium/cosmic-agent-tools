@@ -103,7 +103,7 @@ export function subscribe(handlers) {
     "integration.sync_conflict", "integration.skipped", "integration.drain_incomplete",
     "conflict.enqueued", "conflict.resolved", "conflict.attempt_failed", "conflict.abandoned",
     "breaker.tripped", "auth.halt", "auth.suspected", "wedge.killed",
-    "gate.red", "driver.effort_ignored", "pass.setup_failed",
+    "gate.red", "driver.effort_ignored", "driver.model_unknown", "pass.setup_failed",
     "pipeline.bundle", "integration.merge_failed",
     "inquiry.log", "inquiry.asked", "inquiry.answered",
   ];
