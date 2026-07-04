@@ -297,3 +297,57 @@ agent = "fake"
 		t.Fatalf("completions: %+v", st.Completions)
 	}
 }
+
+// TestBugReport: `workshop bug "<desc>"` produces one self-contained report of
+// the live state (description, environment, git HEAD, config, status) and saves
+// a copy to the state dir — the whole point being it needs no follow-up
+// questions to hand to another agent.
+func TestBugReport(t *testing.T) {
+	r := newRig(t, `
+[project]
+name   = "e2e-bug"
+trunk  = "main"
+verify = "git log -1 --oneline"
+
+[[pipelines]]
+name  = "main"
+agent = "fake"
+`)
+	r.mustWorkshop(time.Minute, "task", "add", "a queued task")
+
+	const desc = "engine wedges on ctrl-c"
+	out := r.mustWorkshop(time.Minute, "bug", desc)
+	for _, want := range []string{
+		"# Workshop bug report", desc,
+		"## Environment", "## Repository", "## Config",
+		"e2e-bug",    // the scaffolded project name, from the embedded config
+		"saved to",   // the on-disk copy the operator can attach
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("bug report missing %q\n%s", want, out)
+		}
+	}
+
+	// --json is machine-readable and carries the operator's description through
+	// verbatim, and never the running server's token (redacted by design).
+	jsonOut := r.mustWorkshop(time.Minute, "bug", desc, "--json")
+	var rep struct {
+		Description string `json:"description"`
+		Repo        struct {
+			Dir  string `json:"dir"`
+			Head string `json:"head"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &rep); err != nil {
+		t.Fatalf("bug --json did not parse: %v\n%s", err, jsonOut)
+	}
+	if rep.Description != desc {
+		t.Fatalf("description not carried through: %q", rep.Description)
+	}
+	if rep.Repo.Head == "" || rep.Repo.Dir == "" {
+		t.Fatalf("report missing git state: %+v", rep.Repo)
+	}
+	if strings.Contains(strings.ToLower(jsonOut), "token") {
+		t.Fatalf("bug report leaked a token:\n%s", jsonOut)
+	}
+}
