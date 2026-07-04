@@ -95,6 +95,10 @@ code, .mono { font-family: ui-monospace, Consolas, monospace; }
 }
 .card h2 .count { color: var(--accent); }
 
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.tabs .tab { flex: 1; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.75rem; }
+.tabs .tab.active { background: #1d3a6e; border-color: #2b5cad; }
+
 .chip {
   display: inline-block;
   border-radius: 999px;

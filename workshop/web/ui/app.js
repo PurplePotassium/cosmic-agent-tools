@@ -631,6 +631,7 @@ function App() {
   const [extraModels, setExtraModels] = useState({});
   const [connected, setConnected] = useState(false);
   const [evaluatingGoal, setEvaluatingGoal] = useState(false);
+  const [leftTab, setLeftTab] = useState("main");
   const refreshTimer = useRef(null);
 
   const refresh = useCallback(async () => {
@@ -738,8 +739,11 @@ function App() {
     <div class="columns">
       <div>
         <${Alerts} alerts=${alerts} dismiss=${(id) => setAlerts((a) => a.filter((x) => x.id !== id))} />
-        <${GoalCard} goal=${goal} onSave=${async (text) => { await api.setGoal(text); setGoal(text); }} />
-        <${GoalEvaluation} inquiries=${inquiries} running=${evaluatingGoal} extras=${extraModels} onEvaluate=${onEvaluateGoal} />
+        <div class="tabs">
+          <button class=${"tab" + (leftTab === "main" ? " active" : "")} onClick=${() => setLeftTab("main")}>goal</button>
+          <button class=${"tab" + (leftTab === "eval" ? " active" : "")} onClick=${() => setLeftTab("eval")}>goal evaluation</button>
+        </div>
+        ${leftTab === "main" && html`<${GoalCard} goal=${goal} onSave=${async (text) => { await api.setGoal(text); setGoal(text); }} />
         <div class="card">
           <h2>Add task
             <button class="primary" style="margin-left:auto"
@@ -753,7 +757,8 @@ function App() {
           onTop=${(t) => act(() => api.reorder(backlogLabel(t.backlog || ""), [t.id]))}
           onMove=${(t, backlog) => act(() => api.patchTask(t.id, { backlog }))}
           onDelete=${(t) => act(() => api.deleteTask(t.id))} />
-        <${Completions} completions=${status?.completions} />
+        <${Completions} completions=${status?.completions} />`}
+        ${leftTab === "eval" && html`<${GoalEvaluation} inquiries=${inquiries} running=${evaluatingGoal} extras=${extraModels} onEvaluate=${onEvaluateGoal} />`}
       </div>
       <div>
         <${AddPipelineForm} extras=${extraModels} onAdd=${(p) => act(() => api.addPipeline(p))} />
