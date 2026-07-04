@@ -68,7 +68,9 @@ export const api = {
   // something. One inquiry runs at a time (409 while busy); the answer
   // streams as inquiry.log events and lands in the inquiries list.
   inquiries: () => req("GET", "/api/v1/inquiries"),
-  ask: (question) => req("POST", "/api/v1/inquiries", { question }),
+  // bundle ({agent, model, effort}, all optional) picks the agent/model/effort
+  // for this one question; omitted fields fall back to the configured route.
+  ask: (question, bundle) => req("POST", "/api/v1/inquiries", { question, bundle }),
   stopInquiry: () => req("POST", "/api/v1/inquiries/stop", {}),
   // haltServer kills every in-flight pass right now but leaves the server
   // (and every parked pipeline's ability to be resumed later) alive.

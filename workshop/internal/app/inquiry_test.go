@@ -80,7 +80,7 @@ func TestAskInquiryLifecycle(t *testing.T) {
 	a := newTestApp(t, initRepo(t))
 	ctx := context.Background()
 
-	if _, err := a.AskInquiry(ctx, "   "); err == nil {
+	if _, err := a.AskInquiry(ctx, "   ", domain.Bundle{}); err == nil {
 		t.Fatal("empty question must be rejected")
 	}
 
@@ -92,6 +92,13 @@ func TestAskInquiryLifecycle(t *testing.T) {
 	// inherit the test process environment.
 	t.Setenv("WORKSHOP_PASS_STATE_DIR", t.TempDir())
 	t.Setenv("WORKSHOP_PASS_REPO_DIR", a.RepoDir)
+
+	// A per-request override wins over the configured [types.inquiry] route:
+	// an unrecognized agent in the override must fail even though the
+	// configured route names a valid one.
+	if _, err := a.AskInquiry(ctx, "one-off question", domain.Bundle{Agent: "bogus-agent"}); err == nil {
+		t.Fatal("override with unrecognized agent: want error, got nil")
+	}
 
 	settle := func() *Inquiry {
 		t.Helper()
@@ -107,11 +114,11 @@ func TestAskInquiryLifecycle(t *testing.T) {
 		}
 	}
 
-	inq, err := a.AskInquiry(ctx, "why are the coin pickups so big?")
+	inq, err := a.AskInquiry(ctx, "why are the coin pickups so big?", domain.Bundle{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AskInquiry(ctx, "second question"); !errors.Is(err, ErrInquiryBusy) {
+	if _, err := a.AskInquiry(ctx, "second question", domain.Bundle{}); !errors.Is(err, ErrInquiryBusy) {
 		t.Fatalf("concurrent ask: err = %v, want ErrInquiryBusy", err)
 	}
 	done := settle()
@@ -120,7 +127,7 @@ func TestAskInquiryLifecycle(t *testing.T) {
 	}
 
 	// The slot frees up for the next question.
-	if _, err := a.AskInquiry(ctx, "and the duplicator levels?"); err != nil {
+	if _, err := a.AskInquiry(ctx, "and the duplicator levels?", domain.Bundle{}); err != nil {
 		t.Fatalf("ask after settle: %v", err)
 	}
 	settle()

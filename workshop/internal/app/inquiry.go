@@ -84,7 +84,11 @@ func (a *App) StopInquiry() bool {
 // the answer streams over the bus ("inquiry.log" lines, then a persisted
 // "inquiry.answered") and lands on the returned Inquiry's record. One at a
 // time: a second ask while one runs returns ErrInquiryBusy.
-func (a *App) AskInquiry(ctx context.Context, question string) (*Inquiry, error) {
+//
+// override lets the caller pick agent/model/effort for this one question
+// (e.g. the operator's per-request choice in the UI); any field left empty
+// falls through to the configured [types.inquiry] route, then the default.
+func (a *App) AskInquiry(ctx context.Context, question string, override domain.Bundle) (*Inquiry, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return nil, fmt.Errorf("an inquiry needs a question")
@@ -94,8 +98,9 @@ func (a *App) AskInquiry(ctx context.Context, question string) (*Inquiry, error)
 	}
 
 	// Route: claude/high by default; an operator [types.inquiry] entry in
-	// config.toml overrides agent/model/effort like any other type route.
-	bundle := a.Res().Config.Types["inquiry"].Overlay(domain.Bundle{Agent: "claude", Effort: "high"})
+	// config.toml overrides agent/model/effort like any other type route;
+	// a per-request override (if any) wins over both.
+	bundle := override.Overlay(a.Res().Config.Types["inquiry"].Overlay(domain.Bundle{Agent: "claude", Effort: "high"}))
 	drv, err := driver.New(bundle.Agent)
 	if err != nil {
 		return nil, err

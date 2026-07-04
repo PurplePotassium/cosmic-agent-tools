@@ -557,13 +557,22 @@ func (s *Server) getRunLog(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postInquiry(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Question *string `json:"question"`
+		Question *string        `json:"question"`
+		Bundle   *domain.Bundle `json:"bundle"` // optional agent/model/effort override for this question
 	}
 	if err := readBody(r, &body); err != nil || body.Question == nil {
-		httpErr(w, fmt.Errorf(`body needs {"question":"..."}`), http.StatusBadRequest)
+		httpErr(w, fmt.Errorf(`body needs {"question":"...", "bundle":{agent,model,effort}}`), http.StatusBadRequest)
 		return
 	}
-	inq, err := s.App.AskInquiry(r.Context(), *body.Question)
+	if err := validatePin(body.Bundle); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	var override domain.Bundle
+	if body.Bundle != nil {
+		override = *body.Bundle
+	}
+	inq, err := s.App.AskInquiry(r.Context(), *body.Question, override)
 	if errors.Is(err, app.ErrInquiryBusy) {
 		httpErr(w, err, http.StatusConflict)
 		return

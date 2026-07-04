@@ -125,15 +125,45 @@ function GoalCard({ goal, onSave }) {
 // question text against the inquiries list (newest first, so a re-run's
 // answer replaces the previous one in place). Inquiries run one at a time on
 // the server, so `running` also covers the wait between questions.
-function GoalEvaluation({ inquiries, running, onEvaluate }) {
+//
+// The agent/model/effort picker mirrors main's per-pass ${BundleEditor}: an
+// empty field falls back to the configured [types.inquiry] route, same as an
+// unset pipeline override does.
+function GoalEvaluation({ inquiries, running, extras, onEvaluate }) {
   const answers = GOAL_EVAL_QUESTIONS.map((q) => inquiries.find((i) => i.question === q));
+  const [editBundle, setEditBundle] = useState(false);
+  const [agent, setAgent] = useState("");
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const pickAgent = (a) => {
+    setAgent(a);
+    if (a && model && !modelsFor(a, extras).includes(model)) setModel("");
+  };
+  const pickModel = (m, fam) => {
+    setModel(m);
+    if (m && fam && fam !== agent) setAgent(fam);
+  };
+  const bundle = [agent, model, effort].filter(Boolean).join(" · ") || "default route";
   return html`<div class="card">
     <h2>Goal.md evaluation
-      <button class="primary" style="margin-left:auto" disabled=${running} onClick=${onEvaluate}
+      <span class="chip" title="agent/model/effort used for the evaluation questions">${bundle}</span>
+      <button title="switch agent/model/effort for this evaluation" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
+      <button class="primary" style="margin-left:auto" disabled=${running}
+        onClick=${() => onEvaluate({ agent: agent || undefined, model: model.trim() || undefined, effort: effort || undefined })}
         title="Ask the AI four fixed self-evaluation questions about the current Goal.md, one at a time">
         ${running ? "evaluating…" : "evaluate goal.md"}
       </button>
     </h2>
+    ${editBundle && html`<div class="bundle-editor">
+      <select value=${agent} onChange=${(e) => pickAgent(e.target.value)} title="agent ('' = configured)">
+        ${AGENTS.map((a) => html`<option value=${a}>${a || "agent (config)"}</option>`)}
+      </select>
+      <${ModelSelect} agent=${agent} extras=${extras} value=${model} onChange=${pickModel} />
+      <select value=${effort} onChange=${(e) => setEffort(e.target.value)} title="effort ('' = default)">
+        ${EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
+      </select>
+      <button onClick=${() => setEditBundle(false)}>✕</button>
+    </div>`}
     ${answers.every((a) => !a) && html`<div class="muted">not evaluated yet</div>`}
     ${GOAL_EVAL_QUESTIONS.map((q, i) => answers[i] && html`<div class="completion" key=${i}>
       <div>${q}</div>
@@ -674,15 +704,18 @@ function App() {
 
   const act = async (fn) => { try { await fn(); } catch (e) { alert(e.message); } await refresh(); };
 
-  // Fires GOAL_EVAL_QUESTIONS as separate inquiries. The server runs only one
-  // inquiry at a time, so each question is asked only once the previous one
-  // has an answer (polled — there's no per-question completion event to await).
-  const onEvaluateGoal = async () => {
+  // Fires GOAL_EVAL_QUESTIONS as separate inquiries, all routed through the
+  // same agent/model/effort bundle picked in the evaluation card (empty
+  // fields fall back to the configured route, same as an unset pipeline
+  // override). The server runs only one inquiry at a time, so each question
+  // is asked only once the previous one has an answer (polled — there's no
+  // per-question completion event to await).
+  const onEvaluateGoal = async (bundle) => {
     if (evaluatingGoal) return;
     setEvaluatingGoal(true);
     try {
       for (const q of GOAL_EVAL_QUESTIONS) {
-        const started = await api.ask(q);
+        const started = await api.ask(q, bundle);
         for (;;) {
           await new Promise((r) => setTimeout(r, 1200));
           const list = await api.inquiries();
@@ -706,7 +739,7 @@ function App() {
       <div>
         <${Alerts} alerts=${alerts} dismiss=${(id) => setAlerts((a) => a.filter((x) => x.id !== id))} />
         <${GoalCard} goal=${goal} onSave=${async (text) => { await api.setGoal(text); setGoal(text); }} />
-        <${GoalEvaluation} inquiries=${inquiries} running=${evaluatingGoal} onEvaluate=${onEvaluateGoal} />
+        <${GoalEvaluation} inquiries=${inquiries} running=${evaluatingGoal} extras=${extraModels} onEvaluate=${onEvaluateGoal} />
         <div class="card">
           <h2>Add task
             <button class="primary" style="margin-left:auto"
