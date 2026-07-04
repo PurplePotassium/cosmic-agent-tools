@@ -51,6 +51,21 @@ jobs:
         run: go test -tags e2e -timeout 10m ./e2e
       - run: go build ./cmd/workshop
 
+  # golangci-lint runs CI-only (kept out of the self-hosting pre-commit gate
+  # per the README rationale). The config lives in workshop/.golangci.yml.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workshop/go.mod
+          cache-dependency-path: workshop/go.sum
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: workshop
+
   # A broken .goreleaser.yaml otherwise only surfaces at the first tag.
   release-dry-run:
     runs-on: ubuntu-latest
