@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -13,10 +14,19 @@ import (
 
 func TestEncodeURIPath(t *testing.T) {
 	// Reserved URI chars must be percent-encoded so they don't truncate the
-	// filename, but the '/' separators (and drive colon) stay literal.
-	got := encodeURIPath(`C:\repos\x#y%z\workshop.db`)
-	if want := "C:/repos/x%23y%25z/workshop.db"; got != want {
+	// filename, but the '/' separators stay literal.
+	got := encodeURIPath("/repos/x#y%z/workshop.db")
+	if want := "/repos/x%23y%25z/workshop.db"; got != want {
 		t.Fatalf("encodeURIPath = %q, want %q", got, want)
+	}
+	if runtime.GOOS == "windows" {
+		// Backslash separators and the drive colon stay literal too — but
+		// only on Windows; on Unix '\' is an ordinary filename character
+		// and filepath.ToSlash leaves it alone.
+		got := encodeURIPath(`C:\repos\x#y%z\workshop.db`)
+		if want := "C:/repos/x%23y%25z/workshop.db"; got != want {
+			t.Fatalf("encodeURIPath = %q, want %q", got, want)
+		}
 	}
 }
 

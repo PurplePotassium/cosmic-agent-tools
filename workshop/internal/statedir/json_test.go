@@ -97,17 +97,18 @@ func TestConcurrentWritesNeverTearReads(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
+			doc := big // per-goroutine copy; sharing big would race on Count
 			for i := 0; ; i++ {
 				select {
 				case <-stop:
 					return
 				default:
 				}
-				big.Count = n*1_000_000 + i
+				doc.Count = n*1_000_000 + i
 				// Windows can transiently refuse the rename while the
 				// reader holds the destination open; atomicity only
 				// promises readers never see a torn file.
-				_ = WriteJSON(path, big)
+				_ = WriteJSON(path, doc)
 			}
 		}(w)
 	}
