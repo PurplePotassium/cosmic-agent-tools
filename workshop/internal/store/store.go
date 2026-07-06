@@ -102,6 +102,7 @@ var schema = []string{
 		n          INTEGER NOT NULL,
 		task_id    TEXT NOT NULL DEFAULT '',
 		spice      TEXT NOT NULL DEFAULT '',
+		personality TEXT NOT NULL DEFAULT '',
 		session_id TEXT NOT NULL DEFAULT '',
 		state      TEXT NOT NULL,
 		started    INTEGER NOT NULL,
@@ -168,6 +169,9 @@ func (s *Store) migrate() error {
 	// defaulted, so an older binary keeps working against the widened table
 	// (the schema stays additive — no version bump).
 	if err := s.ensureColumn("passes", "session_id", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("passes", "personality", `TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	// DO UPDATE, not DO NOTHING: the stored version must track the binary

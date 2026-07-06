@@ -556,7 +556,7 @@ function PipelineCard({ p, log, extras, personalityConfig, onDesired, onBundle, 
     </div>`}
     ${!blind && log && log.length > 0 && html`<${LogTail} lines=${log} />`}
     ${p.lastPass && !running && html`<div class="muted" style="margin-top:8px; font-size:0.8rem;">
-      last: iter ${p.lastPass.N} ${p.lastPass.Outcome}${p.lastPass.CommitSHA ? " @ " + p.lastPass.CommitSHA : ""}
+      last: iter ${p.lastPass.N} ${p.lastPass.Outcome}${p.lastPass.CommitSHA ? " @ " + p.lastPass.CommitSHA : ""}${p.lastPass.Personality ? " · persona: " + p.lastPass.Personality : ""}
     </div>`}
   </div>`;
 }

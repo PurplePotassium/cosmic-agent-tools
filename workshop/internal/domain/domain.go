@@ -271,6 +271,11 @@ type Pass struct {
 	TaskID   string // claimed task; freeform (invented) passes get a synthetic task
 	Spice    string // "persona:X" / "recode:noun/Stem" / "" — recorded for forensics
 
+	// Personality is the resolved [personality] roster entry this pass ran
+	// under ("" when none resolved), mirroring Spice — recorded so the
+	// dashboard can show it without opening the raw pass log.
+	Personality string
+
 	// SessionID is the agent runtime's own session id for this pass (set only
 	// for drivers with Capabilities.Sessions). It keys the agent's full
 	// transcript — every tool call and reasoning block — for forensics.

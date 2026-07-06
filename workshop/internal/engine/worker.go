@@ -391,6 +391,9 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 	if spice.Mode != "" {
 		w.patchPass(ctx, pass.ID, store.PassPatch{Spice: &spice.Mode})
 	}
+	if personality != "" {
+		w.patchPass(ctx, pass.ID, store.PassPatch{Personality: &personality})
+	}
 
 	logPath := filepath.Join(w.cfg.LogDir, fmt.Sprintf("iter-%06d.log", pass.N))
 	w.patchPass(ctx, pass.ID, store.PassPatch{LogPath: &logPath})

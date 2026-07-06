@@ -714,4 +714,11 @@ func TestPersonalityReachesPassLog(t *testing.T) {
 	if !strings.Contains(string(data), "persona: Bill Gates") {
 		t.Fatalf("personality missing from log header:\n%s", data)
 	}
+	passes, err := r.st.RecentPasses(ctx, "main", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(passes) != 1 || passes[0].Personality != "Bill Gates" {
+		t.Fatalf("personality not recorded on the pass row: %+v", passes)
+	}
 }
