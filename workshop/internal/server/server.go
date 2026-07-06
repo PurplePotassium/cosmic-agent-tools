@@ -445,12 +445,13 @@ func (s *Server) reorderTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) patchPipeline(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Desired *string        `json:"desired"` // "running" | "stopped"
-		Bundle  *domain.Bundle `json:"bundle"`  // live agent/model/effort override; {} clears
-		Mode    *string        `json:"mode"`    // live goal/discover/drain override; "" clears
+		Desired     *string        `json:"desired"`     // "running" | "stopped"
+		Bundle      *domain.Bundle `json:"bundle"`      // live agent/model/effort override; {} clears
+		Mode        *string        `json:"mode"`        // live goal/discover/drain override; "" clears
+		Personality *string        `json:"personality"` // live "none"/"random"/roster-entry override; "" clears
 	}
-	if err := readBody(r, &body); err != nil || (body.Desired == nil && body.Bundle == nil && body.Mode == nil) {
-		httpErr(w, fmt.Errorf(`body needs {"desired":"running"|"stopped"} and/or {"bundle":{agent,model,effort}} and/or {"mode":"goal"|"discover"|"drain"|""}`), http.StatusBadRequest)
+	if err := readBody(r, &body); err != nil || (body.Desired == nil && body.Bundle == nil && body.Mode == nil && body.Personality == nil) {
+		httpErr(w, fmt.Errorf(`body needs {"desired":"running"|"stopped"} and/or {"bundle":{agent,model,effort}} and/or {"mode":"goal"|"discover"|"drain"|""} and/or {"personality":"none"|"random"|"<roster entry>"|""}`), http.StatusBadRequest)
 		return
 	}
 	name := r.PathValue("name")
@@ -462,6 +463,12 @@ func (s *Server) patchPipeline(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Mode != nil {
 		if err := s.App.SetPipelineMode(r.Context(), name, *body.Mode); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	if body.Personality != nil {
+		if err := s.App.SetPipelinePersonality(r.Context(), name, *body.Personality); err != nil {
 			httpErr(w, err, http.StatusBadRequest)
 			return
 		}

@@ -453,7 +453,7 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 	if w.cfg.SpiceEnabled {
 		spice = prompt.NewSpice(w.cfg.Rng, w.cfg.Personas, w.cfg.Nouns)
 	}
-	personality := w.resolvePersonality()
+	personality := w.resolvePersonality(ctx)
 	_, full := prompt.Compose(prompt.Inputs{
 		BaseContract: base,
 		Mechanics: prompt.Mechanics(prompt.MechanicsInputs{
@@ -478,13 +478,20 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 // resolvePersonality applies this pipeline's Personality selector: ""/"none"
 // is a no-op, "random" draws one from the configured roster (re-rolled every
 // pass, like Spice), and anything else is a literal roster entry the config
-// already validated at load. The [personality] master switch overrides all
-// of it off.
-func (w *Worker) resolvePersonality() string {
+// already validated at load. The live dashboard override is re-read from the
+// store EVERY pass — mirroring resolve's bundle override and modeFlags's mode
+// override — so an operator's dropdown pick takes effect on the very next
+// pass without a restart. The [personality] master switch overrides all of
+// it off.
+func (w *Worker) resolvePersonality(ctx context.Context) string {
 	if !w.cfg.PersonalityEnabled {
 		return ""
 	}
-	switch strings.ToLower(strings.TrimSpace(w.cfg.Pipeline.Personality)) {
+	personality := w.cfg.Pipeline.Personality
+	if override, _ := w.st.PipelinePersonality(ctx, w.cfg.Pipeline.Name); override != "" {
+		personality = override
+	}
+	switch strings.ToLower(strings.TrimSpace(personality)) {
 	case "", "none":
 		return ""
 	case "random":
@@ -493,7 +500,7 @@ func (w *Worker) resolvePersonality() string {
 		}
 		return w.cfg.Personalities[w.cfg.Rng.Intn(len(w.cfg.Personalities))]
 	default:
-		return w.cfg.Pipeline.Personality
+		return personality
 	}
 }
 

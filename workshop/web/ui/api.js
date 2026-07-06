@@ -64,6 +64,10 @@ export const api = {
   // Live goal/discover/drain override for the pipeline's NEXT pass; an empty
   // mode "" clears it back to the configured mode.
   setPipelineMode: (name, mode) => req("PATCH", `/api/v1/pipelines/${name}`, { mode }),
+  // Live personality override for the pipeline's NEXT pass ("none"/"random"/a
+  // roster entry); an empty personality "" clears it back to the configured
+  // selector.
+  setPipelinePersonality: (name, personality) => req("PATCH", `/api/v1/pipelines/${name}`, { personality }),
   // The self-evaluator: ask a read-only forensics agent WHY the workshop did
   // something. One inquiry runs at a time (409 while busy); the answer
   // streams as inquiry.log events and lands in the inquiries list.

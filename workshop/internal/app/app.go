@@ -416,20 +416,25 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 // EFFECTIVE bundle (config with the live override applied); Override carries
 // the raw override when one is active.
 type PipelineStatus struct {
-	Name            string          `json:"name"`
-	Mode            string          `json:"mode"` // EFFECTIVE goal | discover | drain — config with any live override applied
-	ModeOverride    string          `json:"modeOverride,omitempty"` // raw override when one is active
-	Enabled         bool            `json:"enabled"`
-	Agent           string          `json:"agent"`
-	Model           string          `json:"model,omitempty"`
-	Effort          string          `json:"effort,omitempty"`
-	Override        *domain.Bundle  `json:"override,omitempty"`
-	Halted          string          `json:"halted,omitempty"`
-	Running         *domain.Pass    `json:"running,omitempty"` // the in-flight pass
-	LastPass        *domain.Pass    `json:"lastPass,omitempty"`
-	Progress        domain.Progress `json:"progress"`
-	ProgressAgeSec  int64           `json:"progressAgeSec"`
-	BacklogExclusive int            `json:"backlogExclusive"`
+	Name         string `json:"name"`
+	Mode         string `json:"mode"`                   // EFFECTIVE goal | discover | drain — config with any live override applied
+	ModeOverride string `json:"modeOverride,omitempty"` // raw override when one is active
+	// Personality is the EFFECTIVE selector ("" | "none" | "random" | a roster
+	// entry) — config with any live override applied; PersonalityOverride
+	// carries the raw override when one is active. Mirrors Mode/ModeOverride.
+	Personality         string          `json:"personality,omitempty"`
+	PersonalityOverride string          `json:"personalityOverride,omitempty"`
+	Enabled             bool            `json:"enabled"`
+	Agent               string          `json:"agent"`
+	Model               string          `json:"model,omitempty"`
+	Effort              string          `json:"effort,omitempty"`
+	Override            *domain.Bundle  `json:"override,omitempty"`
+	Halted              string          `json:"halted,omitempty"`
+	Running             *domain.Pass    `json:"running,omitempty"` // the in-flight pass
+	LastPass            *domain.Pass    `json:"lastPass,omitempty"`
+	Progress            domain.Progress `json:"progress"`
+	ProgressAgeSec      int64           `json:"progressAgeSec"`
+	BacklogExclusive    int             `json:"backlogExclusive"`
 }
 
 // Status is the one-shot project snapshot for CLI/HTTP.
@@ -468,8 +473,14 @@ func (a *App) Snapshot(ctx context.Context) (*Status, error) {
 		if modeOverride != "" {
 			mode = modeOverride
 		}
+		personality := p.Personality
+		personalityOverride, _ := a.Store.PipelinePersonality(ctx, p.Name)
+		if personalityOverride != "" {
+			personality = personalityOverride
+		}
 		ps := PipelineStatus{
 			Name: p.Name, Mode: mode, ModeOverride: modeOverride, Enabled: p.Enabled,
+			Personality: personality, PersonalityOverride: personalityOverride,
 			Agent: eff.Agent, Model: eff.Model, Effort: eff.Effort,
 			BacklogExclusive: counts[p.Name],
 		}

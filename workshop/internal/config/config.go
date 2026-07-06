@@ -306,7 +306,8 @@ func (c *Config) checkModel(where, agent, model string) error {
 		where, model, agent, domain.ModelFamilies(agent), agent)
 }
 
-// checkPersonality validates a pipeline's personality selector: "" (none) and
+// checkPersonality validates a pipeline's personality selector: "" and "none"
+// (both mean no personality — resolvePersonality treats them as synonyms) and
 // "random" are always accepted; anything else must name an entry in
 // [personality].list (case-insensitive) so the dropdown and the resolved
 // value never disagree. "random" with an empty list is also rejected — it
@@ -314,7 +315,7 @@ func (c *Config) checkModel(where, agent, model string) error {
 // roster.
 func (c *Config) checkPersonality(where, personality string) error {
 	switch strings.ToLower(strings.TrimSpace(personality)) {
-	case "", "random":
+	case "", "none", "random":
 		if strings.EqualFold(personality, "random") && len(c.Personality.List) == 0 {
 			return fmt.Errorf("%s: personality \"random\" needs a non-empty [personality] list", where)
 		}
@@ -325,8 +326,16 @@ func (c *Config) checkPersonality(where, personality string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("%s: personality %q is not \"\", \"random\", or an entry in [personality] list (%v)",
+	return fmt.Errorf("%s: personality %q is not \"\", \"none\", \"random\", or an entry in [personality] list (%v)",
 		where, personality, c.Personality.List)
+}
+
+// CheckPersonality is checkPersonality exported for the live dashboard
+// override (SetPipelinePersonality): it needs the same validation config load
+// applies, so a typo'd or stale roster entry from the browser is rejected the
+// same way a bad TOML value would be.
+func (c *Config) CheckPersonality(where, personality string) error {
+	return c.checkPersonality(where, personality)
 }
 
 // Validate returns blocking problems (errs — Load aborts startup on any: for

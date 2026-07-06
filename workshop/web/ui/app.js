@@ -488,7 +488,7 @@ function AddPipelineForm({ extras, onAdd }) {
   </div>`;
 }
 
-function PipelineCard({ p, log, extras, onDesired, onBundle, onMode, onDelete }) {
+function PipelineCard({ p, log, extras, personalityConfig, onDesired, onBundle, onMode, onPersonality, onDelete }) {
   const [editBundle, setEditBundle] = useState(false);
   const running = !!p.running;
   const operatorHalt = p.halted === "operator";
@@ -520,6 +520,14 @@ function PipelineCard({ p, log, extras, onDesired, onBundle, onMode, onDelete })
         ${MODES.map((m) => html`<option value=${m}>${m}</option>`)}
       </select>
       ${p.modeOverride && html`<button title="clear override, back to the configured mode" onClick=${() => onMode(p.name, "")}>✕</button>`}
+      ${personalityConfig.enabled && html`<select class="chip" value=${p.personality || "none"}
+        onChange=${(e) => onPersonality(p.name, e.target.value)}
+        title=${"personality flavor injected into the prompt" + (p.personalityOverride ? " — live override, applies from the next pass" : " — click to override the configured personality")}>
+        <option value="none">none</option>
+        <option value="random">random</option>
+        ${personalityConfig.list.map((name) => html`<option value=${name}>${name}</option>`)}
+      </select>`}
+      ${p.personalityOverride && html`<button title="clear override, back to the configured personality" onClick=${() => onPersonality(p.name, "")}>✕</button>`}
       ${p.backlogExclusive > 0 && html`<span class="chip">own backlog: ${p.backlogExclusive}</span>`}
       <span class="spacer"></span>
       <button title="switch agent/model for the next pass" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
@@ -721,6 +729,7 @@ function App() {
   // extraModels: per-agent [agents.<agent>] extra_models from the config, so
   // the model dropdowns list the user's own additions next to the curated ids.
   const [extraModels, setExtraModels] = useState({});
+  const [personalityConfig, setPersonalityConfig] = useState({ enabled: false, list: [] });
   const [connected, setConnected] = useState(false);
   const [evaluatingGoal, setEvaluatingGoal] = useState(false);
   const [leftTab, setLeftTab] = useState("main");
@@ -764,6 +773,8 @@ function App() {
       const extras = {};
       for (const [name, ac] of Object.entries(agents)) extras[name] = ac.ExtraModels || [];
       setExtraModels(extras);
+      const pc = (c && c.effective && c.effective.Personality) || {};
+      setPersonalityConfig({ enabled: !!pc.Enabled, list: pc.List || [] });
     }).catch(() => {});
     const poll = setInterval(refresh, 7000);
     const close = subscribe({
@@ -907,9 +918,11 @@ function App() {
       <div>
         <${AddPipelineForm} extras=${extraModels} onAdd=${(p) => act(() => api.addPipeline(p))} />
         ${pipelines.map((p) => html`<${PipelineCard} key=${p.name} p=${p} extras=${extraModels}
+          personalityConfig=${personalityConfig}
           log=${logs[p.name]} onDesired=${(name, desired) => act(() => api.setPipeline(name, desired))}
           onBundle=${(name, bundle) => act(() => api.setPipelineBundle(name, bundle))}
           onMode=${(name, mode) => act(() => api.setPipelineMode(name, mode))}
+          onPersonality=${(name, personality) => act(() => api.setPipelinePersonality(name, personality))}
           onDelete=${(name) => act(() => api.deletePipeline(name))} />`)}
         ${pipelines.length === 0 && html`<div class="card muted">no pipelines configured</div>`}
       </div>

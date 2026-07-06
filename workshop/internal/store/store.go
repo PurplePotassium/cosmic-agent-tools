@@ -280,6 +280,31 @@ func (s *Store) SetPipelineMode(ctx context.Context, pipeline, mode string) erro
 	return s.SetKV(ctx, key, mode)
 }
 
+// PipelinePersonality returns the live personality-selector override for a
+// pipeline ("" when unset, meaning "use the configured personality"). Like
+// PipelineBundle/PipelineMode, this is an operator dial, not config — it
+// takes effect without a restart and is re-read every pass.
+func (s *Store) PipelinePersonality(ctx context.Context, pipeline string) (string, error) {
+	v, err := s.GetKV(ctx, "personality."+pipeline)
+	if errors.Is(err, ErrNotFound) {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetPipelinePersonality stores the live personality override; "" clears it
+// (back to the configured selector). An explicit "none" is a distinct,
+// storable value — it forces no personality even when the pipeline is
+// configured with one, whereas "" just falls back to that configuration.
+func (s *Store) SetPipelinePersonality(ctx context.Context, pipeline, personality string) error {
+	key := "personality." + pipeline
+	if personality == "" {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM kv WHERE k = ?`, key)
+		return err
+	}
+	return s.SetKV(ctx, key, personality)
+}
+
 // GetKV reads a kv value; ErrNotFound when absent.
 func (s *Store) GetKV(ctx context.Context, key string) (string, error) {
 	var v string

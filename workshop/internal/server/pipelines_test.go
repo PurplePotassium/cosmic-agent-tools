@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -136,6 +137,38 @@ func TestDeletePipelineRejectsMain(t *testing.T) {
 	rec := doPipelineReq(t, s, "DELETE", "/api/v1/pipelines/"+config.DefaultPipelineName, s.token, "")
 	if rec.Code != 400 {
 		t.Fatalf("delete main: got %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPatchPipelinePersonality pins the dashboard's live personality-override
+// endpoint: PATCH .../pipelines/{name} {"personality":...} mirrors bundle/mode
+// — a valid selector reaches the store immediately (next-pass, no restart),
+// an invalid one is rejected with 400 and leaves the store untouched, and ""
+// clears an active override back to the configured selector.
+func TestPatchPipelinePersonality(t *testing.T) {
+	s := newTestServerForPipelines(t)
+	ctx := context.Background()
+	name := config.DefaultPipelineName
+
+	if rec := doPipelineReq(t, s, "PATCH", "/api/v1/pipelines/"+name, s.token, `{"personality":"bogus-personality"}`); rec.Code != 400 {
+		t.Fatalf("bogus personality: got %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if got, err := s.App.Store.PipelinePersonality(ctx, name); err != nil || got != "" {
+		t.Fatalf("rejected patch left an override behind: %q err=%v", got, err)
+	}
+
+	if rec := doPipelineReq(t, s, "PATCH", "/api/v1/pipelines/"+name, s.token, `{"personality":"random"}`); rec.Code != 200 {
+		t.Fatalf("valid personality: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got, err := s.App.Store.PipelinePersonality(ctx, name); err != nil || got != "random" {
+		t.Fatalf("stored personality = %q err=%v, want %q", got, err, "random")
+	}
+
+	if rec := doPipelineReq(t, s, "PATCH", "/api/v1/pipelines/"+name, s.token, `{"personality":""}`); rec.Code != 200 {
+		t.Fatalf("clear personality: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got, err := s.App.Store.PipelinePersonality(ctx, name); err != nil || got != "" {
+		t.Fatalf("clearing personality: stored = %q err=%v, want empty", got, err)
 	}
 }
 

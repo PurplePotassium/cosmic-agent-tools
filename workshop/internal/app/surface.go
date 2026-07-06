@@ -286,6 +286,32 @@ func (a *App) SetPipelineMode(ctx context.Context, name, mode string) error {
 	return nil
 }
 
+// SetPipelinePersonality sets (or, for "", clears) the live personality
+// override for a pipeline. Workers re-read it every pass, so it takes effect
+// on the NEXT pass without a restart or a config edit — the personality
+// counterpart of SetPipelineBundle/SetPipelineMode.
+func (a *App) SetPipelinePersonality(ctx context.Context, name, personality string) error {
+	found := false
+	for _, p := range a.Res().Config.ResolvedPipelines() {
+		if p.Name == name {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("no pipeline named %q", name)
+	}
+	if err := a.Res().Config.CheckPersonality("pipelines."+name, personality); err != nil {
+		return err
+	}
+	if err := a.Store.SetPipelinePersonality(ctx, name, personality); err != nil {
+		return err
+	}
+	a.Bus.Publish(ctx, domain.Event{Type: "pipeline.personality", Pipeline: name, Payload: map[string]any{
+		"personality": personality, "cleared": personality == "",
+	}})
+	return nil
+}
+
 // QueueLane is one lane's merge-queue view.
 type QueueLane struct {
 	Pipeline       string `json:"pipeline"`

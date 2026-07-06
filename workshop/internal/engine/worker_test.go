@@ -628,30 +628,39 @@ func TestLiveModeOverrideAppliesNextPass(t *testing.T) {
 	}
 }
 
-// resolvePersonality is a pure function of WorkerConfig — exercise its modes
-// directly rather than through a full pass.
+// resolvePersonality is otherwise a pure function of WorkerConfig — exercise
+// its modes directly rather than through a full pass. It does need a real
+// store (nil panics on the live-override lookup), so each case gets its own
+// pipeline name to keep the shared store's overrides from bleeding across
+// cases.
 func TestResolvePersonality(t *testing.T) {
 	roster := []string{"Edgar Allan Poe", "Bill Gates"}
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "workshop.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
 
-	none := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: ""}, PersonalityEnabled: true, Personalities: roster}, nil, nil)
-	if got := none.resolvePersonality(); got != "" {
+	none := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Name: "none", Personality: ""}, PersonalityEnabled: true, Personalities: roster}, st, nil)
+	if got := none.resolvePersonality(ctx); got != "" {
 		t.Fatalf("empty selector should be a no-op, got %q", got)
 	}
 
-	fixed := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: "Bill Gates"}, PersonalityEnabled: true, Personalities: roster}, nil, nil)
-	if got := fixed.resolvePersonality(); got != "Bill Gates" {
+	fixed := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Name: "fixed", Personality: "Bill Gates"}, PersonalityEnabled: true, Personalities: roster}, st, nil)
+	if got := fixed.resolvePersonality(ctx); got != "Bill Gates" {
 		t.Fatalf("fixed selector = %q, want the pinned name", got)
 	}
 
-	disabled := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: "Bill Gates"}, PersonalityEnabled: false, Personalities: roster}, nil, nil)
-	if got := disabled.resolvePersonality(); got != "" {
+	disabled := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Name: "disabled", Personality: "Bill Gates"}, PersonalityEnabled: false, Personalities: roster}, st, nil)
+	if got := disabled.resolvePersonality(ctx); got != "" {
 		t.Fatalf("the [personality] master switch off must force none, got %q", got)
 	}
 
-	random := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: "random"}, PersonalityEnabled: true, Personalities: roster}, nil, nil)
+	random := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Name: "random", Personality: "random"}, PersonalityEnabled: true, Personalities: roster}, st, nil)
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {
-		p := random.resolvePersonality()
+		p := random.resolvePersonality(ctx)
 		if p != "Edgar Allan Poe" && p != "Bill Gates" {
 			t.Fatalf("random draw %q not in roster", p)
 		}
@@ -661,9 +670,27 @@ func TestResolvePersonality(t *testing.T) {
 		t.Fatalf("random should eventually draw both roster entries, saw: %v", seen)
 	}
 
-	randomEmpty := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: "random"}, PersonalityEnabled: true}, nil, nil)
-	if got := randomEmpty.resolvePersonality(); got != "" {
+	randomEmpty := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Name: "random-empty", Personality: "random"}, PersonalityEnabled: true}, st, nil)
+	if got := randomEmpty.resolvePersonality(ctx); got != "" {
 		t.Fatalf("\"random\" with an empty roster should degrade to none, got %q", got)
+	}
+
+	// The live dashboard override wins over the configured selector, and an
+	// explicit "none" override forces no personality even though the
+	// pipeline is configured with a fixed one — the dropdown's "clear
+	// override" button is the only way back to "Bill Gates" here.
+	overridden := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Name: "overridden", Personality: "Bill Gates"}, PersonalityEnabled: true, Personalities: roster}, st, nil)
+	if err := st.SetPipelinePersonality(ctx, "overridden", "Edgar Allan Poe"); err != nil {
+		t.Fatal(err)
+	}
+	if got := overridden.resolvePersonality(ctx); got != "Edgar Allan Poe" {
+		t.Fatalf("live override should win over the configured selector, got %q", got)
+	}
+	if err := st.SetPipelinePersonality(ctx, "overridden", "none"); err != nil {
+		t.Fatal(err)
+	}
+	if got := overridden.resolvePersonality(ctx); got != "" {
+		t.Fatalf("explicit \"none\" override should force no personality, got %q", got)
 	}
 }
 

@@ -430,3 +430,79 @@ func TestSetPipelineModeSetAndClear(t *testing.T) {
 		t.Fatal("clearing SetPipelineMode did not publish a pipeline.mode event")
 	}
 }
+
+// TestSetPipelinePersonalityValidation mirrors TestSetPipelineModeValidation
+// for the personality override: an unknown pipeline and a selector naming
+// neither "none"/"random" nor a [personality] roster entry must both be
+// rejected before the store is touched.
+func TestSetPipelinePersonalityValidation(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	ctx := context.Background()
+
+	if err := a.SetPipelinePersonality(ctx, "no-such-pipeline", "random"); err == nil {
+		t.Fatal("SetPipelinePersonality with unknown pipeline name: want error, got nil")
+	}
+	if err := a.SetPipelinePersonality(ctx, config.DefaultPipelineName, "bogus-personality"); err == nil {
+		t.Fatal("SetPipelinePersonality with unrecognized personality: want error, got nil")
+	}
+
+	personality, err := a.Store.PipelinePersonality(ctx, config.DefaultPipelineName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if personality != "" {
+		t.Fatalf("rejected SetPipelinePersonality calls left an override behind: %q", personality)
+	}
+}
+
+// TestSetPipelinePersonalitySetAndClear pins the live personality-override
+// contract: a valid selector reaches the store and publishes a
+// "pipeline.personality" event, an explicit "none" is a distinct storable
+// value (not just "no override"), and setting "" clears it again.
+func TestSetPipelinePersonalitySetAndClear(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	ctx := context.Background()
+	events, cancel := a.Bus.Subscribe()
+	defer cancel()
+
+	if err := a.SetPipelinePersonality(ctx, config.DefaultPipelineName, "none"); err != nil {
+		t.Fatal(err)
+	}
+	personality, err := a.Store.PipelinePersonality(ctx, config.DefaultPipelineName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if personality != "none" {
+		t.Fatalf("stored personality = %q, want %q", personality, "none")
+	}
+	select {
+	case ev := <-events:
+		if ev.Type != "pipeline.personality" || ev.Pipeline != config.DefaultPipelineName {
+			t.Fatalf("unexpected event: %+v", ev)
+		}
+		if cleared, _ := ev.Payload["cleared"].(bool); cleared {
+			t.Fatalf("event marked cleared=true for a non-empty personality: %+v", ev.Payload)
+		}
+	default:
+		t.Fatal("SetPipelinePersonality did not publish a pipeline.personality event")
+	}
+
+	if err := a.SetPipelinePersonality(ctx, config.DefaultPipelineName, ""); err != nil {
+		t.Fatal(err)
+	}
+	personality, err = a.Store.PipelinePersonality(ctx, config.DefaultPipelineName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if personality != "" {
+		t.Fatalf("clearing personality: stored = %q, want empty", personality)
+	}
+	select {
+	case ev := <-events:
+		if cleared, _ := ev.Payload["cleared"].(bool); !cleared {
+			t.Fatalf("clearing event did not mark cleared=true: %+v", ev.Payload)
+		}
+	default:
+		t.Fatal("clearing SetPipelinePersonality did not publish a pipeline.personality event")
+	}
+}
