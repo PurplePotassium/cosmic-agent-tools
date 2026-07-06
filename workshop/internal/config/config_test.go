@@ -330,6 +330,59 @@ extra_models = ["my-internal-proxy-model"]
 	}
 }
 
+func TestValidatePersonality(t *testing.T) {
+	// "" and "random" (any case) are always fine, and a name matching the
+	// roster case-insensitively resolves too.
+	dir := t.TempDir()
+	repo := writeFile(t, dir, "repo.toml", `
+[[pipelines]]
+name = "code"
+personality = "RANDOM"
+
+[[pipelines]]
+name = "flavor"
+personality = "edgar allan poe"
+`)
+	res, err := Load("", repo, "", noEnv)
+	if err != nil {
+		t.Fatalf("valid personality selectors must not block: %v", err)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", res.Warnings)
+	}
+	pl := res.Config.ResolvedPipelines()
+	if pl[1].Personality != "edgar allan poe" {
+		t.Fatalf("resolved personality = %q, want the configured (unlowered) value", pl[1].Personality)
+	}
+
+	// A name that isn't "", "random", or a roster entry must block startup —
+	// same "typo'd config never silently runs" policy as pipeline mode/effort.
+	dir2 := t.TempDir()
+	repoBad := writeFile(t, dir2, "repo.toml", `
+[[pipelines]]
+name = "code"
+personality = "Not A Real Persona"
+`)
+	if _, err := Load("", repoBad, "", noEnv); err == nil || !strings.Contains(err.Error(), "personality") {
+		t.Fatalf("unknown personality must block startup, got: %v", err)
+	}
+
+	// "random" with an emptied-out roster would silently resolve to none
+	// every pass — that's a config mistake, not a valid no-op.
+	dir3 := t.TempDir()
+	repoEmpty := writeFile(t, dir3, "repo.toml", `
+[personality]
+list = []
+
+[[pipelines]]
+name = "code"
+personality = "random"
+`)
+	if _, err := Load("", repoEmpty, "", noEnv); err == nil || !strings.Contains(err.Error(), "random") {
+		t.Fatalf("\"random\" with an empty list must block startup, got: %v", err)
+	}
+}
+
 func TestStartStoppedLayering(t *testing.T) {
 	dir := t.TempDir()
 	// A layer that sets other [server] keys but omits start_stopped must not

@@ -627,3 +627,64 @@ func TestLiveModeOverrideAppliesNextPass(t *testing.T) {
 		t.Fatalf("pass 3 (cleared, back to configured drain): res=%v err=%v", res, err)
 	}
 }
+
+// resolvePersonality is a pure function of WorkerConfig — exercise its modes
+// directly rather than through a full pass.
+func TestResolvePersonality(t *testing.T) {
+	roster := []string{"Edgar Allan Poe", "Bill Gates"}
+
+	none := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: ""}, PersonalityEnabled: true, Personalities: roster}, nil, nil)
+	if got := none.resolvePersonality(); got != "" {
+		t.Fatalf("empty selector should be a no-op, got %q", got)
+	}
+
+	fixed := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: "Bill Gates"}, PersonalityEnabled: true, Personalities: roster}, nil, nil)
+	if got := fixed.resolvePersonality(); got != "Bill Gates" {
+		t.Fatalf("fixed selector = %q, want the pinned name", got)
+	}
+
+	disabled := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: "Bill Gates"}, PersonalityEnabled: false, Personalities: roster}, nil, nil)
+	if got := disabled.resolvePersonality(); got != "" {
+		t.Fatalf("the [personality] master switch off must force none, got %q", got)
+	}
+
+	random := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: "random"}, PersonalityEnabled: true, Personalities: roster}, nil, nil)
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		p := random.resolvePersonality()
+		if p != "Edgar Allan Poe" && p != "Bill Gates" {
+			t.Fatalf("random draw %q not in roster", p)
+		}
+		seen[p] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("random should eventually draw both roster entries, saw: %v", seen)
+	}
+
+	randomEmpty := NewWorker(WorkerConfig{Pipeline: domain.Pipeline{Personality: "random"}, PersonalityEnabled: true}, nil, nil)
+	if got := randomEmpty.resolvePersonality(); got != "" {
+		t.Fatalf("\"random\" with an empty roster should degrade to none, got %q", got)
+	}
+}
+
+// The resolved personality must reach the composed prompt AND the pass log
+// header — the log line is the operator's window into which flavor a pass
+// ran under.
+func TestPersonalityReachesPassLog(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy"}, func(cfg *WorkerConfig) {
+		cfg.Pipeline.Personality = "Bill Gates"
+		cfg.PersonalityEnabled = true
+	})
+	ctx := context.Background()
+	r.addTask("fix the bug")
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(r.cfg.LogDir, "iter-000001.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "persona: Bill Gates") {
+		t.Fatalf("personality missing from log header:\n%s", data)
+	}
+}

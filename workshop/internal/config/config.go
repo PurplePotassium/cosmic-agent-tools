@@ -15,15 +15,16 @@ import (
 
 // Config is the fully resolved configuration for one project.
 type Config struct {
-	Project    ProjectConfig            `toml:"project"`
-	Git        GitConfig                `toml:"git"`
-	Safety     SafetyConfig             `toml:"safety"`
-	Spice      SpiceConfig              `toml:"spice"`
-	Classifier ClassifierConfig         `toml:"classifier"`
-	Types      map[string]domain.Bundle `toml:"types"` // task-type routing table
-	Pipelines  []PipelineConfig         `toml:"pipelines"`
-	Server     ServerConfig             `toml:"server"`
-	Agents     map[string]AgentConfig   `toml:"agents"`
+	Project     ProjectConfig            `toml:"project"`
+	Git         GitConfig                `toml:"git"`
+	Safety      SafetyConfig             `toml:"safety"`
+	Spice       SpiceConfig              `toml:"spice"`
+	Personality PersonalityConfig        `toml:"personality"`
+	Classifier  ClassifierConfig         `toml:"classifier"`
+	Types       map[string]domain.Bundle `toml:"types"` // task-type routing table
+	Pipelines   []PipelineConfig         `toml:"pipelines"`
+	Server      ServerConfig             `toml:"server"`
+	Agents      map[string]AgentConfig   `toml:"agents"`
 }
 
 type ProjectConfig struct {
@@ -55,6 +56,35 @@ type SpiceConfig struct {
 	Nouns    string `toml:"nouns"`
 }
 
+// PersonalityConfig is the operator-editable roster a pipeline's Personality
+// selector draws from when set to "random". Unlike Spice (an anti-circling
+// technique that always varies), a personality is a fixed roleplay flavor a
+// pipeline opts into deliberately — most pipelines leave it at "" (none).
+type PersonalityConfig struct {
+	Enabled bool     `toml:"enabled"` // master switch; false makes every pipeline's selector a no-op
+	List    []string `toml:"list"`    // roster "random" draws from; also the valid named choices
+}
+
+// DefaultPersonalities seeds the roster with the built-in cast — an
+// intentionally varied set of lenses (literary, paranoid, meticulous,
+// destructive, famous) for pipelines that want a persistent flavor rather
+// than spice's per-pass anti-circling variety.
+var DefaultPersonalities = []string{
+	"Edgar Allan Poe",
+	"H.P. Lovecraft",
+	"a conspiracy theorist who believes everything is connected and distrusts everything",
+	"an obsessive detective",
+	"a rules lawyer",
+	"a video game speedrunner",
+	"a chaos toddler who pokes and prods the app in unexpected ways",
+	"a min-maxer who tries to optimize everything",
+	"Rick, a mad scientist",
+	"Paul, a principal architect engineer",
+	"Bill Gates",
+	"Steve Jobs",
+	"Elon Musk",
+}
+
 type ClassifierConfig struct {
 	Mode  string `toml:"mode"` // "off" | "heuristic" | "agent"
 	Agent string `toml:"agent"`
@@ -68,7 +98,7 @@ type PipelineConfig struct {
 	Agent     string   `toml:"agent"`
 	Model     string   `toml:"model"`
 	Effort    string   `toml:"effort"`
-	Invent    *bool    `toml:"invent"`   // default true; ignored when Mode is set
+	Invent    *bool    `toml:"invent"` // default true; ignored when Mode is set
 	// Mode names the pipeline's goal-pursuit/backlog-growth stance:
 	//   "goal" (default) - invents work when idle (per Invent) AND accepts
 	//     agent-proposed follow-ups. Today's behavior.
@@ -77,10 +107,13 @@ type PipelineConfig struct {
 	//   "drain" - never invents idle work and never accepts follow-ups: the
 	//     pipeline can only shrink the backlog.
 	// Set, it overrides Invent.
-	Mode      string   `toml:"mode"`
-	Enabled   *bool    `toml:"enabled"`  // default true
-	Worktree  *bool    `toml:"worktree"` // per-pipeline override of [git].worktrees
-	ScopeHint string   `toml:"scope_hint"`
+	Mode      string `toml:"mode"`
+	Enabled   *bool  `toml:"enabled"`  // default true
+	Worktree  *bool  `toml:"worktree"` // per-pipeline override of [git].worktrees
+	ScopeHint string `toml:"scope_hint"`
+	// Personality: "" (none, default) | "random" (draw from [personality].list
+	// each pass) | a roster entry name, pinning this pipeline to one flavor.
+	Personality string `toml:"personality"`
 	// WedgeMinutes overrides [safety].wedge_minutes for this pipeline (0 = inherit).
 	WedgeMinutes int `toml:"wedge_minutes"`
 	// ExtraArgs are appended verbatim to every agent invocation of this pipeline.
@@ -105,13 +138,14 @@ type AgentConfig struct {
 // Default returns the built-in configuration — the "empty file works" layer.
 func Default() Config {
 	return Config{
-		Project:    ProjectConfig{VerifyDir: "."},
-		Git:        GitConfig{Worktrees: "auto", BranchPrefix: "workshop/"},
+		Project: ProjectConfig{VerifyDir: "."},
+		Git:     GitConfig{Worktrees: "auto", BranchPrefix: "workshop/"},
 		// WedgeMinutes must stay above agy's 30m --print-timeout or default
 		// config kills healthy agy passes (and can trip the breaker).
-		Safety:     SafetyConfig{MaxIterations: 0, SkipPermissions: true, BreakerFailures: 5, WedgeMinutes: 35, MaxConcurrent: 2},
-		Spice:      SpiceConfig{Enabled: true, Personas: "general", Nouns: "general"},
-		Classifier: ClassifierConfig{Mode: "heuristic"},
+		Safety:      SafetyConfig{MaxIterations: 0, SkipPermissions: true, BreakerFailures: 5, WedgeMinutes: 35, MaxConcurrent: 2},
+		Spice:       SpiceConfig{Enabled: true, Personas: "general", Nouns: "general"},
+		Personality: PersonalityConfig{Enabled: true, List: append([]string(nil), DefaultPersonalities...)},
+		Classifier:  ClassifierConfig{Mode: "heuristic"},
 		// Built-in task types ship with EMPTY bundles: routing falls through
 		// to the pipeline's own bundle, so nothing changes about which agent
 		// runs. Their presence seeds the classifier vocabulary (tasks get
@@ -121,8 +155,8 @@ func Default() Config {
 		Types: map[string]domain.Bundle{
 			"code": {}, "tests": {}, "docs": {}, "art": {}, "audio": {}, "merge-conflict": {},
 		},
-		Server:     ServerConfig{Port: 4455, OpenBrowser: true, StartStopped: true},
-		Agents:     map[string]AgentConfig{},
+		Server: ServerConfig{Port: 4455, OpenBrowser: true, StartStopped: true},
+		Agents: map[string]AgentConfig{},
 	}
 }
 
@@ -187,6 +221,7 @@ func (c *Config) ResolvedPipelines() []domain.Pipeline {
 			AcceptProposals: acceptProposals,
 			Enabled:         boolOr(pc.Enabled, true),
 			Worktree:        pc.Worktree,
+			Personality:     pc.Personality,
 			PassTimeout:     time.Duration(wedge) * time.Minute,
 			ExtraArgs:       pc.ExtraArgs,
 		})
@@ -271,6 +306,29 @@ func (c *Config) checkModel(where, agent, model string) error {
 		where, model, agent, domain.ModelFamilies(agent), agent)
 }
 
+// checkPersonality validates a pipeline's personality selector: "" (none) and
+// "random" are always accepted; anything else must name an entry in
+// [personality].list (case-insensitive) so the dropdown and the resolved
+// value never disagree. "random" with an empty list is also rejected — it
+// would silently resolve to none every pass, hiding a typo'd or emptied
+// roster.
+func (c *Config) checkPersonality(where, personality string) error {
+	switch strings.ToLower(strings.TrimSpace(personality)) {
+	case "", "random":
+		if strings.EqualFold(personality, "random") && len(c.Personality.List) == 0 {
+			return fmt.Errorf("%s: personality \"random\" needs a non-empty [personality] list", where)
+		}
+		return nil
+	}
+	for _, p := range c.Personality.List {
+		if strings.EqualFold(p, personality) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: personality %q is not \"\", \"random\", or an entry in [personality] list (%v)",
+		where, personality, c.Personality.List)
+}
+
 // Validate returns blocking problems (errs — Load aborts startup on any: for
 // an unattended tool, a bad safety knob or malformed pipeline must never
 // silently run) and advisories (warns — model-family mismatches, which are
@@ -308,6 +366,9 @@ func (c *Config) Validate() (errs, warns []error) {
 		case "", "goal", "discover", "drain":
 		default:
 			errs = append(errs, fmt.Errorf("pipelines.%s: mode %q is not goal/discover/drain", p.Name, p.Mode))
+		}
+		if err := c.checkPersonality("pipelines."+p.Name, p.Personality); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	for t, b := range c.Types {

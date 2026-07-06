@@ -24,6 +24,7 @@ type Inputs struct {
 	TaskBlock    string // the claimed task (or the invent instruction)
 	TypeFragment string // .workshop/prompts/types/<type>.md
 	Spice        Spice
+	Personality  string // resolved roster entry ("" = none, the default) — see PersonalityDirective
 }
 
 const tailSeparator = "\n\n---\n\n"
@@ -47,8 +48,24 @@ func Compose(in Inputs) (prefix, full string) {
 		section("GUIDANCE FOR THIS TASK TYPE", in.TypeFragment),
 	)
 	tail = in.Spice.Prefix + tail + in.Spice.Suffix
+	if d := PersonalityDirective(in.Personality); d != "" {
+		tail += "\n\n" + d
+	}
 
 	return prefix, prefix + tailSeparator + tail
+}
+
+// PersonalityDirective renders the operator-configured personality
+// instruction trailing the very end of the prompt, or "" for the default
+// "none" personality. Unlike Spice's per-pass persona lens (framed as a
+// temporary anti-circling nudge), this is a standing directive: the exact
+// wording an agent's personality dropdown promises operators.
+func PersonalityDirective(personality string) string {
+	personality = strings.TrimSpace(personality)
+	if personality == "" {
+		return ""
+	}
+	return fmt.Sprintf("From now on, while staying focused on your mission I want you to think and act like %s.", personality)
 }
 
 // ScopeBlock generates the pipeline identity block for multi-pipeline

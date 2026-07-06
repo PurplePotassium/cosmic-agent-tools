@@ -99,7 +99,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 
 	logPath := filepath.Join(w.cfg.LogDir, fmt.Sprintf("iter-%06d.log", pass.N))
 	w.patchPass(ctx, pass.ID, store.PassPatch{LogPath: &logPath})
-	logFile, err := w.openPassLog(logPath, pass, task, res, prompt.Spice{}, sessionID)
+	logFile, err := w.openPassLog(logPath, pass, task, res, prompt.Spice{}, "", sessionID)
 	if err != nil {
 		cleanup(true)
 		return w.failSetup(ctx, pass, task, err)

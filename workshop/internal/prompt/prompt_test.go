@@ -104,6 +104,44 @@ func TestComposeContainsAllPieces(t *testing.T) {
 	}
 }
 
+func TestPersonalityDirective(t *testing.T) {
+	if got := PersonalityDirective(""); got != "" {
+		t.Fatalf("empty personality should render nothing, got %q", got)
+	}
+	if got := PersonalityDirective("  "); got != "" {
+		t.Fatalf("whitespace-only personality should render nothing, got %q", got)
+	}
+	got := PersonalityDirective("Edgar Allan Poe")
+	want := "From now on, while staying focused on your mission I want you to think and act like Edgar Allan Poe."
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// The personality directive must trail the very end of the composed prompt —
+// after spice — and stay absent when no personality is resolved, since "none"
+// is the default and must do nothing.
+func TestComposePersonality(t *testing.T) {
+	in := stableInputs()
+	in.TaskBlock = TaskBlock(&domain.Task{ID: "ws-1", Title: "wire the thing"})
+	in.Spice = Spice{Mode: "persona:x", Suffix: " SPICE-SUFFIX"}
+
+	_, withoutPersonality := Compose(in)
+	if strings.Contains(withoutPersonality, "think and act like") {
+		t.Fatal("no personality configured should not inject a directive")
+	}
+
+	in.Personality = "Bill Gates"
+	_, withPersonality := Compose(in)
+	want := "From now on, while staying focused on your mission I want you to think and act like Bill Gates."
+	if !strings.HasSuffix(withPersonality, want) {
+		t.Fatalf("personality directive must trail the prompt, got tail: %q", withPersonality[len(withPersonality)-200:])
+	}
+	if !strings.Contains(withPersonality, "SPICE-SUFFIX") {
+		t.Fatal("personality directive must not replace spice, both should be present")
+	}
+}
+
 func TestScopeBlockSoloIsEmpty(t *testing.T) {
 	if got := ScopeBlock(domain.Pipeline{Name: "main"}, false); got != "" {
 		t.Fatalf("solo scope block should be empty, got %q", got)

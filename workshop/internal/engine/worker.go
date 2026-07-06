@@ -103,6 +103,12 @@ type WorkerConfig struct {
 	Nouns        []string
 	Rng          *rand.Rand
 
+	// PersonalityEnabled is the [personality].enabled master switch; false
+	// makes every pipeline's Personality selector a no-op regardless of its
+	// own setting. Personalities is the roster "random" draws from.
+	PersonalityEnabled bool
+	Personalities      []string
+
 	// Multi-pipeline coordination (set by the supervisor):
 	//   SyncTrunk — worktree mode: merge this (gated-green) trunk into the
 	//     lane at pass start so agents build on integrated work.
@@ -378,7 +384,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		return w.runConflictPass(ctx, pass, task, res, sessionID)
 	}
 
-	full, spice, err := w.preparePass(ctx, task)
+	full, spice, personality, err := w.preparePass(ctx, task)
 	if err != nil {
 		return w.failSetup(ctx, pass, task, err)
 	}
@@ -388,7 +394,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 
 	logPath := filepath.Join(w.cfg.LogDir, fmt.Sprintf("iter-%06d.log", pass.N))
 	w.patchPass(ctx, pass.ID, store.PassPatch{LogPath: &logPath})
-	logFile, err := w.openPassLog(logPath, pass, task, res, spice, sessionID)
+	logFile, err := w.openPassLog(logPath, pass, task, res, spice, personality, sessionID)
 	if err != nil {
 		return w.failSetup(ctx, pass, task, err)
 	}
@@ -416,17 +422,17 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 }
 
 // preparePass materializes state files and composes the prompt.
-func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, prompt.Spice, error) {
+func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, prompt.Spice, string, error) {
 	snapshot, err := w.bl.Snapshot(ctx)
 	if err != nil {
-		return "", prompt.Spice{}, err
+		return "", prompt.Spice{}, "", err
 	}
 	completions, err := w.st.ListCompletions(ctx, 20)
 	if err != nil {
-		return "", prompt.Spice{}, err
+		return "", prompt.Spice{}, "", err
 	}
 	if err := statedir.Materialize(w.cfg.StateDir, task, snapshot, completions); err != nil {
-		return "", prompt.Spice{}, err
+		return "", prompt.Spice{}, "", err
 	}
 
 	branch, _ := gitx.CurrentBranch(ctx, w.cfg.RepoDir)
@@ -447,6 +453,7 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 	if w.cfg.SpiceEnabled {
 		spice = prompt.NewSpice(w.cfg.Rng, w.cfg.Personas, w.cfg.Nouns)
 	}
+	personality := w.resolvePersonality()
 	_, full := prompt.Compose(prompt.Inputs{
 		BaseContract: base,
 		Mechanics: prompt.Mechanics(prompt.MechanicsInputs{
@@ -463,8 +470,31 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 		TaskBlock:        taskBlock,
 		TypeFragment:     typeFragment,
 		Spice:            spice,
+		Personality:      personality,
 	})
-	return full, spice, nil
+	return full, spice, personality, nil
+}
+
+// resolvePersonality applies this pipeline's Personality selector: ""/"none"
+// is a no-op, "random" draws one from the configured roster (re-rolled every
+// pass, like Spice), and anything else is a literal roster entry the config
+// already validated at load. The [personality] master switch overrides all
+// of it off.
+func (w *Worker) resolvePersonality() string {
+	if !w.cfg.PersonalityEnabled {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(w.cfg.Pipeline.Personality)) {
+	case "", "none":
+		return ""
+	case "random":
+		if len(w.cfg.Personalities) == 0 {
+			return ""
+		}
+		return w.cfg.Personalities[w.cfg.Rng.Intn(len(w.cfg.Personalities))]
+	default:
+		return w.cfg.Pipeline.Personality
+	}
 }
 
 // spawn runs the agent process in dir and streams/captures its output.
@@ -815,7 +845,7 @@ func (w *Worker) fragment(rel string) string {
 	return readTrim(filepath.Join(w.cfg.PromptsDir, rel))
 }
 
-func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, res *resolved, spice prompt.Spice, sessionID string) (*os.File, error) {
+func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, res *resolved, spice prompt.Spice, personality, sessionID string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -828,6 +858,9 @@ func (w *Worker) openPassLog(path string, pass *domain.Pass, task *domain.Task, 
 		res.drv.Name(), res.bundle.Model, res.bundle.Effort)
 	if sessionID != "" {
 		fmt.Fprintf(f, "session: %s\n", sessionID)
+	}
+	if personality != "" {
+		fmt.Fprintf(f, "persona: %s\n", personality)
 	}
 	fmt.Fprintf(f, "task   : %s\nspice  : %s\nstarted: %s\n%s\n",
 		passTaskTitle(task), spice.Mode, pass.Started.Format(time.RFC3339), strings.Repeat("-", 72))

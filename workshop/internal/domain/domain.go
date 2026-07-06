@@ -117,16 +117,16 @@ func KnownModel(agent, model string) bool {
 // backlog (Backlog == MainBacklog) or on exactly one pipeline's exclusive
 // backlog (Backlog == pipeline name).
 type Task struct {
-	ID       string            `json:"id"`
-	Backlog  string            `json:"backlog,omitempty"`
-	Type     string            `json:"type,omitempty"` // "" = unclassified
-	Title    string            `json:"title"`
-	Detail   string            `json:"detail,omitempty"`
-	Files    []string          `json:"files,omitempty"` // optional scope hint
-	Pin      Bundle            `json:"pin,omitzero"`    // operator pin — beats the routing table
-	Position float64           `json:"-"`               // per-backlog ordering; lower = sooner
-	Status   TaskStatus        `json:"status,omitempty"`
-	Origin   TaskOrigin        `json:"origin,omitempty"`
+	ID       string     `json:"id"`
+	Backlog  string     `json:"backlog,omitempty"`
+	Type     string     `json:"type,omitempty"` // "" = unclassified
+	Title    string     `json:"title"`
+	Detail   string     `json:"detail,omitempty"`
+	Files    []string   `json:"files,omitempty"` // optional scope hint
+	Pin      Bundle     `json:"pin,omitzero"`    // operator pin — beats the routing table
+	Position float64    `json:"-"`               // per-backlog ordering; lower = sooner
+	Status   TaskStatus `json:"status,omitempty"`
+	Origin   TaskOrigin `json:"origin,omitempty"`
 
 	ClaimedBy string            `json:"claimedBy,omitempty"` // pipeline name
 	ClaimPass int64             `json:"-"`
@@ -156,6 +156,11 @@ type Pipeline struct {
 	AcceptProposals bool
 	Enabled         bool
 	Worktree        *bool // per-pipeline override of the project worktree setting; nil = inherit
+
+	// Personality: "" (none, the default) does nothing; "random" draws one
+	// from the configured [personality] roster each pass; anything else
+	// names one roster entry directly (validated at config load).
+	Personality string
 
 	PassTimeout time.Duration // wedge threshold; 0 = driver default
 	ExtraArgs   []string      // raw args appended to every agent invocation
@@ -285,11 +290,11 @@ type Pass struct {
 // Progress is the agent's self-report, overwritten whole-file each pass.
 // It is the only window into a pass run by a blind (non-capturable) driver.
 type Progress struct {
-	Phase   string `json:"phase"` // working | done | blocked | reverted
-	Task    string `json:"task,omitempty"`
-	Plan    string `json:"plan,omitempty"`
-	Note    string `json:"note,omitempty"`
-	Result  string `json:"result,omitempty"`
+	Phase  string `json:"phase"` // working | done | blocked | reverted
+	Task   string `json:"task,omitempty"`
+	Plan   string `json:"plan,omitempty"`
+	Note   string `json:"note,omitempty"`
+	Result string `json:"result,omitempty"`
 	// Decisions is the agent's optional record of judgment calls: assumptions
 	// made, alternatives rejected, deviations from the task or project docs.
 	// Preserved in the pass log for later "why did this happen?" forensics.
