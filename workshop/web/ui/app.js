@@ -324,22 +324,26 @@ function TaskRow({ task, pipelines, onTop, onMove, onDelete }) {
   const thumbs = parseAttachments(task.detail);
   return html`<div class="task-row">
     <span class="title" title=${task.detail || task.title}>${task.title}</span>
-    ${thumbs.map((a, i) => html`<span class="attachment-chip thumb" key=${i}>
-      <img src=${attachmentURL(a.name)} alt=${a.alt} />
-    </span>`)}
-    ${task.type && html`<span class="chip type">${task.type}</span>`}
-    ${pinLabel && html`<span class="chip pin" title="pinned bundle">${pinLabel}</span>`}
-    ${task.status === "claimed" && html`<span class="chip claimed">▶ ${task.claimedBy}</span>`}
-    ${task.status === "stuck" && html`<span class="chip stuck">stuck ×${task.attempts}</span>`}
-    <span class="actions">
-      <button title="move to top" onClick=${() => onTop(task)}>↑</button>
-      <select title="move to backlog" onChange=${(e) => { if (e.target.value) onMove(task, e.target.value); e.target.value = ""; }}>
-        <option value="">⇢</option>
-        <option value=${SHARED}>${SHARED}</option>
-        ${pipelines.map((p) => html`<option value=${p.name}>${p.name}</option>`)}
-      </select>
-      <button class="danger" title="delete" onClick=${() => onDelete(task)}>✕</button>
-    </span>
+    <div class="side">
+      <span class="chips">
+        ${thumbs.map((a, i) => html`<span class="attachment-chip thumb" key=${i}>
+          <img src=${attachmentURL(a.name)} alt=${a.alt} />
+        </span>`)}
+        ${task.type && html`<span class="chip type">${task.type}</span>`}
+        ${pinLabel && html`<span class="chip pin" title="pinned bundle">${pinLabel}</span>`}
+        ${task.status === "claimed" && html`<span class="chip claimed">▶ ${task.claimedBy}</span>`}
+        ${task.status === "stuck" && html`<span class="chip stuck">stuck ×${task.attempts}</span>`}
+      </span>
+      <span class="actions">
+        <button title="move to top" onClick=${() => onTop(task)}>↑</button>
+        <select title="move to backlog" onChange=${(e) => { if (e.target.value) onMove(task, e.target.value); e.target.value = ""; }}>
+          <option value="">⇢</option>
+          <option value=${SHARED}>${SHARED}</option>
+          ${pipelines.map((p) => html`<option value=${p.name}>${p.name}</option>`)}
+        </select>
+        <button class="danger" title="delete" onClick=${() => onDelete(task)}>✕</button>
+      </span>
+    </div>
   </div>`;
 }
 

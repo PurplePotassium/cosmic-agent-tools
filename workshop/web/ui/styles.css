@@ -146,8 +146,9 @@ select.chip { background: var(--bg); font: inherit; cursor: pointer; }
 }
 .task-row:last-child { border-bottom: none; }
 .task-row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-row .actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
-.task-row:hover .actions { opacity: 1; }
+.task-row .side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+.task-row .chips { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.task-row .actions { display: flex; gap: 4px; }
 .task-row .actions button { padding: 1px 7px; font-size: 0.75rem; }
 .backlog-section { margin-bottom: 10px; }
 .backlog-section h3 {
