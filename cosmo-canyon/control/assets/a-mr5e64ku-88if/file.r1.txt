@@ -1,0 +1,1 @@
+STAGE BUG FIXES v2 (feel/visual + sim): (1) seamless infinite floor scroll via TilingSprite.tilePosition (no tile-snap); (2) player projectiles persist until off-screen or enemy impact (not a short fixed range); (3) render hardening: WebGL context-loss/restore handler so a lost GPU context does not freeze the stage. Verified visually + gate green.

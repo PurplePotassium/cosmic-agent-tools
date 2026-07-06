@@ -2,9 +2,9 @@
   "id": "a-mr40b87i-0mkc",
   "kind": "image",
   "filename": "player.charsel_c.png",
-  "file": "file.r1.png",
+  "file": "file.r3.png",
   "mime": "image/png",
-  "contentHash": "sha256:4c05114daadadd82b9747c22fd9826d77ac7502d5bdfb18cb4c43162183c0ff5",
+  "contentHash": "sha256:a26bd1802ca8bcdea4c700314bde1c647f47724f22ccb7e5fb48fa58620b5b5a",
   "instructions": "32x48, 1 frame. key: player.charsel_c. Placeholder character C (Mage) — green standing figure for the character-select screen.",
   "questions": [],
   "state": "ready",
@@ -17,20 +17,20 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr40b87i-0mkc-r2",
-    "sha": "7926d66c82575ef24b13cc9544d22e91ccb83705",
-    "contentHash": "sha256:4c05114daadadd82b9747c22fd9826d77ac7502d5bdfb18cb4c43162183c0ff5",
-    "rev": 2
+    "beadId": "asset-a-mr40b87i-0mkc-r5",
+    "sha": "1e859e50f5fbfb445ae0be8974c03ea27c1a4da3",
+    "contentHash": "sha256:a26bd1802ca8bcdea4c700314bde1c647f47724f22ccb7e5fb48fa58620b5b5a",
+    "rev": 5
   },
-  "implementedContentHash": "sha256:4c05114daadadd82b9747c22fd9826d77ac7502d5bdfb18cb4c43162183c0ff5",
+  "implementedContentHash": "sha256:a26bd1802ca8bcdea4c700314bde1c647f47724f22ccb7e5fb48fa58620b5b5a",
   "feelConfirmed": null,
-  "placeholderStale": false,
+  "placeholderStale": true,
   "abandonCount": 0,
   "questionRounds": 0,
   "abandonedAtContentHash": null,
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T21:18:41.742Z",
-  "updated": "2026-07-02T21:38:03.175Z",
-  "rev": 2
+  "updated": "2026-07-04T05:10:59.468Z",
+  "rev": 5
 }

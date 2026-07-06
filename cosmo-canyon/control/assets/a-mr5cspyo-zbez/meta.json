@@ -1,0 +1,48 @@
+{
+  "id": "a-mr5cspyo-zbez",
+  "kind": "spec",
+  "filename": "fix_player_bottom_enemies_from_top.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:9c5f94a87d2a00279ad1954fb3b373486d41f832809415edccd3e2bd6cbd9c7f",
+  "instructions": "FIX (stage layout): the player must start at the BOTTOM of the portrait screen, and enemies must enter from the TOP edge (stream down into view), NOT pop in on-screen near the player.\n\nCURRENT BUG: startRun() never sets the player position, so the player sits at newGame's y=0, which under the corridor band-clamp is the TOP of the visible band. Enemies spawn at player.y - spawnRing (just above the player, who is already at the top) so they appear right where the player is = \"suddenly appear on screen\". XP also breaks (gems drop ahead and the downward scroll leaves them behind).\n\nMODEL (portrait auto-scroller): the camera top edge is camTop = -MAP_SCROLL_SPEED * s.time (decreases over time; content scrolls DOWN). The visible band is world-y [camTop, camTop + VIEW_H_WORLD]. Player should sit near the BOTTOM of that band; enemies enter at the TOP edge and stream down toward the player.\n\nDO:\n1) src/sim/state.ts — add 'export const PLAYER_START_Y = VIEW_H_WORLD - 200;' (near the bottom of the initial band [0, VIEW_H_WORLD]). Do NOT change newGame's player y (leave 0,0 — protected pickup tests spawn pickups at 0,0 and require the default player there). PLAYER_START_Y is set by the host at run start.\n2) src/main.ts startRun() — after harness.beginRun + the loadout block, set st.player.x = 0; st.player.y = PLAYER_START_Y; (bottom-center). Import PLAYER_START_Y from the sim. This positions the REAL run's player at the bottom; the headless tests keep y=0.\n3) src/sim/systems/spawn.ts — spawn enemies from the TOP EDGE instead of relative to the player. Compute camTop = -MAP_SCROLL_SPEED * s.time inside the system. For the swarm (both null-zone and stage paths), the minibosses, the boss, and the Forest enemy-wall event: set spawn y = camTop - <offscreen margin> (e.g. rng.range(30, 160) above the top edge, i.e. y = camTop - that) so they enter from just above the visible top and stream down. Keep spawn x corridor-clamped (the existing clampCorridorX). Enemies already steer toward the player (they will descend toward the bottom player). This makes them visibly come from the top.\n4) GEM/XP: verify the player at the bottom actually collects XP now (enemies die near the player at the bottom as they arrive). If gems still get left behind by the scroll, modestly raise the pickup magnet so on-screen gems home in — but prefer no balance change if XP already accrues.\n\nWINNABILITY (protected test/sim.win-loss.ts — do NOT edit tests): these sim changes shift the headless autopilot trajectory (the test player stays at y=0 since newGame is unchanged; enemies now spawn from camTop-margin). Run 'node node_modules/tsx/dist/cli.mjs test/sim.win-loss.ts' and the full 'test/sim.ts'. Requirements: SEED=3 autopilot beats the boss within 6000 ticks AND stationary newGame(42) dies within 3000 ticks. If WIN or LOSS breaks, re-tune sim balance minimally (spawn margin/cadence, or the 'knives' default damage) WITHOUT editing tests until both hold. Also keep canary/determinism/budget green.\n\nCONSTRAINTS: src/sim deterministic (no Math.random/Date.now/rAF/performance.now; use s.rng). No test/accept/package.json edits. Gate green. Verify visually: player renders near the bottom of the portrait, enemies stream in from the top edge.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/main.ts",
+    "src/sim/state.ts",
+    "src/sim/systems/spawn.ts",
+    "src/sim/systems/movement.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5cspyo-zbez-r1",
+    "sha": "7d871ea5b39e8a99716c63cebe10883096897488",
+    "contentHash": "sha256:9c5f94a87d2a00279ad1954fb3b373486d41f832809415edccd3e2bd6cbd9c7f",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:9c5f94a87d2a00279ad1954fb3b373486d41f832809415edccd3e2bd6cbd9c7f",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5cspyo-zbez-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T20:10:15.455Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T19:55:59.472Z",
+  "updated": "2026-07-04T07:54:02.572Z",
+  "rev": 1,
+  "acceptanceKind": "feel",
+  "authorityRetired": true
+}

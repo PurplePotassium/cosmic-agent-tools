@@ -1,0 +1,45 @@
+{
+  "id": "a-mr5ef2xw-0ul5",
+  "kind": "spec",
+  "filename": "juice_v2.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:50373f8cf61e3ed04d54b839acd90409fc631769944cfda2b8c99ec752531e95",
+  "instructions": "JUICE / GAME FEEL v2 — deeper polish (render layer only; sim deterministic + untouched). Apply the Vlambeer/Nijman \"Art of Screenshake\" principles.\nAdd / improve (all render-side, reading sim state + s.fxEvents frame-to-frame; performance.now/Math.random allowed in src/render):\n1) HIT-STOP / freeze-frames: on a big impact (boss/miniboss hit, big kill, player damage), briefly freeze/slow the visual for ~40-80ms (render-only: hold the frame / skip advancing render interpolation; DO NOT alter the sim step) for punchy feedback.\n2) FLOATING DAMAGE NUMBERS: on enemy hp drops, spawn small rising, fading damage-number text (pooled, capped ~40); bigger/critical hits = bigger/brighter. Reads hp deltas frame-to-frame (no sim change).\n3) ENEMY KNOCKBACK (visual): nudge an enemy sprite back briefly on hit (render offset, decaying) — do not move sim positions.\n4) MUZZLE FLASH + projectile trails: a brief flash at the player when a weapon fires (weaponAoeFires / projectile appears); short fading trails behind projectiles.\n5) Sharper SCREENSHAKE curves (trauma^2, directional toward impact) + a subtle zoom-punch on boss spawn/defeat.\n6) LEVEL-UP / EVOLUTION flair: a brief slow-mo + bright burst + rays on level-up and on weapon evolve.\n7) PICKUP streaks: XP orbs leave a short streak when magnetized; a small pop + count-up on the XP bar.\n8) Keep all existing fx (vignette, death-pops, hit-flash, glow, telegraph) — layer on top. Cap particle/text pools for 60fps mobile.\nCONSTRAINTS: render only; NO src/sim edits; no test/accept/package.json edits; gate green (sim unchanged). Verify visually.\nACCEPTANCE: hits show damage numbers + knockback + hit-stop; firing shows muzzle flash/trails; level-up/evolve/boss get flair; framerate stable; portrait/camera intact.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/render/stage.ts",
+    "src/render/hud.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5ef2xw-0ul5-r1",
+    "sha": "6b3fb0bc1895ec02ede6c97e53cf6efc830be6f8",
+    "contentHash": "sha256:50373f8cf61e3ed04d54b839acd90409fc631769944cfda2b8c99ec752531e95",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:50373f8cf61e3ed04d54b839acd90409fc631769944cfda2b8c99ec752531e95",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5ef2xw-0ul5-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T21:09:12.999Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T20:41:22.340Z",
+  "updated": "2026-07-03T21:09:12.999Z",
+  "rev": 1,
+  "acceptanceKind": "feel"
+}

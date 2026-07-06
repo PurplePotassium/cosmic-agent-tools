@@ -2,9 +2,9 @@
   "id": "a-mr40b86d-y37p",
   "kind": "image",
   "filename": "player.charsel_b.png",
-  "file": "file.r1.png",
+  "file": "file.r3.png",
   "mime": "image/png",
-  "contentHash": "sha256:691e747d0bbfe276b43d78e520c160f8f3dc4c1437061b2826b7a5ac6363a1a0",
+  "contentHash": "sha256:7c1bdd68a93b9f1ced89652b43b64e53c50a0a6311dda1d0af563d710571dc42",
   "instructions": "32x48, 1 frame. key: player.charsel_b. Placeholder character B (Ranger) — blue standing figure for the character-select screen.",
   "questions": [],
   "state": "ready",
@@ -17,20 +17,20 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr40b86d-y37p-r2",
-    "sha": "ff83630c4a771d006fd5b2045f3753f16188e734",
-    "contentHash": "sha256:691e747d0bbfe276b43d78e520c160f8f3dc4c1437061b2826b7a5ac6363a1a0",
-    "rev": 2
+    "beadId": "asset-a-mr40b86d-y37p-r5",
+    "sha": "ef09c408b7f3744a639ad8f2c20760a22a851ee3",
+    "contentHash": "sha256:7c1bdd68a93b9f1ced89652b43b64e53c50a0a6311dda1d0af563d710571dc42",
+    "rev": 5
   },
-  "implementedContentHash": "sha256:691e747d0bbfe276b43d78e520c160f8f3dc4c1437061b2826b7a5ac6363a1a0",
+  "implementedContentHash": "sha256:7c1bdd68a93b9f1ced89652b43b64e53c50a0a6311dda1d0af563d710571dc42",
   "feelConfirmed": null,
-  "placeholderStale": false,
+  "placeholderStale": true,
   "abandonCount": 0,
   "questionRounds": 0,
   "abandonedAtContentHash": null,
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T21:18:41.701Z",
-  "updated": "2026-07-02T21:34:02.306Z",
-  "rev": 2
+  "updated": "2026-07-04T05:10:52.987Z",
+  "rev": 5
 }

@@ -1,0 +1,48 @@
+{
+  "id": "a-mr5ef2wd-5qql",
+  "kind": "spec",
+  "filename": "character_meta_mechanics.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:1dac935e75581b9304ce229c13575b97f91d0aea0da75a12aa341a4fba65fa68",
+  "instructions": "GDD META-MECHANICS: implement the Warrior \"All-Fire\" and Rogue \"Apply Poison\" character meta-mechanics.\n\nWARRIOR — ALL-FIRE (active button):\n- A player-activated ability (only when Warrior is in the party; host sets a flag like st.warriorInParty, mirroring rogueInParty, from main.ts partyMembers). On activate it fires EVERY equipped weapon once immediately with a ~0.2s stagger between them, IGNORING each weapon's cooldown; the ability itself has a 30s cooldown.\n- SIM: add state (warriorInParty:boolean, allFireCooldown:number, and a small \"forced fire\" queue or a per-weapon 0.2s-staggered force-fire mechanism in weapons.ts that ignores slot.timer). Deterministic (no rng/wall-clock; FIXED_DT only). Add an activate function callable from the host.\n- RENDER/HOST: a bottom-corner ALL-FIRE button in the HUD (touch-friendly) + a keyboard key (e.g. 'f'), shown only when Warrior is in party; a cooldown ring/label. main.ts wires the button/key to the sim activate.\n\nROGUE — APPLY POISON (level-up option + already-built poison bombs):\n- When Rogue is in the party, the level-up draft can offer an \"Apply Poison\" option that targets an UNPOISONED equipped weapon; picking it makes that weapon's hits apply a stacking poison DoT (5s duration, deals ~20% of the weapon's damage per second, stacks). Poison Bomb pickups already exist (keep).\n- SIM: track per-weapon 'poisoned' flag; when a poisoned weapon damages an enemy, add/refresh a poison stack on that enemy (deterministic DoT ticked each frame, like poisonClouds). Add the \"apply_poison:<slotIdx>\" option into buildLevelDraft ONLY when rogueInParty and an unpoisoned weapon exists. applyUpgradePick handles it.\n- RENDER: levelup.ts resolveCardInfo shows an \"Apply Poison\" card; enemies under poison can tint green (optional).\n\nCONSTRAINTS: src/sim deterministic (rng via s.rng only; no Math.random/Date.now/rAF/performance.now). Do NOT edit test/**, accept/**, package.json. Keep the FULL gate green (run tsx test/sim.ts + determinism + canary + budget). The headless tests have no Warrior/Rogue in party (flags default false) so these paths stay dormant there — verify win-loss unchanged.\nACCEPTANCE: Warrior in party -> an All-Fire button that fires all weapons staggered on a 30s cd; Rogue in party -> an Apply-Poison level-up option that adds a stacking DoT; gate green.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/sim/state.ts",
+    "src/sim/systems/weapons.ts",
+    "src/sim/systems/combat.ts",
+    "src/render/hud.ts",
+    "src/main.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5ef2wd-5qql-r1",
+    "sha": "6d19af285bc6d43083c9da35a12ce9a01cf456de",
+    "contentHash": "sha256:1dac935e75581b9304ce229c13575b97f91d0aea0da75a12aa341a4fba65fa68",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:1dac935e75581b9304ce229c13575b97f91d0aea0da75a12aa341a4fba65fa68",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5ef2wd-5qql-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T20:55:18.918Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T20:41:22.285Z",
+  "updated": "2026-07-03T20:55:18.918Z",
+  "rev": 1,
+  "acceptanceKind": "feel"
+}

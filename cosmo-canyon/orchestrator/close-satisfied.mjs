@@ -12,7 +12,7 @@
 // SAFETY: only call when NO autonomous tick/merge is mid-flight (it commits directly, like grader-confirm). The
 // present-agent "Drive" flow controls this; the dashboard button is a single-user loopback action.
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { acquire, release } from "./lock.mjs";
 import { readAsset, markSatisfied } from "./assets.mjs";
 
@@ -31,6 +31,16 @@ function headSha() { return execSync(`git -C "${GAME}" rev-parse HEAD`, { encodi
 
 // Close a Ready SPEC as satisfied-by-existing-code. Returns { ok, assetId, beadId, sha }.
 export function closeSatisfied(assetId, { by = "operator" } = {}) {
+  // §AUDIT-2026-07-04 — operator/present-agent ONLY. A WORKER must never self-attest Implemented (the whole
+  // anti-false-green stance); asset Instructions are untrusted text a prompt-injected worker could obey. Worker
+  // ticks always carry RALPH_PASS=<beadId> (serial) or CC_WORKER_NO_COMMIT=1 (parallel worktree) in env — refuse
+  // under either. Also refuse while ANY tick/claim is in flight (this commits directly; SAFETY note above).
+  if (process.env.CC_WORKER_NO_COMMIT || process.env.RALPH_PASS)
+    throw new Error("refused: worker-tick context (RALPH_PASS/CC_WORKER_NO_COMMIT set) — confirm-satisfied is an operator/driving-agent gate");
+  if (existsSync(`${CONTROL}/.tick.json`))
+    throw new Error("refused: a tick is in flight (control/.tick.json exists) — stop/finish the tick first");
+  if (existsSync(`${CONTROL}/claims/${assetId}.claim.json`))
+    throw new Error(`refused: a live parallel claim exists for ${assetId} — let it finish or reconcile first`);
   const meta = readAsset(assetId); // throws on unknown id
   if (meta.kind !== "spec") throw new Error(`confirm-satisfied is for SPEC assets only (got kind=${meta.kind}); image/audio have deterministic graders`);
   if (meta.state !== "ready") throw new Error(`asset ${assetId} is not Ready (state=${meta.state}) — nothing to confirm`);

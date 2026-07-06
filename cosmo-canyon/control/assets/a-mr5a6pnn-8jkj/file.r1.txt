@@ -1,0 +1,14 @@
+FILL PLACEHOLDER: Tier 2 & Tier 3 evolutions for all GDD weapons (GDD leaves these as placeholders — fill with judgement).
+
+Today only 'axe' and 'knives' chains have evolutions. Every GDD Tier-1 weapon should have a Tier-2 evolved form, and legendary/flagship ones a Tier-3. Per GDD: a maxed (level 5) weapon can EVOLVE on a Treasure Chest open, resetting to level 1 in its enhanced form; Tier 3 is the "legendary form", sometimes with multiple branches.
+
+WHAT TO DO (src/sim/data/weapons.ts):
+- For each GDD core/special base weapon, set 'tier:1' and 'evolvesTo:[<tier2 id>]', then add the Tier-2 WeaponDef (tier:2, higher baseDamage / lower cooldown, evolvesTo:[<tier3 id>] where a T3 exists), and add the Tier-3 WeaponDef (tier:3). Give ~1-2 of the flagships a BRANCHING T3 (evolvesTo has 2-3 options), the rest LINEAR (one T3).
+- Cover at minimum: shuriken, wand-of-fireball, crossbow, greatsword, holy-symbol, whip, throwing-hammer, flail, acid-potion, javelin, throwing-knives. Use flavorful names (e.g. shuriken->tempest-shuriken->void-shuriken; greatsword->runeblade->worldcleaver; holy-symbol->sacred-sigil->divine-halo; whip->serpent-lash; crossbow->arbalest->ballista; etc.).
+- Reuse an existing 'behavior' for each evolved form (a stronger version of the base's behavior). Keep baseDamage/cooldown scaling sensible (T2 ~1.6-1.8x base power, T3 ~2.5-3x).
+- RARITY INVARIANT (protected test test/sim.weapons.ts): every WEAPON_POOL entry OUTSIDE the fixed rare/legendary allowlist must be rarity:'common'. So ALL new evolved forms MUST be rarity:'common' (their power is carried by tier+baseDamage, not rarity). Do NOT add new ids to the rare/legendary sets.
+- weaponDefById/evolutionOptionsFor already resolve from WEAPON_POOL — just add the defs. Keep maxLevel:5.
+
+CONSTRAINTS: data only; deterministic; no test/accept/package.json edits; gate green (tsc + all sim tests incl. sim.weapons rarity check and the evolve test).
+
+ACCEPTANCE: every listed GDD weapon has a Tier-2 (and a Tier-3 where appropriate) evolution reachable via chest-open evolve; at least one branching T3; all evolved forms rarity:'common'; gate green.

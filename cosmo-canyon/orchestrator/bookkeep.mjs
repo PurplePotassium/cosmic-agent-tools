@@ -61,6 +61,8 @@ const PROTECTED = [
   "test/determinism.ts",
   "test/sim-purity.ts",
   "test/budget.ts",
+  "test/all.ts",    // §AUDIT-2026-07-04 — the single-process gate aggregator; editing its imports = skipping tests
+  "test/_util.ts",  // §AUDIT-2026-07-04 — the assertion helpers EVERY gate test imports; a no-op'd ok() = vacuous green (was an unguarded hole)
   "package.json",
 ];
 // §15g-T — the gate's sim suite was split into per-system files (sim.ts aggregator + sim.<system>.ts). ALL of
@@ -92,6 +94,14 @@ const ALLOW_CONTROL = new Set([
   "cosmo-canyon/control/.agy-cooldown",          // agy quota-failover cooldown (gitignored; written post-tick, defense-in-depth)
   "cosmo-canyon/control/config.json",            // concurrency/runtime settings — GUI may edit live; committed, must survive a tick revert (like a concurrent asset upload)
   "cosmo-canyon/control/agent.json",             // worker allowed-set — GUI may edit live during a tick; must not be reverted
+  // §AUDIT-2026-07-03 — planner runtime markers. Were TRACKED (gitignore rules landed after the first commit,
+  // which gitignore can't undo) → every planner rewrite dirtied the tree → the tree-wide guard tamper-failed
+  // EVERY later work tick (~28 reverts, ~29 beads blocked). Now untracked (git rm --cached) + ignored; listed
+  // here as defense-in-depth so a stray dirty instance can never false-trip the guard again (same class as C1).
+  "cosmo-canyon/control/.plan-input.json",
+  "cosmo-canyon/control/.plan-result.json",
+  "cosmo-canyon/control/.plan-latch.json",
+  "cosmo-canyon/control/.plan-completions.md", // §AUDIT-2026-07-04 — plan-prep's landed-work digest (gitignored runtime marker; same class)
 ]);
 // §15.15 (audit) — grader-confirm.json is the OPERATOR gate; it is DELIBERATELY *not* allowed as a worker-tick
 // write (a worker self-writing {beadId:{confirmed:true}} would lift the human gate). It is NOT in ALLOW_CONTROL,

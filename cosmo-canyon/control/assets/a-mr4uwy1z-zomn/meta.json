@@ -1,0 +1,44 @@
+{
+  "id": "a-mr4uwy1z-zomn",
+  "kind": "spec",
+  "filename": "story_beat.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:16009407b9fea873da54faf051d4f89e97d61f1ce5f2a710cb7e4e1b4c64078e",
+  "instructions": "GOAL: Build the Story-Beat screen as a VISUAL NOVEL (GDD 'Story Beat'): over a proper background, characters talk via a dialogue text box, with character portraits sliding in when they speak; the player advances line-by-line on tap. Data-driven scripts keyed by a beat id. Shown sometimes during an Adventure (often just before the Adventure Beat). UI/feel/layout screen verified VISUALLY via headless snapshot — no sim test.\n\nHARD RULES (honor verbatim): NEVER edit anything under game/test/** or game/accept/**. src/render/** MAY use performance.now (use it for the portrait slide-in tween and any easing). Do NOT create any import from src/sim/** onto render. No randomness is needed; if any is added it must use the sim's seeded rng or a pure seed hash, never Math.random. Keep the gate green. Placeholder art is fine.\n\nGROUNDING FACTS (confirmed): screens are classes in src/render/<name>.ts with init(app, ...callbacks)/show()/hide()/sync(W,H)/`readonly root = new Container()`, constructed + wired in main.ts, sync'd every frame (see charselect.ts, worldmap.ts, mainmenu.ts). `getTexture(key)` returns a placeholder then swaps real atlas art in async → every Sprite RE-PULLS getTexture(key) and reassigns `.texture` (+ width/height) each frame in sync() (see mainmenu.ts btnBgs loop, charselect per-frame refresh). audioManager exists (src/render/audio.ts) with `playSfx(key)` / `playMenuTheme()` if you want a soft advance blip (optional). LocalStorage is `rs_`-prefixed.\n\nAVAILABLE ART KEYS (seeded, Ready): `bg.story` (480x270, full-bleed background), `panel.dialogue` (360x120, the dialogue text box), and portraits `portrait.explorer`, `portrait.warrior`, `portrait.rogue` (each 160x240). Pull all of these per-frame per the swap pattern.\n\nSCRIPT DATA MODEL (define + export in this file; plain data): `interface StoryLine { speaker: string /* display name */; portraitKey: string /* e.g. 'portrait.warrior'; '' or 'none' = narration, no portrait */; text: string }` and scripts as `type StoryScript = StoryLine[]`, keyed by beat id in an exported `STORIES: Record<string, StoryScript>`. Author at least 2 short scripts (4-8 lines each) that read as a party talking before a stage; use the three portrait keys so portrait-swapping is exercised. Keep text short enough to fit panel.dialogue with word-wrap.\n\nCREATE src/render/storybeat.ts — class `StoryBeatUI`:\n- Fields: `readonly root = new Container()`; a full-screen `bg.story` background Sprite (cover-fit to screen); one or two portrait Sprites (a left slot and optionally a right slot) whose texture is set to the current line's portraitKey; a `panel.dialogue` box Sprite; a speaker-name Text; a body Text (word-wrapped to the dialogue box width, monospace like the other screens); an on-screen 'tap to continue' hint (a small blinking ▸ or text).\n- `init(app, onDone: () => void)`: add root to app.stage, `root.visible=false`. Make the whole root (or a full-screen invisible hit area) interactive so a tap/click anywhere advances; also add a keydown handler (Enter/Space) mirroring charselect's window keydown pattern, guarded by `if (!root.visible) return`, and removed appropriately if the screen is torn down. `onDone` is fired after the last line.\n- `show(beatId: string)`: load `STORIES[beatId]` (fallback to a 1-line generic script + labeled TODO if missing), reset lineIndex=0, set the first line's portrait/speaker/text, kick off the portrait slide-in tween, `root.visible=true`. Advancing: on tap/Enter/Space, if there is a next line → increment lineIndex, update speaker/body text, and if the portraitKey changed, slide the new portrait in (tween x from off-screen to its slot over ~200-300ms using performance.now-based easing; a portrait that stays the same speaker can just stay put); if there is NO next line → `hide()` + `onDone()`.\n- `hide()`: root.visible=false. `sync(screenW, screenH)`: early-return if hidden; cover-fit bg.story to the full screen (scale to fill, may crop — do not distort); position the portrait slot(s) (e.g. left portrait near bottom-left, anchored so it reads as 'speaking'); place panel.dialogue across the bottom center with the speaker name at its top-left and the body text word-wrapped inside it (set wordWrapWidth from the box width); animate the slide-in x-offset from a stored tween start time (performance.now). RE-PULL getTexture for bg.story, panel.dialogue, and the active portrait key(s) each frame and reassign texture + width/height. Recompute all layout from screenW/screenH (responsive).\n\nWIRE IN main.ts: construct `const storyBeat = new StoryBeatUI();`; `storyBeat.init(renderer.app, () => { /* onDone: proceed to the Adventure Beat for the current stage, or startRun() if none */ });`. Coordinate with adventure_system.txt / adventure_beat.txt so a Story Beat can be shown before the Adventure Beat for a stage (GDD: 'often before the Adventure Beat'). Add a helper like `showStoryForCurrentStage()` that maps the current stage/adventure narrativeId to a script id and calls `storyBeat.show(id)`; if a stage has no story, skip straight to the beat. Add `storyBeat.sync(W,H)` to the per-frame sync block, and include the story screen in main.ts's overlay guards so the sim doesn't step underneath it.\n\nVISUAL / ACCEPTANCE (headless snapshot): screenshot the Story-Beat screen and confirm — the bg.story background fills the screen, a portrait is visible in its slot, the panel.dialogue box shows a speaker name + a wrapped line of dialogue, and a 'continue' hint is present. Advance one line (dispatch a tap/click or Enter) and screenshot again to confirm the text changed and, when the speaker changed, a DIFFERENT portrait is shown (portrait swap works). Advancing past the last line hides the screen and fires onDone (next screen/stage appears). Verify the sim is not running underneath. Placeholder art fine. Keep the gate green.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/render/storybeat.ts",
+    "src/main.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr4uwy1z-zomn-r1",
+    "sha": "950aea12d1498f56ddeeb6b623363beb3ff07257",
+    "contentHash": "sha256:16009407b9fea873da54faf051d4f89e97d61f1ce5f2a710cb7e4e1b4c64078e",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:16009407b9fea873da54faf051d4f89e97d61f1ce5f2a710cb7e4e1b4c64078e",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr4uwy1z-zomn-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T18:16:15.352Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T11:35:23.495Z",
+  "updated": "2026-07-03T18:16:15.352Z",
+  "rev": 1
+}

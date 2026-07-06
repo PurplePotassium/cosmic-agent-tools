@@ -2,9 +2,9 @@
   "id": "a-mr3dssrt-exri",
   "kind": "image",
   "filename": "icon.gear.png",
-  "file": "file.r1.png",
+  "file": "file.r6.png",
   "mime": "image/png",
-  "contentHash": "sha256:7438da03b826aae802e5b1d4561bc9d53296f176864c5667510063d8b58d84fa",
+  "contentHash": "sha256:eac2033170870f5a0dc8c553299e9784060454c23711d577bc4771f591053ca3",
   "instructions": "Small gear icon shown beside the SETTINGS title. key: icon.gear\nsize: 48x48\nUsed in render/settings.ts next to the 'SETTINGS' title via getTexture('icon.gear').",
   "questions": [],
   "state": "ready",
@@ -17,12 +17,12 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr3dssrt-exri-r5",
-    "sha": "21987811b4676a2c63d5d190bb8b7c7d32632bd9",
-    "contentHash": "sha256:7438da03b826aae802e5b1d4561bc9d53296f176864c5667510063d8b58d84fa",
-    "rev": 5
+    "beadId": "asset-a-mr3dssrt-exri-r6",
+    "sha": "9bff9cbbdb6096594c9d2b18e88e74aef5d95df4",
+    "contentHash": "sha256:eac2033170870f5a0dc8c553299e9784060454c23711d577bc4771f591053ca3",
+    "rev": 6
   },
-  "implementedContentHash": "sha256:7438da03b826aae802e5b1d4561bc9d53296f176864c5667510063d8b58d84fa",
+  "implementedContentHash": "sha256:eac2033170870f5a0dc8c553299e9784060454c23711d577bc4771f591053ca3",
   "feelConfirmed": null,
   "placeholderStale": false,
   "abandonCount": 0,
@@ -31,6 +31,6 @@
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T10:48:30.378Z",
-  "updated": "2026-07-03T05:55:20.248Z",
-  "rev": 5
+  "updated": "2026-07-04T04:55:27.220Z",
+  "rev": 6
 }

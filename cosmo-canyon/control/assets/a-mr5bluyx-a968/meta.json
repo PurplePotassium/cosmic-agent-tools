@@ -1,0 +1,44 @@
+{
+  "id": "a-mr5bluyx-a968",
+  "kind": "spec",
+  "filename": "juice_pass.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:f6b92bbb279867c114ac79fe57cf629d399ed054b20bf1a13a509a80efb9228a",
+  "instructions": "JUICE / FEEL / VISUAL POLISH pass — make the game feel punchy and satisfying (render layer only).\n\nGOAL: add game-feel \"juice\" so combat reads as impactful. ALL of this is RENDER-ONLY (src/render/**, mainly\nstage.ts + hud.ts, optionally a small particles helper) reading sim state / s.fxEvents frame-to-frame. The sim\n(src/sim/**) stays DETERMINISTIC and UNTOUCHED — juice must never change sim state, rng, or the gate. Keep it\ncheap (pooled graphics, bounded particle counts) — target 60fps on mobile.\n\nIMPLEMENT (high-impact first; the renderer already tracks per-slot enemy/gem sprites + drains s.fxEvents):\n1. SCREENSHAKE (trauma model): a decaying shake applied to the world container offset (add on top of the fixed\n   camera x + scroll y — do NOT break the portrait letterbox or fixed-camera math). Add trauma on: player takes\n   damage (player.hp dropped since last frame), a bomb fx event, boss/miniboss SPAWN (kind appears), and boss\n   DEFEAT (s.bossDefeated edge / outcome 'win'). Bigger trauma for bigger events. Clamp max offset small (~8-14px\n   pre-scale) so it juices without nausea; decay ~over 0.3s.\n2. ENEMY HIT-FLASH: track each enemy sprite's last hp; when hp drops between frames, tint the sprite white\n   (0xffffff) for ~2-3 frames then restore. Makes every hit read.\n3. ENEMY DEATH POP: when an enemy slot that was active+alive last frame is gone this frame (died), spawn a quick\n   burst at its last position — a short-lived expanding ring + a few pooled particle dots in the enemy's tint,\n   fading out ~0.25s. Bound total live particles (e.g. cap ~120) so a big bomb doesn't tank fps.\n4. PLAYER DAMAGE FEEDBACK: on player hp drop, a brief red screen-edge vignette flash (screen-space overlay,\n   fades ~0.25s) in addition to the existing shake + vibration. Scale intensity with damage taken.\n5. XP ORB PICKUP POP: when a gem slot disappears near the player (collected), a tiny bright pop/flash + optional\n   sparkle at the pickup point; a subtle scale-up on the HUD XP as it fills.\n6. WEAPON / PROJECTILE IMPACT: when a projectile despawns after hitting (proj slot gone while enemies near), a\n   small spark flash at the impact point. Muzzle/impact should read without clutter.\n7. HUD JUICE: smoothly tween the HP bar toward its true value (lerp) instead of snapping; flash the HP bar red on\n   damage and green on heal; pulse/flash the level readout on level-up (s.player.level increased). Ensure the HUD\n   top line spacing is clean at any level number and the timer reads mm:ss.\n8. Keep existing fx (fx.levelup_burst, fx.bomb_blast, fx.timestop_ring, telegraph magenta, HD2D glow) working;\n   layer the new juice with them, don't remove them.\n\nDETERMINISM/SAFETY: render-only. performance.now()/Math.random() ARE allowed in src/render (NOT in src/sim).\nDo NOT touch src/sim/**, test/**, accept/**, package.json. The full gate must stay green (sim unchanged).\n\nACCEPTANCE (feel/visual — operator will visually confirm): hits flash, enemies pop on death, the screen shakes on\nimpacts, taking damage flashes a red vignette, the HP bar tweens + flashes, and level-up pops — the game clearly\nfeels juicier than before, at a stable framerate, with the portrait/corridor/camera intact and no console errors.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/render/stage.ts",
+    "src/render/hud.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5bluyx-a968-r1",
+    "sha": "ec2b377c5d540e5d1b8749fbd5d1ba600dfdd878",
+    "contentHash": "sha256:f6b92bbb279867c114ac79fe57cf629d399ed054b20bf1a13a509a80efb9228a",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:f6b92bbb279867c114ac79fe57cf629d399ed054b20bf1a13a509a80efb9228a",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5bluyx-a968-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T19:30:35.689Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T19:22:39.754Z",
+  "updated": "2026-07-03T19:30:35.689Z",
+  "rev": 1
+}

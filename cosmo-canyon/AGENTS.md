@@ -10,7 +10,9 @@
 > and feel/visual to **Claude** (headless screenshot + *looks* at it) — and a **deterministic script gates +
 > commits or reverts**. It builds a fresh survivorslike in `game/`. It is the CC-native successor to **Fort
 > Condor** (`ralph/fortcondor/`). **Status: the §15/§15g build is COMPLETE — phases 0–8 landed + verified. Phase 8
-> (PARALLEL validation) is FLIPPED: `control/config.json` mode=parallel, maxConcurrency=2 — a cycle claims a disjoint
+> (PARALLEL validation) is FLIPPED: `control/config.json` mode=parallel, maxConcurrency=5 (post-audit 2026-07-04
+> default; the §H7 ceiling const stays 1000 — set config higher or `autoConcurrency:true` = "fan out to ceiling"
+> for a deliberate wide run; supervisor staggers spawns 400ms) — a cycle claims a disjoint
 > set of assets, each worker gates in an isolated `C:/Vibes-cc-wt/<id>` worktree (`bookkeep --gate-only`, commits
 > nothing) and a single-committer merge lands each green onto HEAD serialized (re-gate + acceptance + derive at the
 > seam). Set `mode:"serial"` to fall back to the byte-for-byte N=1 path.** Design + per-phase log: [`PLAN.md`](PLAN.md).
@@ -120,6 +122,17 @@ judgment ever runs git or decides pass/fail — that's why a worker can't self-a
 > `git`/`gitArgs` = C:\Vibes (control); `ggit`/`ggitArgs` = the game repo. `commitGame()` lands the game increment
 > (its provenance sha); `commit()` lands the control bookkeeping. The discipline below is unchanged, now per-repo.
 
+> **🛑 IF YOU EDIT `game/`, COMMIT IT TO THE GAME REPO. NEVER leave game changes uncommitted "for the user to
+> review" — the user does NOT review (that defeats the whole point of Cosmo Canyon: autonomous, committed
+> progress). Uncommitted game work is ROADKILL: the game is gitignored from C:\Vibes so the parent Stop hook
+> can't save it (the `add -A cosmo-canyon` is a no-op on it, see below), and ANY later loop tick's `ggit reset
+> --hard $gameBaseSha` silently obliterates it — this cost a full multi-turn manual game rebuild on 2026-07-04.**
+> A manual game edit is DONE only when it is gate-green AND `git -C cosmo-canyon/game add -A && git -C
+> cosmo-canyon/game commit`-ed. A backstop Stop-hook auto-commit (`auto-checkpoint (game): …`, fires only in
+> non-loop/manual sessions when the game tree is dirty) now catches forgotten edits — but **commit AS YOU GO**:
+> the hook won't fire on a crash/force-quit or if the loop resets the game mid-session. Also don't run the loop
+> while you have uncommitted manual game edits (the mutex guards rival loops, not you).
+
 This repo's `.claude/settings.json` has a **`Stop` hook** that runs `git add -A && git commit` at the END of
 every `claude -p` session. So:
 - Each tick is spawned with env **`RALPH_PASS=<bead-id>`** → a clean labeled `ralph <id>:` commit (never amended).
@@ -134,12 +147,25 @@ every `claude -p` session. So:
 ## ⚠️ THE operational gotcha that will bite you (cost ~4 redo cycles to learn)
 **NEVER run the supervisor (or bookkeep) with uncommitted edits to a TRACKED orchestrator/game file.** The
 supervisor's `reconcile` and bookkeep's revert do `git reset --hard` — which **silently wipes your
-uncommitted edits**. Always **commit a loop-script change BEFORE running the loop**. Corollaries:
+uncommitted edits**. Always **commit a loop-script change BEFORE running the loop**.
+> **CONCURRENCY HAZARD (real, 2026-07-04):** there is NO host-mutex stopping a foreground CC session from editing
+> `game/` WHILE the detached supervisor loop runs — and the loop's `reset --hard` will wipe your uncommitted game
+> WIP MID-session, before the Stop-hook net can commit it. So: don't hand-edit the game while the loop is running,
+> and don't start the loop with uncommitted manual game WIP. **RECOVERY if a boot-reset wiped WIP:** the loop now
+> STASHES a dirty game tree before its boot reset — recover with `git -C cosmo-canyon/game stash list` then
+> `git -C cosmo-canyon/game stash apply` (preflight.mjs / supervisor.mjs `cc-safety` stash). This net is best-effort
+> (boot-time only, not per-tick), so committing your game work remains the real protection.
+
+Corollaries:
 - `git clean` is always **scoped to `cosmo-canyon`** — an unscoped clean would nuke untracked files anywhere
   in the shared `C:\Vibes` tree.
 - Runtime markers (`.tick.json`, `.supervisor.pid`, `.plan-*`, `.agy-strikes`, `.stalled`, `.paused`,
   `.authority-consumed`, …) are **gitignored** — if you add a new one, gitignore it, or it makes the tree "dirty"
   every start (spurious reset) and `clean -fd` deletes it.
+- **…and make sure the marker is not already TRACKED** — gitignore has NO effect on a tracked file. A tracked
+  marker goes dirty on every rewrite and the tree-wide guard tamper-fails EVERY later work tick (the
+  `.plan-*.json` trio did exactly this — ~28 reverted ticks before the 2026-07-03 audit; fixed via
+  `git rm --cached` + ALLOW_CONTROL). Invariant: `git ls-files -ci --exclude-standard` must stay EMPTY.
 
 ## Engines (hybrid worker)
 - **agy** (free Gemini, `gemini-3.5-flash`) — headless logic/systems/balance. Dispatched via the **own-console
@@ -190,6 +216,13 @@ uncommitted edits**. Always **commit a loop-script change BEFORE running the loo
   completion, bumps rev (the regenerated grader binds the new rev), flags `placeholderStale` — and NEVER
   auto-deletes shipped code (the rework bead overwrites/re-derives the asset directly; no code-review suggestion
   is minted — see the NO code-review suggestions rule below).
+- **Spec authoring budget (rails enforce it — §AUDIT-2026-07-04).** A spec = REQUIREMENTS, ONE concern per spec —
+  never a pasted design chapter (that re-imports the removed GDD by the back door; the `*_gdd.txt` pile was
+  exactly this). The server warns at 8KB, REFUSES a >24KB body or a ≥60% token-overlap near-duplicate of an
+  existing Ready spec without `confirm:true` — extend the original spec (replace / edit Instructions) instead of
+  re-stating it. A landed ONE-SHOT fix-spec should be **retired from authority** (row `📤 retire` button /
+  `POST /assets/retire`) — state, code and Implemented provenance stay; it just stops compiling into
+  `spec-doc.md`, which every planner tick reads. Authority size shows in the Asset Browser summary (⚠ >100KB).
 - **Add a task by hand:** GUI "Add Task" box, or append a bead to `control/backlog.json` (schema in
   [`PLAN.md`](PLAN.md) §2). For independent acceptance (13.42), add `acceptanceCmd` pointing at a grader under
   `game/accept/<id>.ts` (you write it as the operator — the worker can't read/edit it).

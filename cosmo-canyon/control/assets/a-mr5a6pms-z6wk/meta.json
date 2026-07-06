@@ -1,0 +1,48 @@
+{
+  "id": "a-mr5a6pms-z6wk",
+  "kind": "spec",
+  "filename": "fix_remove_destructibles.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:94d294fd057f6b2d40585aacfa994e6f417789401a355efef4fc2cfb0840577a",
+  "instructions": "FIX: remove destructibles from the stage (for now) + preserve powerups.\n\nDestructibles (the grey breakable crates) must NOT appear in the stage.\n\nWHAT TO DO:\n- spawn.ts: remove the one-time destructible seeding block (the 'if (!s.destructiblesSpawned) { ... spawn DESTRUCTIBLE.count crates ... }'). Leave s.destructiblesSpawned set true (or leave the pool empty). The destructibles Pool can remain in state (empty) so combat.ts/weapons.ts iterate an empty pool harmlessly — but nothing ever spawns.\n- render/stage.ts: the destructibleGfx render loop over an empty pool draws nothing — leave it (no-op) or remove it.\n- POWERUPS were ONLY sourced from destroyed destructibles (dropPowerupFromDestructible). With destructibles gone, add a MINIMAL deterministic periodic powerup spawn so the GDD powerups (Health most common, Big Bomb, Time Stop) still appear as stationary on-screen pickups. Implement in powerups.ts (or spawn.ts): a s.powerupSpawnTimer (add to state.ts + newGame) counting down (~every 18-25s), spawning ONE powerup pickup at a deterministic position within the corridor near the player (use s.rng, weighted: health most common). Do NOT spawn the rogue-only 'poison_bomb' via this path.\n- The protected test test/sim.powerups.ts has a DESTRUCTIBLE PATH block that the OPERATOR will update separately — do NOT touch test files yourself.\n\nCONSTRAINTS: deterministic sim (all randomness via s.rng); no test/accept/package.json edits; gate green.\n\nACCEPTANCE: no destructible crates ever spawn/render; powerups still appear periodically as stationary pickups; gate green.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/sim/systems/spawn.ts",
+    "src/sim/systems/powerups.ts",
+    "src/render/stage.ts",
+    "src/sim/state.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5a6pms-z6wk-r1",
+    "sha": "759240cbb0886571fe67d45680909801f952a3d8",
+    "contentHash": "sha256:94d294fd057f6b2d40585aacfa994e6f417789401a355efef4fc2cfb0840577a",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:94d294fd057f6b2d40585aacfa994e6f417789401a355efef4fc2cfb0840577a",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5a6pms-z6wk-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T18:51:34.323Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T18:42:53.380Z",
+  "updated": "2026-07-04T07:54:02.867Z",
+  "rev": 1,
+  "acceptanceKind": "feel",
+  "authorityRetired": true
+}

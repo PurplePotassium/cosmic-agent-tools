@@ -79,6 +79,15 @@ one at a time (serial is the safe default — it matches `control/config.json mo
      For a *fresh* feel land that went through the FEEL-REVIEW queue, use the dashboard's feel-confirm instead.
   4. **Surface what you closed** to the user in your reply (which asset, why you judged it satisfied, the
      screenshot) so they can veto. You verified + closed — you didn't rubber-stamp.
+  5. **A landed ONE-SHOT fix-spec → RETIRE it from authority** (`POST /assets/retire {id,rev,retired:true}` or
+     the row's `📤 retire` button): code + Implemented provenance stay, but it stops compiling into spec-doc.md
+     (which every planner tick reads). Never leave dead corrections in the authority forever.
+
+### Authoring specs — budget (rails enforce it)
+One concern per spec; requirements, not design chapters; ~8KB is already large. The server REFUSES a >24KB
+body or a ≥60% token-overlap near-duplicate of an existing Ready spec without `confirm:true` — extend the
+original spec instead of re-stating it. NEVER paste GDD-chapter dumps as specs (`*_gdd.txt` re-imported the
+removed GDD by the back door and quadrupled the planner's read).
 
 ### 5. Loop
 Re-`sense`. Keep working ready beads. Stop when `headReadyBead` is null and there's no trigger you should act on

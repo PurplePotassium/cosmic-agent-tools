@@ -57,12 +57,16 @@ export function headReadyBead() {
 
 export function plannerLatch() { return readJson(`${CONTROL}/.plan-latch.json`, {}); }
 
-// daily tick cap (.usage-YYYYMMDD.json) — counter is bumped by tick-prep/plan-prep (one bump per tick)
-export function usagePath() { return `${CONTROL}/.usage-${nowIso().slice(0, 10).replace(/-/g, "")}.json`; }
+// daily tick cap (.usage-YYYYMMDD.json) — counter is bumped by tick-prep/plan-prep (one bump per tick).
+// §AUDIT-2026-07-04 — LOCAL day, not UTC: nowIso() rolled the file at UTC midnight (~late afternoon local),
+// splitting an evening run across two "days" and disagreeing with server.mjs's banner readout (already local).
+function localDay() { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`; }
+export function usagePath() { return `${CONTROL}/.usage-${localDay()}.json`; }
 export function usageToday() { return readJson(usagePath(), { ticks: 0 }).ticks; }
 export function bumpUsage() {
   const p = usagePath();
-  const u = readJson(p, { date: nowIso().slice(0, 10), ticks: 0 });
+  const d = localDay();
+  const u = readJson(p, { date: `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`, ticks: 0 });
   u.ticks++; writeJson(p, u); return u.ticks;
 }
 

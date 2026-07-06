@@ -1,0 +1,7 @@
+GDD META-PROGRESSION: the SHOP (passive training upgradeable OUTSIDE adventures).
+- The main menu already has a SHOP button; make it open a Shop screen (new src/render/shop.ts, mirror settings.ts/charselect.ts style, portrait-friendly).
+- The shop lets the player spend a persistent CURRENCY (earned from completing runs/stages — award some on stage clear / adventure end; store in localStorage e.g. rs_gold) to permanently upgrade each character's PASSIVE TRAINING: Determination (Explorer, +max HP), Weapon Mastery (Warrior, +damage), Magnet (Rogue, +pickup range). Each passive has levels (e.g. 0..5) stored in localStorage (rs_train_determination etc.); each level adds a permanent bonus applied at run start.
+- Apply the trained bonuses at run start in main.ts (host) on top of the party passives (applyPartyToPlayer) — read the training levels from localStorage and add the corresponding stat bonus to the player before the run.
+- The shop shows each upgrade, its current level, cost, and a BUY button (disabled if insufficient gold); Escape/back returns to the main menu (hide-before-onBack like the other screens).
+CONSTRAINTS: render/host layer only (no sim logic; the trained bonuses are applied host-side to the player at run start). No test/accept/package.json edits. Gate green. Portrait layout.
+ACCEPTANCE: SHOP opens a working meta-progression screen; runs award currency; buying a training upgrade permanently boosts that passive on future runs; persists across reloads.

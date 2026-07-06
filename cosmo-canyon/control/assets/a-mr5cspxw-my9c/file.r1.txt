@@ -1,0 +1,10 @@
+FIX (menu/screen flow): the character-select SCREEN must NOT appear during the new-player flow, and LOCKED characters must not appear in character select.
+
+PROBLEM: today the first-play flow is Main Menu -> Play -> Who Are You (gender) -> onDone -> charSelect.show(). Per the GDD the new-user flow is: Main Menu -> Who Are You -> initial Story Beat -> Grasslands (the first Adventure). Character select is a RETURNING-player screen, not part of onboarding. Also charselect currently shows locked characters dimmed with a "LOCKED" label — they should be hidden entirely.
+
+DO:
+1) src/main.ts — change whoAreYou.init(...)'s onDone: instead of charSelect.show(), START THE FIRST ADVENTURE directly for the Explorer. Set the party to Explorer-solo and begin ADVENTURES[0] (The Verdant March): persist rs_party={leader:'explorer',supports:[]} + rs_selected_character='explorer', then call startAdventure(ADVENTURES[0], 'explorer') (which runs enterCurrentStage -> initial story beat -> Grasslands). Do NOT open charSelect. (Returning players — the Play handler's else-branch when rs_selected_character exists — MAY still use charSelect; leave that path.)
+2) src/render/charselect.ts — HIDE locked characters entirely (not dimmed). In sync(), for a locked index set the char sprite, name label, shadow, highlight, lock label, and support button all to visible=false (and skip positioning), so only UNLOCKED characters render around the campfire. Keep the existing unlock logic (readUnlocked; Explorer always unlocked). The keyboard nav / _nextUnlocked already skips locked — fine. Remove/ްsuppress the "LOCKED" placeholder rendering for locked slots.
+
+CONSTRAINTS: render/host only (no src/sim changes). No test/accept/package.json edits. Gate green.
+ACCEPTANCE: a brand-new player (no rs_selected_character) goes Menu->Play->Who Are You->(pick gender)->straight into the first Adventure (story beat then Grasslands), NEVER seeing character select; and when character select IS shown (returning player), only unlocked characters appear (no dimmed LOCKED tiles).

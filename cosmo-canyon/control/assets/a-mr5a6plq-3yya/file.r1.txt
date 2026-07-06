@@ -1,0 +1,12 @@
+FIX: remove passive stat upgrades from level-ups and chests.
+
+DESIGN CHANGE (per Realm Survivors GDD): level-up / chest reward options are ONLY: new weapon, weapon level-up, weapon fusion, and weapon EVOLUTION (chest). Generic passive stat bonuses (Move Speed, Damage %, Aura Range, Attack Interval, Max HP, Magnet Radius) are NO LONGER part of the design — permanent stat bonuses come from character "training" passives outside a run, not from in-run level-ups.
+
+WHAT TO DO (src/sim/systems/upgrades.ts):
+- In buildLevelDraft() and buildChestDraft(), the candidate list is seeded with 'const candidates = UPGRADE_POOL.map(u=>u.id)'. Change BOTH to start EMPTY: 'const candidates: string[] = [];'. So the generic stat upgrade ids (dmg1/spd1/aoe1/rate1/hp1/mag1) are never offered.
+- Leave everything else (weapon:new / weapon:lvl / fusion / evolve draw order + rng calls) UNCHANGED so determinism is preserved.
+- Do NOT delete UPGRADE_POOL from src/sim/data/upgrades.ts — the protected test test/sim.upgrades.ts asserts UPGRADE_POOL.length>=6. Keep the pool + UpgradeDef type + applyUpgradePick's final else branch intact (harmless dead path).
+
+CONSTRAINTS: src/sim only, deterministic (no Math.random/Date.now/rAF/performance.now). Do NOT edit test/** or accept/** or package.json. Keep the gate green (tsc + tests): the win-path autopilot must still reach+beat the boss (weapons/fusions carry scaling now), and the level-up/chest drafts still produce 3 weapon options.
+
+ACCEPTANCE: a level-up or chest draft never offers a generic stat bonus; every offered card is a weapon (new/level), fusion, or evolution. Gate green.

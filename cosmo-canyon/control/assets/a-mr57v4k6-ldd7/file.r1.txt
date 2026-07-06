@@ -1,0 +1,11 @@
+Add a "Wipe Data" dev/test button to the MAIN MENU (src/render/mainmenu.ts) so a tester can reset to the fresh new-player experience.
+
+PLACEMENT: a small, unobtrusive button in the BOTTOM area of the main menu (e.g. bottom-center or bottom-right corner), visually distinct from the primary PLAY/SETTINGS/SHOP buttons (smaller, muted/outline style, label "Wipe Data"). It is a developer/test control — understated but clearly tappable.
+
+BEHAVIOR: on tap, show a confirmation (a simple in-canvas confirm overlay, OR a two-step tap where the button label changes to "Tap again to confirm" for ~2s then reverts). On CONFIRM:
+  1. Remove every localStorage key that starts with the "rs_" prefix (the game save keys: rs_selected_character, rs_explorer_gender, rs_unlocked_characters, rs_party, rs_adventure, rs_cleared_hexes, rs_runs_completed, rs_setting_*, etc.). Do NOT clear unrelated localStorage. Implementation: snapshot Object.keys(localStorage), then removeItem each key where key.startsWith("rs_").
+  2. Then call location.reload() so the game reboots into the fresh new-player flow — the next Play shows the "Who Are You?" Explorer male/female pick (because no rs_selected_character is set).
+
+CONSTRAINTS: render-only (src/render/mainmenu.ts, optionally src/main.ts for wiring). NO src/sim changes. NEVER edit game/test/** or game/accept/**. Keep the gate green (tsc --noEmit + tests). Verified visually via snapshot.
+
+ACCEPTANCE: the main menu shows a "Wipe Data" button; tapping + confirming clears all rs_* localStorage keys and reloads; after a wipe, pressing Play routes to the Who-Are-You new-player screen.

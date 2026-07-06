@@ -2,9 +2,9 @@
   "id": "a-mr3dsstf-rlpv",
   "kind": "audio",
   "filename": "sfx.back.wav",
-  "file": "file.r1.wav",
+  "file": "file.r4.wav",
   "mime": "audio/wav",
-  "contentHash": "sha256:2ed2747a0cf1e9a3306ef8dc84cb3ee80e9e6c1866ddf1690b8b43b65d33117b",
+  "contentHash": "sha256:ba8f05b31eff4b4b9cd0929ffed622cb341ce7c2953248eb69761ea896f5cd84",
   "instructions": "Short SFX played when the BACK button is pressed in the settings menu. key: sfx.back\nUsed in render/settings.ts. Call audioManager.playSound('sfx.back') inside _onBackClick() when the player leaves the settings menu.",
   "questions": [],
   "state": "ready",
@@ -17,12 +17,12 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr3dsstf-rlpv-r3",
-    "sha": "9cf96bbdcd56d80bcfd8a04b8eb6978bf0a83e11",
-    "contentHash": "sha256:2ed2747a0cf1e9a3306ef8dc84cb3ee80e9e6c1866ddf1690b8b43b65d33117b",
-    "rev": 3
+    "beadId": "asset-a-mr3dsstf-rlpv-r4",
+    "sha": "ea9ae9dcff2900351d1aff06fc2864d7faeb203c",
+    "contentHash": "sha256:ba8f05b31eff4b4b9cd0929ffed622cb341ce7c2953248eb69761ea896f5cd84",
+    "rev": 4
   },
-  "implementedContentHash": "sha256:2ed2747a0cf1e9a3306ef8dc84cb3ee80e9e6c1866ddf1690b8b43b65d33117b",
+  "implementedContentHash": "sha256:ba8f05b31eff4b4b9cd0929ffed622cb341ce7c2953248eb69761ea896f5cd84",
   "feelConfirmed": null,
   "placeholderStale": false,
   "abandonCount": 0,
@@ -31,6 +31,6 @@
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T10:48:30.435Z",
-  "updated": "2026-07-03T05:55:39.125Z",
-  "rev": 3
+  "updated": "2026-07-04T05:21:17.883Z",
+  "rev": 4
 }

@@ -1,0 +1,13 @@
+FIX: remove destructibles from the stage (for now) + preserve powerups.
+
+Destructibles (the grey breakable crates) must NOT appear in the stage.
+
+WHAT TO DO:
+- spawn.ts: remove the one-time destructible seeding block (the 'if (!s.destructiblesSpawned) { ... spawn DESTRUCTIBLE.count crates ... }'). Leave s.destructiblesSpawned set true (or leave the pool empty). The destructibles Pool can remain in state (empty) so combat.ts/weapons.ts iterate an empty pool harmlessly — but nothing ever spawns.
+- render/stage.ts: the destructibleGfx render loop over an empty pool draws nothing — leave it (no-op) or remove it.
+- POWERUPS were ONLY sourced from destroyed destructibles (dropPowerupFromDestructible). With destructibles gone, add a MINIMAL deterministic periodic powerup spawn so the GDD powerups (Health most common, Big Bomb, Time Stop) still appear as stationary on-screen pickups. Implement in powerups.ts (or spawn.ts): a s.powerupSpawnTimer (add to state.ts + newGame) counting down (~every 18-25s), spawning ONE powerup pickup at a deterministic position within the corridor near the player (use s.rng, weighted: health most common). Do NOT spawn the rogue-only 'poison_bomb' via this path.
+- The protected test test/sim.powerups.ts has a DESTRUCTIBLE PATH block that the OPERATOR will update separately — do NOT touch test files yourself.
+
+CONSTRAINTS: deterministic sim (all randomness via s.rng); no test/accept/package.json edits; gate green.
+
+ACCEPTANCE: no destructible crates ever spawn/render; powerups still appear periodically as stationary pickups; gate green.

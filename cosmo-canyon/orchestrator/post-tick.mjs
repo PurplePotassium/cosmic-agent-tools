@@ -4,10 +4,11 @@
 // (13.38), kill any stale agy (13.16), clear .tick.json. Prints the outcome JSON the loop reads.
 // Usage: node post-tick.mjs [--agy-failover 2]
 import { execSync } from "node:child_process";
-import { readFileSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, existsSync, rmSync, readdirSync, statSync } from "node:fs";
 import { CONTROL, git, gitQuiet, ggitQuiet, readJson, writeJson, atomicWrite, nowIso, headSha, gameHeadSha } from "./state.mjs";
 import { removeActive } from "./assets-core.mjs"; // §15c — active.json removal backstop (bookkeep already removed on terminal)
 import { writeKnownGood } from "./spec-compile.mjs"; // §15.5 — snapshot the last-GREEN Ready-spec authority
+import { pruneBacklog } from "./prune-backlog.mjs"; // §GC — archive terminal fossil beads out of backlog.json
 
 const args = process.argv.slice(2);
 const arg = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && i + 1 < args.length ? args[i + 1] : d; };
@@ -56,5 +57,27 @@ if (committed) {
 const tick = readJson(`${CONTROL}/.tick.json`, {});
 try { removeActive({ runToken: tick.runToken || null, beadId: tick.beadId || null }); } catch {}
 rmSync(`${CONTROL}/.tick.json`, { force: true });
+
+// §GC — archive terminal fossil beads (done/superseded/dead) out of backlog.json so it never fills with
+// unremovable clutter. Fire-latch-safe (keeps live abandoned/blocked latches). Never break the tick.
+try { pruneBacklog({ apply: true }); } catch {}
+
+// §AUDIT-2026-07-04 — bounded runtime housekeeping (gitignored dirs/markers ONLY — never the durable ledgers:
+// completions/feel-review/rejected stay untouched; feel-review rows back the implemented() provenance predicate).
+// snapshots: keep 7 days AND the newest 50; logs: drop files >30 days old; .usage-* dailies: keep 14.
+try {
+  const now = Date.now(), DAY = 24 * 3600 * 1000;
+  const sweep = (dir, keepMs, keepNewest = 0) => {
+    let ents = [];
+    try { ents = readdirSync(dir).map((n) => { const p = `${dir}/${n}`; let m = 0; try { m = statSync(p).mtimeMs; } catch {} return { p, m }; }); } catch { return; }
+    ents.sort((a, b) => b.m - a.m);
+    ents.forEach(({ p, m }, i) => { if (now - m > keepMs && (!keepNewest || i >= keepNewest)) { try { rmSync(p, { force: true, recursive: false }); } catch {} } });
+  };
+  sweep(`${CONTROL}/../snapshots`, 7 * DAY, 50);
+  sweep(`${CONTROL}/../logs`, 30 * DAY);
+  for (const n of readdirSync(CONTROL).filter((x) => /^\.usage-\d{8}\.json$/.test(x)).sort().reverse().slice(14)) {
+    try { rmSync(`${CONTROL}/${n}`, { force: true }); } catch {}
+  }
+} catch {}
 
 process.stdout.write(JSON.stringify({ outcome: stage, committed, headSha: headSha(), gameHeadSha: gameHeadSha(), agyStrikes, failedOver, sha: st.sha || null, reason: st.reason || null }));

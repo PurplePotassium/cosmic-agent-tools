@@ -1,0 +1,44 @@
+{
+  "id": "a-mr57v4k6-ldd7",
+  "kind": "spec",
+  "filename": "dev_wipe_data.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:8613cccf879f76fdf6e854633a6d68059498c093bdb99e782170b505a123d8ce",
+  "instructions": "Add a \"Wipe Data\" dev/test button to the MAIN MENU (src/render/mainmenu.ts) so a tester can reset to the fresh new-player experience.\n\nPLACEMENT: a small, unobtrusive button in the BOTTOM area of the main menu (e.g. bottom-center or bottom-right corner), visually distinct from the primary PLAY/SETTINGS/SHOP buttons (smaller, muted/outline style, label \"Wipe Data\"). It is a developer/test control — understated but clearly tappable.\n\nBEHAVIOR: on tap, show a confirmation (a simple in-canvas confirm overlay, OR a two-step tap where the button label changes to \"Tap again to confirm\" for ~2s then reverts). On CONFIRM:\n  1. Remove every localStorage key that starts with the \"rs_\" prefix (the game save keys: rs_selected_character, rs_explorer_gender, rs_unlocked_characters, rs_party, rs_adventure, rs_cleared_hexes, rs_runs_completed, rs_setting_*, etc.). Do NOT clear unrelated localStorage. Implementation: snapshot Object.keys(localStorage), then removeItem each key where key.startsWith(\"rs_\").\n  2. Then call location.reload() so the game reboots into the fresh new-player flow — the next Play shows the \"Who Are You?\" Explorer male/female pick (because no rs_selected_character is set).\n\nCONSTRAINTS: render-only (src/render/mainmenu.ts, optionally src/main.ts for wiring). NO src/sim changes. NEVER edit game/test/** or game/accept/**. Keep the gate green (tsc --noEmit + tests). Verified visually via snapshot.\n\nACCEPTANCE: the main menu shows a \"Wipe Data\" button; tapping + confirming clears all rs_* localStorage keys and reloads; after a wipe, pressing Play routes to the Who-Are-You new-player screen.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/render/mainmenu.ts",
+    "src/main.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr57v4k6-ldd7-r1",
+    "sha": "f892cc98b78ab3b854d27b08fff8470815e1f85e",
+    "contentHash": "sha256:8613cccf879f76fdf6e854633a6d68059498c093bdb99e782170b505a123d8ce",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:8613cccf879f76fdf6e854633a6d68059498c093bdb99e782170b505a123d8ce",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr57v4k6-ldd7-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T18:16:23.231Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T17:37:53.622Z",
+  "updated": "2026-07-03T18:16:23.231Z",
+  "rev": 1
+}

@@ -7,6 +7,78 @@ Project-local notes for the deterministic orchestrator + control plane. Game-loc
 
 ---
 
+## 2026-07-04 — AUDIT REMEDIATION (tamper-churn root cause + grader guidance + concurrency clamp)
+- **CRIT root cause of the tamper-revert churn (fixed):** `control/.plan-{input,result,latch}.json` were
+  **TRACKED** — the gitignore rules landed AFTER their first commit, and gitignore has no effect on a tracked
+  file (`git check-ignore` even skips tracked paths, which hid it). Every planner tick rewrote them → tracked-dirty
+  tree → the tree-wide scope guard tamper-failed EVERY later work tick (~28 reverts, ~29 beads blocked, ~58% of
+  64 planner ticks +0b). Fix: `git rm --cached` all three (files stay on disk, ignore rules now bite) + added to
+  bookkeep `ALLOW_CONTROL` (defense-in-depth). **Invariant to keep: `git ls-files -ci --exclude-standard` = EMPTY**
+  (that command finds this whole tracked-but-ignored class; also caught tracked `asset-gen/` junk — untracked too,
+  and `asset-gen/` is now root-gitignored so image-gen output can't tamper-fail a tick).
+- **Grader vs dynamic keys (guidance fixed, grader unchanged):** `_image-grader` greps a LITERAL quoted key; real
+  call sites compute keys (charselect `charselTextureKey()`, mainmenu `_makeBtn()`) → honest-fail churn to r17–r23
+  until the `src/render/realm-registry.ts` literal-preload shim landed (game commit 6e8080d). The registry is now
+  the SANCTIONED pattern: tick.parallel.md + the auto-minted bead `acceptance` text tell workers to wire the data
+  table AND add the literal registry line. Residual risk (a registry line without a real consumer = false
+  reachability) is accepted; backstop stays the opt-in `CC_GRADER_SNAPSHOT=1` + feel-review. (Agent-claimed
+  `stripComments` `http://` bug was a false alarm — `(^|[^:])//` already guards `://`.)
+- **Concurrency sanity:** `config.json` maxConcurrency 1000→5, tickBudget 1000→200 (the merge-thrash threshold was
+  documented at N=5; 86 ready beads × Promise.all was a 429 burst waiting to happen). supervisor now **staggers
+  worker spawns 400ms apart**; `MAX_CONCURRENCY=1000` ceiling in config.mjs left as the operator raised it —
+  wide fan-out stays possible by explicit config. autoDrop's unlocked config write + one-way ratchet = accepted,
+  documented risks.
+- **Liveness fixes:** supervisor `reconcile()` now runs `reconcileParallel()` in BOTH modes (a parallel-mode crash
+  followed by a flip to `mode:serial` used to orphan claims/worktrees forever). plan-apply mints **unique suggestion
+  ids** across suggestions+rejected (two live `cc-0001`s were observed — GUI accept/reject keys on id).
+- **Queues drained:** the planner's own infra suggestions (plan-*.json tamper; UNLANDABLE specs) resolved into
+  `rejected.json` with reasons; stale ui_mainmenu-reclassify suggestion retired; ONE genuine design question left
+  open (shop-scope). Feel-review still holds ~11 pending operator attestations — dashboard pass needed.
+
+## 2026-07-04 — Duplicate-re-mint PREVENTION (stop the "already-built → blocked" churn at the source)
+- Root cause of a pile of `needsOperator/blocked` beads: the planner **re-mints already-shipped work under fresh
+  wording**; the worker re-detects "already implemented" and parks it (GC3). exact-title dedup in plan-apply missed
+  the reworded re-mints. TWO new layers (manual operator session — did NOT run the loop):
+  - `orchestrator/planner.md`: now reads `control/completions.json` (authoritative landed log) + a hard
+    **"⛔ ALREADY-BUILT → MINT NOTHING"** rule (scan completions/backlog incl done/blocked/needs-operator/DONE for the
+    same feature under ANY wording before minting; can't self-confirm satisfied → a "check if done" bead is never valid).
+  - `orchestrator/plan-apply.mjs`: `findHandledDup()` DROPS a new impl bead matching an already-handled bead
+    (`needsOperator || status∈{done,blocked}`) by **≥3 distinctive shared title tokens + a shared file, OR ≥0.8 token
+    overlap** — logged `dup-of-handled` (not deleted → auditable), counted in the apply summary. Design beads exempt.
+    LESSON: a min-size token-overlap RATIO is unreliable when one title is long/specific; raw shared-distinctive-count
+    + shared file is a better same-feature signal. Tested: drops reworded cc-0003/12/14 re-mints, passes new hot-file work.
+- Resolved the 6 stuck beads (cc-0003/04/12/13/14/15) → `status:done` (all verified already-implemented; cc-0003's
+  `maxLevel:3` clause CONTRADICTS the GDD level-1–5 and was a planner error). Game-side fixes (fireball projectile,
+  enemy ground-anchoring + off-screen cull, pickup accel, top-center timer) are in `game/docs/` + `D:\Ag\knowledge\
+  cosmo_canyon_system\artifacts\rs-game-fixes-and-dup-prevention-2026-07-04.md`.
+
+## 2026-07-03 — Max-agents 1000 + auto toggle · preview freeze · reload feedback · GDD prompt line
+
+Four operator-requested dashboard/orchestrator changes (all verified end-to-end, server restarted on :7788):
+
+- **Max Parallel Agents → 1000 + Auto toggle.** `config.mjs MAX_CONCURRENCY` 5→1000 (still the ONE high-side
+  cap — a real bound, just higher). New `concurrency.autoConcurrency` bool (normalized only in parallel).
+  `schedule.mjs` uses `effMax = autoConcurrency ? MAX_CONCURRENCY : maxConcurrency` in the slot math → auto =
+  "fan out to ceiling; disjoint-files partition + daily cap still bound picks to available work" (proved:
+  auto ON opened 1000 slots, picked all 6 disjoint items; OFF@3 picked 3). `server.mjs hConfigPost` accepts
+  `autoConcurrency`; `/config` GET returns it + `max:1000`. UI: label "Max parallel agents (2–1000)" + "Auto
+  (orchestrator decides)" checkbox that disables/greys the number when on. `merge.mjs` auto-drop CLEARS auto
+  (a −1 drop on a 1000 ceiling is a no-op) and falls to the parallel floor (2) under re-gate/conflict thrash.
+- **Preview freeze (stop the auto-refresh while testing).** Root cause: the iframe is cross-origin (:8780 vs
+  dashboard :7788) so the parent CANNOT intercept Vite's HMR `location.reload()`. Fix at the vite layer: a
+  tiny `freezePreview` plugin in `game/vite.config.ts` wraps `server.ws.send` and DROPS `full-reload/update/
+  prune` payloads while `control/.preview-freeze` exists. Confirmed from vite 5.4 source that the HMR
+  broadcaster delegates to `server.ws.send` (the browser channel) — wrapping that one method catches every
+  reload push, no vite restart, instant on/off. Marker toggled by `POST /api/cosmocanyon/preview/freeze`
+  ({frozen}); gitignored runtime file; `/status` exposes `previewFrozen`. Degrades gracefully if the game is
+  cloned standalone (marker absent → normal HMR). VERIFIED with a `window.__probe` survival test: no marker →
+  page reloads (probe gone); marker → NO reload (probe survives); marker removed → reloads resume.
+- **Reload feedback.** `ccReloadPreview` now instantly greys/disables both `.cc-reload-btn`s + veils the
+  iframe with a "⏳ Reloading preview…" overlay, cleared on the iframe `load` event (8s safety timeout). The
+  slow reload delay is unchanged — just made visible.
+- **Drive-prompt-builder GDD line.** With a Design-doc link set, `ccBuildPrompt` now appends "Make sure to
+  store a local copy of the GDD to diff later in case I update it."
+
 ## 2026-07-02 (later 7) — MAX_CONCURRENCY 2→5 ceiling test + shared-screen-file merge thrash
 
 Task: raise the parallel ceiling 2→5 and drive a real char-select feature (3 hero placeholders +

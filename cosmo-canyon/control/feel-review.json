@@ -42,6 +42,312 @@
     "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
     "rev": 14,
     "at": "2026-07-03T05:56:54.623Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwy3v-b40u-r1",
+    "assetId": "a-mr4uwy3v-b40u",
+    "title": "Asset magenta_telegraph.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T11:39:22.148Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwxvp-x14r-r1",
+    "assetId": "a-mr4uwxvp-x14r",
+    "title": "Asset char_roster_gdd.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:02:03.044Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwxxf-npzz-r1",
+    "assetId": "a-mr4uwxxf-npzz",
+    "title": "Asset weapons_core_gdd.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:07:27.813Z",
     "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwxxx-hfky-r1",
+    "assetId": "a-mr4uwxxx-hfky",
+    "title": "Asset weapons_special_gdd.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:12:46.015Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwxyf-2nop-r1",
+    "assetId": "a-mr4uwxyf-2nop",
+    "title": "Asset weapons_reactive_gdd.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:18:29.343Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwy6g-680t-r1",
+    "assetId": "a-mr4uwy6g-680t",
+    "title": "Asset pickups_powerups_gdd.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:33:32.778Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwy75-j8yt-r1",
+    "assetId": "a-mr4uwy75-j8yt",
+    "title": "Asset poison_bomb_pickup.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:36:07.811Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwy7u-0npj-r1",
+    "assetId": "a-mr4uwy7u-0npj",
+    "title": "Asset biomes_starting_adventure.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:40:11.052Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwy5t-p9z3-r3",
+    "assetId": "a-mr4uwy5t-p9z3",
+    "title": "Asset boss_and_miniboss_gdd.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 3,
+    "at": "2026-07-03T12:51:03.428Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwy39-zw3k-r1",
+    "assetId": "a-mr4uwy39-zw3k",
+    "title": "Asset virtual_joystick.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:54:39.074Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwy4i-vzpa-r1",
+    "assetId": "a-mr4uwy4i-vzpa",
+    "title": "Asset vibration_on_damage.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:55:22.645Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwy54-l7tl-r1",
+    "assetId": "a-mr4uwy54-l7tl",
+    "title": "Asset pause_on_chest.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T12:58:06.340Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwy2n-uahz-r1",
+    "assetId": "a-mr4uwy2n-uahz",
+    "title": "Asset outcome_screens.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T13:00:40.413Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwxwe-7edu-r1",
+    "assetId": "a-mr4uwxwe-7edu",
+    "title": "Asset who_are_you.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T13:02:45.991Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwxwx-leq6-r1",
+    "assetId": "a-mr4uwxwx-leq6",
+    "title": "Asset party_system.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T13:07:08.109Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwy05-p0m8-r1",
+    "assetId": "a-mr4uwy05-p0m8",
+    "title": "Asset adventure_system.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T13:12:57.359Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwy0p-8yr7-r1",
+    "assetId": "a-mr4uwy0p-8yr7",
+    "title": "Asset start_adventure_screen.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T13:15:48.470Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr4uwy1e-vttb-r1",
+    "assetId": "a-mr4uwy1e-vttb",
+    "title": "Asset adventure_beat.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T13:19:52.076Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwy1z-zomn-r1",
+    "assetId": "a-mr4uwy1z-zomn",
+    "title": "Asset story_beat.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T13:24:29.987Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr57v4k6-ldd7-r1",
+    "assetId": "a-mr57v4k6-ldd7",
+    "title": "Asset dev_wipe_data.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T17:39:47.782Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr4uwxzi-anun-r1",
+    "assetId": "a-mr4uwxzi-anun",
+    "title": "Asset weapon_evolve_tiers.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T17:45:21.303Z",
+    "confirmed": false
+  },
+  {
+    "beadId": "asset-a-mr5a6plq-3yya-r1",
+    "assetId": "a-mr5a6plq-3yya",
+    "title": "Asset fix_levelup_no_passives.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T18:47:41.972Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5a6pms-z6wk-r1",
+    "assetId": "a-mr5a6pms-z6wk",
+    "title": "Asset fix_remove_destructibles.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T18:51:28.585Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5a6pn7-d1ph-r1",
+    "assetId": "a-mr5a6pn7-d1ph",
+    "title": "Asset fix_aura_holy_symbol_only.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T18:59:29.770Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5a6pnn-8jkj-r1",
+    "assetId": "a-mr5a6pnn-8jkj",
+    "title": "Asset weapons_tier2_tier3.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T19:02:31.591Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5a6pmc-c4fm-r1",
+    "assetId": "a-mr5a6pmc-c4fm",
+    "title": "Asset fix_portrait_corridor_camera.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T19:13:39.362Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5a6po2-jw3e-r1",
+    "assetId": "a-mr5a6po2-jw3e",
+    "title": "Asset pause_screen.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T19:20:57.354Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5bluyx-a968-r1",
+    "assetId": "a-mr5bluyx-a968",
+    "title": "Asset juice_pass.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T19:29:41.588Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5cspxw-my9c-r1",
+    "assetId": "a-mr5cspxw-my9c",
+    "title": "Asset fix_newplayer_flow_charselect.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T19:57:09.903Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5cspyo-zbez-r1",
+    "assetId": "a-mr5cspyo-zbez",
+    "title": "Asset fix_player_bottom_enemies_from_top.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T20:07:42.326Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5e64ku-88if-r1",
+    "assetId": "a-mr5e64ku-88if",
+    "title": "Asset stage_bugfixes_v2.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T20:36:49.361Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5ef2vo-lc8t-r1",
+    "assetId": "a-mr5ef2vo-lc8t",
+    "title": "Asset gdd_char_roster_and_slots.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T20:42:27.579Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5ef2wd-5qql-r1",
+    "assetId": "a-mr5ef2wd-5qql",
+    "title": "Asset character_meta_mechanics.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T20:55:18.346Z",
+    "confirmed": true
+  },
+  {
+    "beadId": "asset-a-mr5ef2xw-0ul5-r1",
+    "assetId": "a-mr5ef2xw-0ul5",
+    "title": "Asset juice_v2.txt: implement spec per instructions",
+    "note": "feel/visual ADVISORY → FEEL-REVIEW (no critic grader (snapshot + manual review))",
+    "rev": 1,
+    "at": "2026-07-03T21:09:12.492Z",
+    "confirmed": true
   }
 ]

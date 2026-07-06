@@ -27,6 +27,11 @@ worktree ROOT *is* the game repo root. `cwd` is already your worktree root (the 
 - For an image/audio asset bead: WIRE the key only — add the `getTexture('<manifestKey>')` /
   `playSfx/playMusic/playSound('<manifestKey>')` call site in `src/**`. Do NOT run `derive` and do NOT touch
   the manifest — the merge derive-binds the uploaded bytes and runs the render/playback grader at post-merge HEAD.
+  ⚠️ The grader greps for a LITERAL quoted key. If the real call site computes its key (a data table / factory —
+  e.g. charselect's `charselTextureKey()`, mainmenu's `_makeBtn()`), do BOTH: wire the data table properly AND add
+  the literal `getTexture('<manifestKey>')` line to the preload block in `src/render/realm-registry.ts` (the
+  sanctioned literal-ref registry for variable-key call sites). Never bypass the data table with a duplicate
+  hardcoded sprite just to satisfy the grader.
 - You MAY run per-system tests for fast feedback (`node node_modules/tsx/dist/cli.mjs test/<sys>.ts`) but do NOT
   run `npm run gate` yourself and do NOT commit.
 

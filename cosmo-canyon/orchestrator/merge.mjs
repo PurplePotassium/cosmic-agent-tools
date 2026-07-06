@@ -132,9 +132,14 @@ function autoDropConcurrency() {
   let raw = readJson(configPath(), null);
   if (!raw || typeof raw !== "object") return null;
   const c = raw.concurrency || {};
-  const cur = Number(c.maxConcurrency) || 2;
-  if (cur <= 1) { c.mode = "serial"; c.maxConcurrency = 1; } // already at floor → fall all the way back to serial
-  else c.maxConcurrency = cur - 1;
+  // autoConcurrency (operator "decide for yourself") ignores the stored number, so a -1 drop is a no-op. The
+  // thrash-feedback valve reclaims control: clear auto and fall back to the parallel floor (2).
+  if (c.autoConcurrency) { c.autoConcurrency = false; c.mode = "parallel"; c.maxConcurrency = 2; }
+  else {
+    const cur = Number(c.maxConcurrency) || 2;
+    if (cur <= 1) { c.mode = "serial"; c.maxConcurrency = 1; } // already at floor → fall all the way back to serial
+    else c.maxConcurrency = cur - 1;
+  }
   raw.concurrency = c;
   writeJson(configPath(), raw);
   resetRegateFails();

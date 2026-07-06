@@ -2,13 +2,13 @@
   "id": "a-mr32a32p-0hpb",
   "kind": "image",
   "filename": "button.play.png",
-  "file": "file.r1.png",
+  "file": "file.r24.png",
   "mime": "image/png",
-  "contentHash": "sha256:a3146892607b7ba2c2d98657a7a366fc3280f06d85315e2190ef018e9d47cbc6",
+  "contentHash": "sha256:7a11ff54190ea64f2b6e510210134dc0cb1b00aaa57bc1a6140affa7a6383e47",
   "instructions": "Found in the main menu.\nsize: 160x48",
   "questions": [],
-  "state": "not_ready",
-  "dirty": true,
+  "state": "ready",
+  "dirty": false,
   "hasOpenQuestions": false,
   "manifestKey": "button.play",
   "files": [],
@@ -17,12 +17,12 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr32a32p-0hpb-r16",
-    "sha": "4e7fe56b52f59fe7ff4425024147bcad216ca316",
-    "contentHash": "sha256:a3146892607b7ba2c2d98657a7a366fc3280f06d85315e2190ef018e9d47cbc6",
-    "rev": 16
+    "beadId": "asset-a-mr32a32p-0hpb-r24",
+    "sha": "81c4d1168786c609fd873be0a585eac68e26761f",
+    "contentHash": "sha256:7a11ff54190ea64f2b6e510210134dc0cb1b00aaa57bc1a6140affa7a6383e47",
+    "rev": 24
   },
-  "implementedContentHash": "sha256:a3146892607b7ba2c2d98657a7a366fc3280f06d85315e2190ef018e9d47cbc6",
+  "implementedContentHash": "sha256:7a11ff54190ea64f2b6e510210134dc0cb1b00aaa57bc1a6140affa7a6383e47",
   "feelConfirmed": null,
   "placeholderStale": true,
   "abandonCount": 0,
@@ -31,6 +31,6 @@
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T05:26:01.490Z",
-  "updated": "2026-07-03T05:44:15.663Z",
-  "rev": 19
+  "updated": "2026-07-04T08:00:01.658Z",
+  "rev": 24
 }

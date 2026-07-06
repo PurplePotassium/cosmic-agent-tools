@@ -2,9 +2,9 @@
   "id": "a-mr40b89x-4ie4",
   "kind": "image",
   "filename": "ui.charsel_bg.png",
-  "file": "file.r1.png",
+  "file": "file.r3.png",
   "mime": "image/png",
-  "contentHash": "sha256:34ffb0ae81a1b6a4d9af91ee79b28c9e89cc238ece6865d62f23664cb639b142",
+  "contentHash": "sha256:bc8be429cb34134b8e1f9da3797c7d35f8d2f4b7ee6f31c9a46be5711df0c8f2",
   "instructions": "480x270, 1 frame. key: ui.charsel_bg. Placeholder night-canyon background for the character-select screen.",
   "questions": [],
   "state": "ready",
@@ -17,12 +17,12 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr40b89x-4ie4-r2",
-    "sha": "d8aff78e669db3a4bd1d02b57f9bed2392462f90",
-    "contentHash": "sha256:34ffb0ae81a1b6a4d9af91ee79b28c9e89cc238ece6865d62f23664cb639b142",
-    "rev": 2
+    "beadId": "asset-a-mr40b89x-4ie4-r3",
+    "sha": "29045987a94b63a9f06e2c222c92adcafac76111",
+    "contentHash": "sha256:bc8be429cb34134b8e1f9da3797c7d35f8d2f4b7ee6f31c9a46be5711df0c8f2",
+    "rev": 3
   },
-  "implementedContentHash": "sha256:34ffb0ae81a1b6a4d9af91ee79b28c9e89cc238ece6865d62f23664cb639b142",
+  "implementedContentHash": "sha256:bc8be429cb34134b8e1f9da3797c7d35f8d2f4b7ee6f31c9a46be5711df0c8f2",
   "feelConfirmed": null,
   "placeholderStale": false,
   "abandonCount": 0,
@@ -31,6 +31,6 @@
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T21:18:41.829Z",
-  "updated": "2026-07-02T21:26:33.714Z",
-  "rev": 2
+  "updated": "2026-07-04T04:59:26.078Z",
+  "rev": 3
 }
