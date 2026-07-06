@@ -1,0 +1,45 @@
+{
+  "id": "a-mr5ef2vo-lc8t",
+  "kind": "spec",
+  "filename": "gdd_char_roster_and_slots.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:abb48542b980b52d22c0728d79b35445e901d41158e41a0c471369ab7b8060ec",
+  "instructions": "GDD ALIGNMENT: character rosters + 6 weapon slots.\n1) src/sim/systems/upgrades.ts: MAX_WEAPON_SLOTS 3 -> 6 (GDD \"Six-slot capacity by default\"). Draft/fusion logic already loops over slots; keep it correct for 6.\n2) src/sim/data/characters.ts: set each character's defaultWeaponId + weaponPool to the GDD weapons (the real ids now exist in WEAPON_POOL):\n   - explorer: defaultWeaponId 'shuriken'; weaponPool ['shuriken','wand-of-fireball','acid-potion','holy-symbol','crossbow']; passive Determination (+15% maxHP/lvl) [keep]; metaMechanic null.\n   - warrior: defaultWeaponId 'greatsword'; weaponPool ['greatsword','whip','throwing-hammer','flail','crossbow','tower-shield']; passive Weapon Mastery (+15% dmg/lvl) [keep]; metaMechanic 'warrior_fire_all' [keep].\n   - rogue: defaultWeaponId 'throwing-knives'; weaponPool ['throwing-knives','shuriken','acid-potion','crossbow','smoke-bomb']; passive Magnet (+15% pickup/lvl) [keep]; metaMechanic 'rogue_apply_poison' [keep].\n   Remove the stale TODO comments. All ids MUST exist in WEAPON_POOL (data/weapons.ts).\nCONSTRAINTS: data only (headless tests use newGame default 'knives', unaffected). Gate green (tsc + full sim.ts).",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/sim/data/characters.ts",
+    "src/sim/systems/upgrades.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5ef2vo-lc8t-r1",
+    "sha": "9935ef4d1379c46d4a145a124510240555f3f0db",
+    "contentHash": "sha256:abb48542b980b52d22c0728d79b35445e901d41158e41a0c471369ab7b8060ec",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:abb48542b980b52d22c0728d79b35445e901d41158e41a0c471369ab7b8060ec",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5ef2vo-lc8t-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T20:42:28.087Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T20:41:22.260Z",
+  "updated": "2026-07-03T20:42:28.087Z",
+  "rev": 1,
+  "acceptanceKind": "feel"
+}

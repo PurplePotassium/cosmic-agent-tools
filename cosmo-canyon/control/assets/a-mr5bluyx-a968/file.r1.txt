@@ -1,0 +1,36 @@
+JUICE / FEEL / VISUAL POLISH pass — make the game feel punchy and satisfying (render layer only).
+
+GOAL: add game-feel "juice" so combat reads as impactful. ALL of this is RENDER-ONLY (src/render/**, mainly
+stage.ts + hud.ts, optionally a small particles helper) reading sim state / s.fxEvents frame-to-frame. The sim
+(src/sim/**) stays DETERMINISTIC and UNTOUCHED — juice must never change sim state, rng, or the gate. Keep it
+cheap (pooled graphics, bounded particle counts) — target 60fps on mobile.
+
+IMPLEMENT (high-impact first; the renderer already tracks per-slot enemy/gem sprites + drains s.fxEvents):
+1. SCREENSHAKE (trauma model): a decaying shake applied to the world container offset (add on top of the fixed
+   camera x + scroll y — do NOT break the portrait letterbox or fixed-camera math). Add trauma on: player takes
+   damage (player.hp dropped since last frame), a bomb fx event, boss/miniboss SPAWN (kind appears), and boss
+   DEFEAT (s.bossDefeated edge / outcome 'win'). Bigger trauma for bigger events. Clamp max offset small (~8-14px
+   pre-scale) so it juices without nausea; decay ~over 0.3s.
+2. ENEMY HIT-FLASH: track each enemy sprite's last hp; when hp drops between frames, tint the sprite white
+   (0xffffff) for ~2-3 frames then restore. Makes every hit read.
+3. ENEMY DEATH POP: when an enemy slot that was active+alive last frame is gone this frame (died), spawn a quick
+   burst at its last position — a short-lived expanding ring + a few pooled particle dots in the enemy's tint,
+   fading out ~0.25s. Bound total live particles (e.g. cap ~120) so a big bomb doesn't tank fps.
+4. PLAYER DAMAGE FEEDBACK: on player hp drop, a brief red screen-edge vignette flash (screen-space overlay,
+   fades ~0.25s) in addition to the existing shake + vibration. Scale intensity with damage taken.
+5. XP ORB PICKUP POP: when a gem slot disappears near the player (collected), a tiny bright pop/flash + optional
+   sparkle at the pickup point; a subtle scale-up on the HUD XP as it fills.
+6. WEAPON / PROJECTILE IMPACT: when a projectile despawns after hitting (proj slot gone while enemies near), a
+   small spark flash at the impact point. Muzzle/impact should read without clutter.
+7. HUD JUICE: smoothly tween the HP bar toward its true value (lerp) instead of snapping; flash the HP bar red on
+   damage and green on heal; pulse/flash the level readout on level-up (s.player.level increased). Ensure the HUD
+   top line spacing is clean at any level number and the timer reads mm:ss.
+8. Keep existing fx (fx.levelup_burst, fx.bomb_blast, fx.timestop_ring, telegraph magenta, HD2D glow) working;
+   layer the new juice with them, don't remove them.
+
+DETERMINISM/SAFETY: render-only. performance.now()/Math.random() ARE allowed in src/render (NOT in src/sim).
+Do NOT touch src/sim/**, test/**, accept/**, package.json. The full gate must stay green (sim unchanged).
+
+ACCEPTANCE (feel/visual — operator will visually confirm): hits flash, enemies pop on death, the screen shakes on
+impacts, taking damage flashes a red vignette, the HP bar tweens + flashes, and level-up pops — the game clearly
+feels juicier than before, at a stable framerate, with the portrait/corridor/camera intact and no console errors.

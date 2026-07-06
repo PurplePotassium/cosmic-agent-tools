@@ -58,7 +58,7 @@ const arg = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && i + 1
 const has = (n) => args.includes(`--${n}`);
 const MAX_TICKS = Number(arg("ticks", "1e9"));
 const TIMEOUT_MS = Number(arg("timeout-min", "45")) * 60 * 1000;
-const MODEL = arg("model", "claude-sonnet-4-6");
+const MODEL = arg("model", readConfig().models.work || "claude-sonnet-4-6"); // §AUDIT-2026-07-04 — config.json {models:{work}} overrides the aging hardcoded default; explicit --model still wins
 const DAILY_CAP = Number(arg("cap", "200"));
 // The daily tick budget is operator-editable in the dashboard (control/config.json `tickBudget`) and read LIVE
 // each cycle, so an edit takes effect at the NEXT cycle with no restart. An explicit --cap flag (dev/CLI) pins
@@ -67,7 +67,7 @@ const CAP_FLAG = has("cap");
 const effectiveCap = () => (CAP_FLAG ? DAILY_CAP : (readConfig().tickBudget || DAILY_CAP));
 const BREAKER_N = Number(arg("breaker", "5"));
 const FAILOVER_N = Number(arg("agy-failover", "2")); // agy zero-diff strikes before lane → claude (13.38)
-const OPUS = arg("planner-model", "claude-opus-4-8");
+const OPUS = arg("planner-model", readConfig().models.planner || "claude-opus-4-8"); // §AUDIT-2026-07-04 — config-overridable (see MODEL above)
 const AUDIT_MS = Number(arg("audit-hours", "6")) * 3600 * 1000;
 const MAX_REPLAN = Number(arg("max-replan", "2")); // consecutive planner ticks before forcing work/idle (13.31)
 const STALLED_N = Number(arg("stalled", "3")); // ticks with no commit → flag .stalled for the UI (fix 6)
@@ -192,9 +192,12 @@ function assertMutex() {
 // anchor to reset (it lives per-agent in each claim) → route to reconcileParallel and RETURN before the
 // serial path. isSerial() reads control/config.json (default serial) so today's runs are unchanged.
 function reconcile() {
+  // §AUDIT-2026-07-03 — run reconcileParallel in BOTH modes. A crashed parallel cycle followed by an operator
+  // flip back to mode:serial used to skip this GC forever → orphaned claims (their assets deferred every cycle
+  // until the TTL steal) + leaked worktrees on disk. No-op when claims/ is empty, so serial boots are unchanged.
+  const r = reconcileParallel();
+  if (r.reconciled.length || r.pruned) log(`parallel reconcile (15.26): GC'd ${r.reconciled.length} dead claim(s) [${r.reconciled.join(", ")}], pruned ${r.pruned} active row(s)`);
   if (!isSerial(readConfig())) {
-    const r = reconcileParallel();
-    log(`parallel reconcile (15.26): GC'd ${r.reconciled.length} dead claim(s) [${r.reconciled.join(", ")}], pruned ${r.pruned} active row(s)`);
     // (audit MED) a SERIAL-AGY tick runs via spawnTick even under parallel mode → it writes a singleton .tick.json
     // + dirties the MAIN game tree. A crash mid-agy-tick leaves both behind; reconcileParallel touches NEITHER. So
     // ALSO reconcile a DEAD .tick.json here (never fail on it — single-flight is per-claim under N>1) and FALL
@@ -233,7 +236,13 @@ function reconcile() {
   // ensure a clean tree before looping (defensive). Clean scoped to /game so a not-yet-committed GUI upload
   // under control/assets is not deleted at boot (§15c-2); control/assets is an allowed dirty surface.
   const gdirty = ggitQuiet("status --porcelain").trim(); // §SPLIT — the game's own repo status
-  if (gdirty) { log("game tree dirty at start → restore game to HEAD"); resetGameTo("HEAD"); }
+  if (gdirty) {
+    // cc-safety — leftover manual WIP: STASH (recoverable) before the reset --hard so hand-edits are never
+    // silently destroyed at boot (this wipe cost a full manual game rebuild 2026-07-04). Stash-fail → no regression.
+    log("game tree dirty at start → STASH (cc-safety, recoverable via `git -C cosmo-canyon/game stash list`) then restore game to HEAD");
+    ggitQuiet('stash push -u -m "cc-safety: dirty game tree at loop boot — recover via git -C cosmo-canyon/game stash list"');
+    resetGameTo("HEAD");
+  }
 }
 
 // ── daily cap (.usage-YYYYMMDD.json) ────────────────────────────────────────────
@@ -320,7 +329,10 @@ async function runParallelCycle(baseSha) {
   const plan = planCycle({ baseSha, cap: effectiveCap(), hostPid: process.pid });
   if (!plan.parallel.length) return plan.serialAgy ? { kind: "serialAgy", bead: plan.serialAgy } : { kind: "empty", deferred: plan.deferred };
   log(`── parallel cycle: dispatch ${plan.parallel.length} worker(s) [${plan.parallel.map((p) => p.beadId).join(", ")}] base ${baseSha.slice(0, 8)} (deferred ${plan.deferred.length})`);
-  const results = await Promise.all(plan.parallel.map(spawnWorker));
+  // §AUDIT-2026-07-03 — stagger spawns (was one Promise.all burst): at wide N, simultaneous `claude -p`
+  // sessions arrive at the API as a single burst and trip org rate limits. 400ms apart costs ≤N×0.4s total.
+  const SPAWN_STAGGER_MS = 400;
+  const results = await Promise.all(plan.parallel.map((c, i) => new Promise((res) => setTimeout(res, i * SPAWN_STAGGER_MS)).then(() => spawnWorker(c))));
   log(`workers done: ${results.map((r) => `${r.beadId}=${r.timedOut ? "TIMEOUT" : r.code}(${r.secs}s)`).join(" ")}`);
   const summary = mergeGreen({ dispatched: plan.parallel });
   log(`merge: landed ${summary.landed.length} [${summary.landed.map((l) => l.beadId).join(", ")}] reverted ${summary.reverted.length} conflicts ${summary.conflicts.length} red ${summary.red.length}${summary.dropped ? ` — AUTO-DROP maxConcurrency→${summary.dropped}` : ""}`);

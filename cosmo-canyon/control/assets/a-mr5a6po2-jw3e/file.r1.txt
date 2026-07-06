@@ -1,0 +1,13 @@
+FILL PLACEHOLDER: manual pause screen (GDD lists a pause screen as a placeholder to fill).
+
+Add a player-invoked PAUSE overlay during a stage (separate from the existing level-up/chest auto-pause).
+
+REQUIRED:
+- Trigger: pressing 'P' or 'Escape' (keyboard) during an active run toggles pause; also a small pause BUTTON in the HUD corner (top-right) that toggles it (touch-friendly). While the overlay is up, the sim is FROZEN (do not call harness.step / runTick) and enemies/timer do not advance.
+- Overlay content (portrait-friendly, centered): a "PAUSED" title; a RESUME button; a RESTART button (restarts the current stage); a QUIT button (back to main menu / character select); and a BUILD SUMMARY panel showing: current stage timer, player HP / maxHP, level, and the equipped weapons with their levels (weaponId + level). Read this from the live GameState via the harness getState().
+- Do NOT pause if a level-up/chest draft is already showing (those own the pause); pressing Escape there should do the draft's own thing, not the pause menu. Guard the toggle so the two pause states don't conflict.
+- New file src/render/pause.ts implements the overlay (Pixi or DOM overlay consistent with the other src/render menus — mirror the style of src/render/settings.ts or levelup.ts). Wire the toggle + freeze in src/main.ts's run loop.
+
+CONSTRAINTS: render/host layer only (no src/sim logic changes needed; sim just isn't stepped while paused). Deterministic sim untouched. No test/accept/package.json edits. Gate green.
+
+ACCEPTANCE: pressing P/Escape or the HUD pause button during a run opens a PAUSED overlay that freezes the game and shows Resume/Restart/Quit + a live build summary (HP, level, timer, weapons+levels); Resume returns to play; does not conflict with level-up/chest pauses.

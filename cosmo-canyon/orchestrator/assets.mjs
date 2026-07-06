@@ -212,6 +212,18 @@ export function setInstructions(id, rev, instructions) {
   return mutateMeta(id, (m) => { checkRev(m, rev); return { ...m, instructions: instructions ?? "", dirty: true, rev: m.rev + 1 }; });
 }
 
+// §AUDIT-2026-07-04 — RETIRE a SATISFIED spec from the compiled authority (or restore it). Distinct from the
+// reopen not_ready path: state + Implemented provenance stay intact; the spec just stops compiling into
+// spec-doc.md (spec-compile filters the flag), so landed one-shot fix-specs stop taxing every planner tick.
+// NO rev bump — implemented() binds contentHash+rev, so a bump would un-Implement the asset.
+export function setAuthorityRetired(id, rev, retired) {
+  return mutateMeta(id, (m) => {
+    checkRev(m, rev);
+    if (m.kind !== "spec") throw new Error(`authorityRetired is spec-only (got kind=${m.kind})`);
+    return { ...m, authorityRetired: !!retired };
+  });
+}
+
 // Human-owned not_ready↔ready ONLY. `implemented` is a DERIVED projection, never a stored state (15.32) →
 // reject any other value (the phase-4 endpoint's 400).
 export function setState(id, rev, state) {
@@ -428,6 +440,7 @@ function projectRow(m) {
     questionRounds: m.questionRounds ?? 0, abandonCount: m.abandonCount ?? 0,
     // §15.3/15.4 breaker badges (over state=ready) — surfaced so /assets/list + the predicate read them from the index
     escalated: !!m.escalated, blockedNeedsOperator: !!m.blockedNeedsOperator,
+    authorityRetired: !!m.authorityRetired, // §AUDIT-2026-07-04 — satisfied spec retired from the compiled authority (state/provenance untouched)
     created: m.created ?? null, updated: m.updated ?? null, rev: m.rev,
   };
 }

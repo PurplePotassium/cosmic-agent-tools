@@ -1,0 +1,44 @@
+{
+  "id": "a-mr4uwxwe-7edu",
+  "kind": "spec",
+  "filename": "who_are_you.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:04d87209dce0a153538302eae56529951fa519b96b7a6373e29271bfa07656b1",
+  "instructions": "GOAL\nAdd a new render-layer screen `WhoAreYouUI` (src/render/whoareyou.ts) shown on the player's FIRST Play — i.e. when no character has been chosen yet (localStorage 'rs_selected_character' is unset). It lets the new player choose a male or female Explorer appearance, records it, and proceeds into the normal flow. On every subsequent Play it is skipped.\n\nHARD RULES (state and obey):\n- NEVER edit game/test/** or game/accept/** (tamper guard reverts+blocks). \n- This is a src/render/** screen: performance.now is allowed for animation; do NOT import from src/sim/** except pure data (you may import from src/sim/data/characters if convenient, but it is not required). Do NOT put any game logic in sim.\n- Keep the gate green (`npm run -s typecheck` + tests). Run them.\n- Game must never break on missing art: getTexture(key) returns a grey-box placeholder synchronously and swaps in real art async. A Sprite must reassign `.texture = getTexture(key)` every frame in sync() to adopt real art once it loads (mirror how charselect.ts refreshes its background/char sprites).\n\nPRE-FACT (verified): texture keys panel.whoareyou, player.explorer_m, player.explorer_f are NOT yet in game/assets/manifest.json. That is fine — getTexture auto-declares unknown keys as placeholders. Reference them by key; do not edit the manifest, do not block on them.\n\nSTEP 1 — CREATE src/render/whoareyou.ts\nModel the class after CharSelectUI / SettingsUI structure (constructor builds a `readonly root = new Container()`; `init(app, onDone)`; `show()`; `hide()`; `sync(screenW, screenH)`; a keydown handler installed in init and gated on `this.root.visible`). Specifics:\n- Background: a Sprite whose texture is refreshed each frame to getTexture('panel.whoareyou'); stretch to screenW x screenH (anchor 0). Add a translucent dark overlay Graphics on top for legibility (match charselect's 0x070714 @ ~0.5 alpha pattern).\n- Title Text near top, centered: 'WHO ARE YOU?' (monospace, gold #f5d76e, bold, ~28px, matching charselect title style).\n- Two large choice tiles side by side, centered vertically: LEFT = Male Explorer, RIGHT = Female Explorer. Each tile = a Container holding: a Sprite (texture refreshed each frame to getTexture('player.explorer_m') for male, getTexture('player.explorer_f') for female; scale ~2.6 like charselect), a caption Text below it ('MALE' / 'FEMALE', or 'EXPLORER (M)' / 'EXPLORER (F)'), and a subtle framed background Graphics. Make each tile interactive (interactive=true, cursor='pointer') with pointerover/pointerout hover feedback (scale bump or tint) mirroring charselect.\n- Selection on click: define `_choose(gender: 'male'|'female')` that:\n    localStorage.setItem('rs_explorer_gender', gender);\n    localStorage.setItem('rs_selected_character', 'explorer');\n    // ensure the unlock set exists with explorer\n    if (!localStorage.getItem('rs_unlocked_characters')) localStorage.setItem('rs_unlocked_characters', JSON.stringify(['explorer']));\n    this.hide();\n    if (this._onDone) this._onDone();\n  IMPORTANT: call this.hide() BEFORE invoking the onDone callback (this mirrors the CharSelect §AUDIT-2026-07-02 CRIT-8 fix — leaving root.visible true would block the next screen's sim-step/render and can soft-lock the flow).\n- Keyboard: ArrowLeft/ArrowRight moves a highlight between the two tiles; Enter confirms the highlighted one via _choose; default highlight = male (left). Draw the highlight as a gold stroke around the active tile (mirror charselect _applyHighlights).\n- sync(screenW, screenH): reposition/scale background, overlay, title, and the two tiles responsively (center the pair with a horizontal spread like charselect's hSpread). Return early if `!this.root.visible`.\n- Remove the keydown listener is not required (charselect keeps its listener installed and gates on visibility — do the same).\n\nSTEP 2 — WIRE INTO main.ts (boot/Play flow)\nCurrent flow: MainMenu Play callback does `mainMenu.root.visible=false; charSelect.show();`. Also the mainMenu.init Play callback and the top-of-file construction happen in main(). Change so the FIRST play routes through WhoAreYou:\n- Construct `const whoAreYou = new WhoAreYouUI();` alongside the other UIs.\n- `whoAreYou.init(renderer.app, () => { charSelect.show(); });` — after the player picks a gender, proceed to the character-select screen (which will now default-select Explorer). (Do NOT jump straight to worldmap; the GDD says choose gender THEN continue to selection/start.)\n- Add `whoAreYou.sync(W, H);` to the ticker sync block alongside the other `*.sync(W,H)` calls.\n- Gate the main-loop sim-step/render guards so they also treat whoAreYou as an overlay screen: the big `if (!outcomeShown && !worldMap.root.visible && !mainMenu.root.visible && !charSelect.root.visible && !settingsUI.visible)` and the `renderer.sync` guard `if (!worldMap.root.visible && !mainMenu.root.visible && !charSelect.root.visible)` must also include `&& !whoAreYou.root.visible` so the sim doesn't step and the stage doesn't render while this screen is up.\n- Change the MainMenu Play callback to branch on first-play:\n    mainMenu.init(renderer.app, () => {\n      mainMenu.root.visible = false;\n      if (!localStorage.getItem('rs_selected_character')) {\n        whoAreYou.show();      // first-ever play -> choose your Explorer\n      } else {\n        charSelect.show();     // returning player -> straight to character select\n      }\n    }, () => { /* settings, unchanged */ });\n- Make sure whoAreYou is hidden at boot (its init sets root.visible=false; also ensure setStageVisible(false) path is unaffected).\n\nACCEPTANCE (must be objectively verifiable):\n1. Gate: `npm run -s typecheck` exits 0 and tests pass. Report the commands and that they were green.\n2. First-play path: run the app with a CLEARED localStorage (via preview_eval `localStorage.clear()` then reload, OR fresh profile). From Main Menu, click Play. A snapshot/accessibility-snapshot shows the 'WHO ARE YOU?' screen with a Male and a Female Explorer choice (grey-box placeholders acceptable). Confirm the sim is NOT running behind it (stage children hidden / renderer.sync skipped).\n3. Choice persists: click the Female tile (or Arrow+Enter). Verify via preview_eval: `localStorage.getItem('rs_explorer_gender') === 'female'` and `localStorage.getItem('rs_selected_character') === 'explorer'` and `JSON.parse(localStorage.getItem('rs_unlocked_characters')).includes('explorer')`. After the pick, the Character-Select screen is shown (snapshot shows EXPLORER/WARRIOR/ROGUE roster) and the WhoAreYou root is hidden (`whoAreYou.root.visible === false`).\n4. Returning-player path: with 'rs_selected_character' already set, click Play from Main Menu — the WhoAreYou screen is SKIPPED and Character Select shows directly (snapshot proof).\n5. No soft-lock: after choosing a gender and proceeding, you can reach the world map and start a run normally (the hide-before-onDone ordering prevents the overlay from blocking sim-step).",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/render/whoareyou.ts",
+    "src/main.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr4uwxwe-7edu-r1",
+    "sha": "3ee5ed96ff1ed6e5071e9b9314e269d8a18c4108",
+    "contentHash": "sha256:04d87209dce0a153538302eae56529951fa519b96b7a6373e29271bfa07656b1",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:04d87209dce0a153538302eae56529951fa519b96b7a6373e29271bfa07656b1",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr4uwxwe-7edu-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T18:15:58.272Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T11:35:23.294Z",
+  "updated": "2026-07-03T18:15:58.272Z",
+  "rev": 1
+}

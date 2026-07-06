@@ -3,7 +3,7 @@
 // pick the mode. latchKey per mode comes from the SHARED spec-core.latchKeyFor (the same helper
 // computeTrigger uses) so plan-apply's no-change latch lines up — single source, audit 15.22. Bumps the
 // daily usage counter (one bump per plan tick). Usage: node plan-prep.mjs --mode <mode>
-import { CONTROL, computeSnapshot, writeJson, bumpUsage } from "./state.mjs";
+import { CONTROL, computeSnapshot, writeJson, bumpUsage, readJson, atomicWrite } from "./state.mjs";
 import { latchKeyFor } from "./spec-core.mjs";
 import { compileSpecs, readKnownGood } from "./spec-compile.mjs"; // §15b — refresh the north-star + the audit drift baseline
 
@@ -26,5 +26,16 @@ const input = { mode, latchKey, readyCount: snap.readyCount, blockedIds: snap.bl
 // spec is not proof of drift). Give the planner that baseline as bounded input.
 if (mode === "audit") input.authorityKnownGood = readKnownGood();
 writeJson(`${CONTROL}/.plan-input.json`, input);
+
+// §AUDIT-2026-07-04 — planner context diet: completions.json is an append-forever ledger (~286KB / ~70k tokens
+// and growing every land) that the planner only needs as a WHAT-ALREADY-EXISTS index for its dedup/ALREADY-BUILT
+// rules. Emit a one-line-per-landing digest for the planner to read INSTEAD (planner.md points here); the full
+// ledger stays the on-disk authority. Runtime marker → gitignored + in bookkeep ALLOW_CONTROL (the .plan-* lesson).
+{
+  const comps = readJson(`${CONTROL}/completions.json`, []);
+  const line = (c) => `- ${c.id} | ${String(c.title || "").replace(/\s+/g, " ").slice(0, 100)}${c.assetKey ? ` | key=${c.assetKey}` : ""}${c.alreadySatisfied ? " | confirm-satisfied" : ""}`;
+  const digest = `# landed-work digest — ${comps.length} rows (full ledger: completions.json; newest first)\n${comps.map(line).join("\n")}\n`;
+  atomicWrite(`${CONTROL}/.plan-completions.md`, digest);
+}
 const ticks = bumpUsage();
 process.stdout.write(JSON.stringify({ ...input, ticksToday: ticks }));

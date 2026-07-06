@@ -2,9 +2,9 @@
   "id": "a-mr3dsssn-sqk2",
   "kind": "audio",
   "filename": "sfx.toggle.wav",
-  "file": "file.r1.wav",
+  "file": "file.r6.wav",
   "mime": "audio/wav",
-  "contentHash": "sha256:fbf0b947082b3f817cd3f2f394ae1129a6ccced44ffb3d4ca1882fa5f19b23b4",
+  "contentHash": "sha256:8fdb8d23c6ca9998eb4c057535bce31a77239bb009eee87242228b595ac48bc2",
   "instructions": "Short click SFX played when a settings toggle (Music/SFX/Vibration) is flipped. key: sfx.toggle\nUsed in render/settings.ts: audioManager.playSound('sfx.toggle') in the toggle handlers.",
   "questions": [],
   "state": "ready",
@@ -17,12 +17,12 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr3dsssn-sqk2-r5",
-    "sha": "4891a837d053d5a008e2b726ada114a8e4716953",
-    "contentHash": "sha256:fbf0b947082b3f817cd3f2f394ae1129a6ccced44ffb3d4ca1882fa5f19b23b4",
-    "rev": 5
+    "beadId": "asset-a-mr3dsssn-sqk2-r6",
+    "sha": "b9d4641cfee3807632397ea2ab55d72e829d9056",
+    "contentHash": "sha256:8fdb8d23c6ca9998eb4c057535bce31a77239bb009eee87242228b595ac48bc2",
+    "rev": 6
   },
-  "implementedContentHash": "sha256:fbf0b947082b3f817cd3f2f394ae1129a6ccced44ffb3d4ca1882fa5f19b23b4",
+  "implementedContentHash": "sha256:8fdb8d23c6ca9998eb4c057535bce31a77239bb009eee87242228b595ac48bc2",
   "feelConfirmed": null,
   "placeholderStale": false,
   "abandonCount": 0,
@@ -31,6 +31,6 @@
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T10:48:30.407Z",
-  "updated": "2026-07-03T05:55:34.425Z",
-  "rev": 5
+  "updated": "2026-07-04T05:21:10.038Z",
+  "rev": 6
 }

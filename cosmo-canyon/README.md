@@ -49,7 +49,8 @@ cosmo-canyon/
     spec-compile.mjs     §15b/phase-7: authorityHashOf(Ready specs) + compileSpecs→spec-doc.md/spec-index.json (locked,
                          returns the hash) + writeKnownGood (.authority-known-good). THE authority-hash single source.
     config.mjs           §15c-2 concurrency toggle reader: control/config.json {concurrency:{mode,maxConcurrency,
-                         worktreeRoot,heavyCostReserve,…}} → normalized. Pure reader. Phase 8: FLIPPED to
+                         autoConcurrency,worktreeRoot,heavyCostReserve,…}} → normalized. MAX_CONCURRENCY=1000 (§H7).
+                         autoConcurrency=fan-out-to-ceiling. Pure reader. Phase 8: FLIPPED to
                          mode=parallel N=2 (serial N=1 is the fallback; a malformed field can never widen concurrency).
     schedule.mjs         §15c-2 deterministic top-of-cycle PLANNER (phase 2, no dispatch): resolveFiles ownership,
                          slots-before-dispatch, tier-weighted cap, overlapping-files serialized, agy→one serial lane.

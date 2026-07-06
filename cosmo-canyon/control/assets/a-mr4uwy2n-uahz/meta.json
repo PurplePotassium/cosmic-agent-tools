@@ -1,0 +1,44 @@
+{
+  "id": "a-mr4uwy2n-uahz",
+  "kind": "spec",
+  "filename": "outcome_screens.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:ead86d7fae4e27108d944226684c0e6c8da52eedd1b39b1c73d3a93ce0ec6006",
+  "instructions": "GOAL: Expand the existing single win/loss overlay (render/outcome.ts) into THREE distinct, more polished states — Victory, Defeat, and Adventure End — per the GDD. Victory is celebratory/juicy and continues the Adventure; Defeat is melancholy and routes to Adventure End; Adventure End shows the whole-Adventure stats and is celebratory if the Adventure was completed successfully, then returns to the main menu. UI/feel/layout screen verified VISUALLY via headless snapshot — no sim test.\n\nHARD RULES (honor verbatim): NEVER edit anything under game/test/** or game/accept/**. src/render/** MAY use performance.now (use it for juice: a title pop/scale-in, a subtle pulse, banner slide/fade — keep it tasteful). Do NOT create any import from src/sim/** onto render. No randomness required; any added randomness must use the sim's seeded rng or a pure seed hash, never Math.random. Keep the gate green. Placeholder art is fine.\n\nGROUNDING FACTS (confirmed in the CURRENT render/outcome.ts — preserve what works): `OutcomeUI` has `readonly root = new Container()`, `init(app, onMenu: () => void)`, `show(outcome: 'win'|'loss', kills, time, level, totalDamageDealt)`, `hide()`, `sync(screenW, screenH)`, and a `get visible()`. It draws a semi-transparent black bg over the frozen scene, a title (VICTORY! gold / DEFEAT red), a monospace stats block (Enemies Killed / Time Survived / Level Reached / Damage Dealt using a local `fmtTime`), and a single button. main.ts calls `outcomeUI.show(st.outcome, st.kills, st.time, st.player.level, st.totalDamageDealt)` on the win/loss transition and, in the button callback, records cleared hex + returns to the world map. Snapshot fields available for stats: time/elapsedSec, kills, level, totalDamageDealt, peakEnemyCount, lowestHp, bossDefeated, outcome. audioManager (src/render/audio.ts) has `playSfx(key)`; main.ts already calls `audioManager.playSfx('death')` on loss today. `getTexture(key)` swap-per-frame pattern applies to any Sprite you add (re-pull + reassign texture/width/height each frame in sync()).\n\nAVAILABLE ART KEYS (seeded, Ready): `panel.victory` (320x360), `panel.defeat` (320x360), `panel.adventure_end` (320x400), `banner.victory` (240x60), `banner.defeat` (240x60), `button.continue` (160x48). Audio: `sfx.victory`, `sfx.defeat`. Use these; pull sprites per-frame per the swap pattern.\n\nREDESIGN render/outcome.ts — keep the class name `OutcomeUI` and the existing method NAMES compatible where reasonable, but introduce an explicit mode. Add a state enum/union `type OutcomeMode = 'victory' | 'defeat' | 'adventureEnd'`. Provide distinct show methods (or one show that takes a mode + a stats payload):\n- `showVictory(stats)`: panel.victory background + banner.victory; gold/celebratory palette; play `audioManager.playSfx('sfx.victory')`; JUICE — title/banner pop-in (scale from ~0.6→1.0 with a slight overshoot ease, driven by performance.now stored at show-time) plus a gentle idle pulse; show the run stats (Enemies Killed, Time Survived via fmtTime, Level Reached, Damage Dealt; optionally Peak Enemies from peakEnemyCount); a `button.continue` labeled 'CONTINUE' whose callback proceeds to the next stage/beat.\n- `showDefeat(stats)`: panel.defeat background + banner.defeat; muted/melancholy palette (desaturated, slower/softer animation, no celebratory overshoot); play `audioManager.playSfx('sfx.defeat')`; SAME stats block; a `button.continue` labeled e.g. 'CONTINUE' (or 'END') whose callback routes to Adventure End.\n- `showAdventureEnd(adventureStats, success: boolean)`: panel.adventure_end background; show WHOLE-ADVENTURE stats (from AdventureProgress.stats in adventure_system.txt: total kills, total damage, total elapsed/time, stages cleared out of 5, and a success/fail headline). If `success` (all 5 stages cleared) → celebratory palette + a small celebratory flourish; else → somber palette. A `button.continue` labeled 'CONTINUE' whose callback returns to the MAIN MENU (and clears the saved adventure).\n- Keep a single `hide()` and one `sync(screenW, screenH)` that branches on the current mode to place the correct panel/banner/stats/button. Preserve the semi-transparent scrim over the frozen scene for victory/defeat; Adventure End may use an opaque panel since there is no meaningful frozen scene to show. RE-PULL getTexture for the active panel + banner + button each frame; reassign texture + width/height; recompute positions from screenW/screenH (responsive). Center everything; letterbox/fit sprites without distortion.\n- BACK-COMPAT: main.ts currently calls `outcomeUI.show('win'|'loss', ...)`. Either (a) keep a thin `show(outcome, ...)` that dispatches to showVictory/showDefeat and update main.ts's callers, or (b) replace the call sites — but you MUST update main.ts accordingly so it still compiles and behaves. Prefer explicit showVictory/showDefeat/showAdventureEnd + updating main.ts's call sites for clarity.\n\nWIRE IN main.ts (coordinate with adventure_system.txt's Adventure flow):\n- On the win/loss transition (the existing `if (st.outcome !== null && !outcomeShown)` block): if an Adventure is active and the player WON → `outcomeUI.showVictory(stats)` and set the continue callback to proceed to the next stage's Story/Adventure Beat (or Adventure End if it was the last stage). If the player LOST → `outcomeUI.showDefeat(stats)` with the continue callback routing to `outcomeUI.showAdventureEnd(activeProgress.stats, false)`. For quick-play (no active Adventure) preserve today's simpler behavior (victory/defeat → back to world map), just using the new showVictory/showDefeat visuals.\n- The Adventure-End continue callback returns to the main menu and calls `clearAdventure()` (from adventure_system.txt).\n- Move the loss SFX to the outcome screen if cleaner (outcome.ts calling playSfx('sfx.defeat')), and remove/keep the existing main.ts `playSfx('death')` accordingly so a defeat doesn't double-play — pick one owner and comment it.\n- Keep `outcomeUI.sync(W,H)` in the per-frame sync block (already present) and keep the outcome overlay in main.ts's overlay/step guards as today.\n\nVISUAL / ACCEPTANCE (headless snapshot): capture THREE screenshots — Victory, Defeat, and Adventure End — and confirm each shows its correct panel (panel.victory/panel.defeat/panel.adventure_end), the right banner where applicable (banner.victory/banner.defeat), the appropriate palette (gold/celebratory vs melancholy vs success/fail), a readable stats block, and a `button.continue`. Confirm Victory's continue proceeds into the next stage/beat; Defeat's continue lands on Adventure End; Adventure End's continue returns to the main menu and the saved adventure is cleared (localStorage rs_adventure removed). Confirm sfx.victory / sfx.defeat fire on show (no double-play of a defeat sound). Verify the juice reads (title/banner animates in) without breaking layout. Placeholder art fine. Keep the gate green.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/render/outcome.ts",
+    "src/main.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr4uwy2n-uahz-r1",
+    "sha": "f42d09e6c0d87461ffced9a04d8de0375d990fcc",
+    "contentHash": "sha256:ead86d7fae4e27108d944226684c0e6c8da52eedd1b39b1c73d3a93ce0ec6006",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:ead86d7fae4e27108d944226684c0e6c8da52eedd1b39b1c73d3a93ce0ec6006",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr4uwy2n-uahz-r1",
+    "rev": 1,
+    "by": "operator (driver: gate-green + menu/gameplay verified; screens code-verified)",
+    "at": "2026-07-03T13:31:09.659Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T11:35:23.519Z",
+  "updated": "2026-07-03T13:31:09.659Z",
+  "rev": 1
+}

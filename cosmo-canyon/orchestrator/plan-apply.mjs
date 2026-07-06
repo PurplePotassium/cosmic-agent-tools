@@ -48,10 +48,43 @@ const seenTitles = new Set([
 ]);
 const seenSuggestions = new Set([...suggestions.map((s) => norm(s.title)), ...rejected.map((r) => norm(r.title))]);
 
+// §prevent-dup-parks — exact-title dedup (seenTitles) misses the real churn: the planner RE-MINTS work that is
+// already DONE or parked `needs-operator` under DIFFERENT wording, the worker re-discovers "already implemented",
+// and it parks as a blocked/needs-operator bead again. Backstop: build the set of already-HANDLED beads and drop
+// a new impl bead that strongly overlaps one (near-identical title, or high title-token overlap + a shared target
+// file). Deterministic; every drop is logged (the bead is simply not re-added, nothing is deleted) so it is
+// auditable/recoverable. Conservative thresholds keep genuinely-new work safe.
+const DUP_STOP = new Set("a an the of to and or for with in on at add new set from into is are be per each all its use adds implement create make".split(" "));
+function titleTokens(t) { return new Set(norm(t).split(" ").filter((w) => w.length >= 3 && !DUP_STOP.has(w))); }
+// §AUDIT-2026-07-04 — dup memory must survive the §GC prune + landings: handled work lives in THREE places —
+// live backlog (blocked/needsOperator/undrained done), backlog-archive.json (pruned fossils; EXCLUDE superseded —
+// their successor is the real dup anchor), and completions.json (landed work; rows carry no files[], so only the
+// ≥0.8 title-overlap arm can fire for them). Backlog-only scanning forgot exactly the beads most re-minted.
+const archivedBeads = readJson(`${CONTROL}/backlog-archive.json`, []);
+const handledSrc = [
+  ...backlog.filter((b) => b && (b.needsOperator === true || b.status === "done" || b.status === "blocked")),
+  ...archivedBeads.filter((b) => b && (b.needsOperator === true || ["done", "blocked", "abandoned", "parked"].includes(b.status))),
+  ...completions.filter((c) => c && c.title),
+];
+const handledBeads = handledSrc
+  .map((b) => ({ id: b.id, title: b.title, tokens: titleTokens(b.title), files: new Set((Array.isArray(b.files) ? b.files : []).map((f) => String(f).toLowerCase())) }));
+function findHandledDup(b) {
+  const nt = titleTokens(b.title);
+  const nf = new Set((Array.isArray(b.files) ? b.files : []).map((f) => String(f).toLowerCase()));
+  return handledBeads.find((h) => {
+    let inter = 0; for (const w of nt) if (h.tokens.has(w)) inter++;
+    const ov = (nt.size && h.tokens.size) ? inter / Math.min(nt.size, h.tokens.size) : 0;
+    if (ov >= 0.8) return true;                                    // near-identical wording → same work
+    const sharedFile = [...nf].some((f) => h.files.has(f));
+    return sharedFile && inter >= 3;                               // ≥3 distinctive shared tokens + a shared target file
+  });
+}
+let dupHandledDropped = 0;
+
 // next bead id
 function nextId() {
   let max = 0;
-  for (const b of [...backlog, ...completions]) {
+  for (const b of [...backlog, ...completions, ...suggestions, ...rejected]) { // §AUDIT-2026-07-04 — suggestion/rejected ids share the cc-#### namespace; scan them too so genId can't re-mint a colliding id
     const m = String(b.id || "").match(/cc-(\d+)/);
     if (m) max = Math.max(max, +m[1]);
   }
@@ -75,6 +108,17 @@ function isCodeReviewSuggestion(s) {
   return CODE_REVIEW_RE.test(`${s.title || ""} ${s.body || s.detail || ""}`);
 }
 
+// §AUDIT-2026-07-03 — suggestion ids must be unique across LIVE suggestions + rejected too (two live "cc-0001"
+// suggestions were observed; the GUI accept/reject keys on id). The bead-path H2 check + genId() only dedup vs
+// backlog/completions, so a planner-supplied id (or a minted one) could still collide with an old suggestion.
+const usedSugIds = new Set([...suggestions, ...rejected].map((x) => x && x.id).filter(Boolean));
+function uniqueSugId(want) {
+  let id = typeof want === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(want) ? want : genId();
+  while (usedSugIds.has(id)) id = genId(); // genId is monotonic → terminates
+  usedSugIds.add(id);
+  return id;
+}
+
 let added = 0, rejectedWip = 0, deduped = 0, other = 0, sugAdded = 0, codeReviewDropped = 0;
 
 for (const op of backlogOps) {
@@ -84,6 +128,13 @@ for (const op of backlogOps) {
     if (!b.title) { continue; }
     if (mapsToWip(b)) { rejectedWip++; plog(`[${mode}] REJECT WIP-section bead: "${b.title}"`); continue; }
     if (seenTitles.has(norm(b.title))) { deduped++; continue; }
+    // §prevent-dup-parks — drop a re-mint of already-handled (done/parked-needs-operator) work under different
+    // wording (impl beads only; design routes to suggestions with its own dedup). This is the deterministic
+    // backstop for the "already-built → worker parks blocked" churn.
+    if (b.kind !== "design") {
+      const dup = findHandledDup(b);
+      if (dup) { dupHandledDropped++; deduped++; plog(`[${mode}] DROP re-mint of already-handled bead ${dup.id} ("${dup.title}") ← new "${b.title}" (dup-of-handled; feature already done/parked)`); continue; }
+    }
     const bead = {
       // §H2 — the planner id is LLM-supplied and flows into the dashboard's onclick("…") handlers; enforce a
       // safe slug charset so a prompt-injected id (e.g. `');fetch(...)//`) can never reach the DOM. Fall back to
@@ -115,7 +166,7 @@ for (const op of backlogOps) {
       if (isCodeReviewSuggestion(bead)) {
         codeReviewDropped++; plog(`[${mode}] DROP code-review suggestion (operator does not review code): "${bead.title}"`);
       } else if (!seenSuggestions.has(norm(bead.title))) {
-        suggestions.push({ id: bead.id, title: bead.title, body: bead.detail, kind: "design", created: nowIso(), status: "open" });
+        suggestions.push({ id: uniqueSugId(bead.id), title: bead.title, body: bead.detail, kind: "design", created: nowIso(), status: "open" });
         seenSuggestions.add(norm(bead.title)); sugAdded++;
       }
     } else {
@@ -139,7 +190,7 @@ for (const op of suggestionOps) {
   if (!s.title || seenSuggestions.has(norm(s.title))) { continue; }
   if (isCodeReviewSuggestion(s)) { codeReviewDropped++; plog(`[${mode}] DROP code-review suggestion (operator does not review code): "${s.title}"`); continue; }
   if (mapsToWip(s)) { rejectedWip++; continue; }
-  suggestions.push({ id: genId(), title: String(s.title).slice(0, 120), body: String(s.body || s.detail || "").slice(0, 600), kind: "design", created: nowIso(), status: "open" });
+  suggestions.push({ id: uniqueSugId(null), title: String(s.title).slice(0, 120), body: String(s.body || s.detail || "").slice(0, 600), kind: "design", created: nowIso(), status: "open" });
   seenSuggestions.add(norm(s.title)); sugAdded++;
 }
 
@@ -152,21 +203,29 @@ try {
 
 const netChange = added + sugAdded + other;
 
-// trigger-clearing markers go LAST, only after beads are durably written
-if (mode === "diff" && input.authoritySha) { writeFileSync(`${CONTROL}/.authority-consumed`, input.authoritySha); }
-if (mode === "audit") { writeFileSync(`${CONTROL}/.lastaudit`, String(Date.now())); }
+// trigger-clearing markers go LAST, only after beads are durably written. §AUDIT-2026-07-04: tmp+rename
+// (atomicWrite) so a crash mid-write can never leave a truncated marker a later sense misparses.
+if (mode === "diff" && input.authoritySha) { atomicWrite(`${CONTROL}/.authority-consumed`, input.authoritySha); }
+if (mode === "audit") { atomicWrite(`${CONTROL}/.lastaudit`, String(Date.now())); }
 
-// opus backoff: a mode that changed nothing latches on its input until that input changes (§13.31)
-const latch = readJson(`${CONTROL}/.plan-latch.json`, {});
-if (netChange === 0) {
-  latch[mode] = input.latchKey ?? true;
-  plog(`[${mode}] produced no change → latched on ${JSON.stringify(input.latchKey)}`);
-} else {
-  delete latch[mode];
+// opus backoff: a mode that changed nothing latches on its input until that input changes (§13.31).
+// §AUDIT-2026-07-04 — RMW under the backlog lock: two planner hosts should never run concurrently (mutex),
+// but an operator-error overlap could interleave this read-modify-write and silently drop a latch.
+{
+  const lkL = acquire(LOCKS, "backlog");
+  try {
+    const latch = readJson(`${CONTROL}/.plan-latch.json`, {});
+    if (netChange === 0) {
+      latch[mode] = input.latchKey ?? true;
+      plog(`[${mode}] produced no change → latched on ${JSON.stringify(input.latchKey)}`);
+    } else {
+      delete latch[mode];
+    }
+    writeJson(`${CONTROL}/.plan-latch.json`, latch);
+  } finally { release(lkL); }
 }
-writeJson(`${CONTROL}/.plan-latch.json`, latch);
 
-plog(`[${mode}] applied: +${added} beads, +${sugAdded} suggestions, ${other} ops, ${deduped} deduped, ${rejectedWip} WIP-rejected, ${codeReviewDropped} code-review-dropped. note: ${String(result.note || "").slice(0, 160)}`);
+plog(`[${mode}] applied: +${added} beads, +${sugAdded} suggestions, ${other} ops, ${deduped} deduped (${dupHandledDropped} dup-of-handled), ${rejectedWip} WIP-rejected, ${codeReviewDropped} code-review-dropped. note: ${String(result.note || "").slice(0, 160)}`);
 
 // commit the plan (labeled; bookkeep-style — Stop hook then no-ops on the clean tree)
 // §15i 15.47: take the SAME git-tree lock as bookkeep.commit() so plan-apply-vs-tick can't race on .git/index.lock.

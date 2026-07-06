@@ -2,9 +2,9 @@
   "id": "a-mr40b851-z3g5",
   "kind": "image",
   "filename": "player.charsel_a.png",
-  "file": "file.r1.png",
+  "file": "file.r3.png",
   "mime": "image/png",
-  "contentHash": "sha256:abeae433aabbfb11dfc0e79ced91b1a2e1995ceba866b0cc92a66cdfd8701af5",
+  "contentHash": "sha256:09d8f3f360d6365ba8d0fcadc5dd9c4a6a3c4225fb3329ed5a200c69465f0672",
   "instructions": "32x48, 1 frame. key: player.charsel_a. Placeholder character A (Warrior) — red standing figure for the character-select screen.",
   "questions": [],
   "state": "ready",
@@ -17,20 +17,20 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr40b851-z3g5-r2",
-    "sha": "442c397ad962e5f594825028c2af63e4aab8d2c8",
-    "contentHash": "sha256:abeae433aabbfb11dfc0e79ced91b1a2e1995ceba866b0cc92a66cdfd8701af5",
-    "rev": 2
+    "beadId": "asset-a-mr40b851-z3g5-r5",
+    "sha": "d1908db07df88591306f7aae025a132030db2e53",
+    "contentHash": "sha256:09d8f3f360d6365ba8d0fcadc5dd9c4a6a3c4225fb3329ed5a200c69465f0672",
+    "rev": 5
   },
-  "implementedContentHash": "sha256:abeae433aabbfb11dfc0e79ced91b1a2e1995ceba866b0cc92a66cdfd8701af5",
+  "implementedContentHash": "sha256:09d8f3f360d6365ba8d0fcadc5dd9c4a6a3c4225fb3329ed5a200c69465f0672",
   "feelConfirmed": null,
-  "placeholderStale": false,
+  "placeholderStale": true,
   "abandonCount": 0,
   "questionRounds": 0,
   "abandonedAtContentHash": null,
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T21:18:41.654Z",
-  "updated": "2026-07-02T21:26:02.622Z",
-  "rev": 2
+  "updated": "2026-07-04T05:10:46.674Z",
+  "rev": 5
 }

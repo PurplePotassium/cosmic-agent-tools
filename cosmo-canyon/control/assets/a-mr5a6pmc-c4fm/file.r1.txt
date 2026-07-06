@@ -1,0 +1,19 @@
+FIX: portrait orientation + bounded scrolling corridor + fixed (non-follow) camera + continuous scroll.
+
+The game is currently a free-roam square arena with a player-CENTERED camera, and the floor scroll snaps back to the top every 32px. Per the GDD it must be a VERTICAL (portrait phone) auto-scrolling corridor.
+
+REQUIRED BEHAVIOR (all four, they are inseparable):
+1) PORTRAIT: render the play area in a portrait aspect (~9:16). On a landscape/desktop window, letterbox: center a portrait viewport with black bars on the left/right. Compute a portrait viewport rect (width = min(screenW, screenH*9/16)) and place the game world inside it; scale world so the corridor width fills the viewport width. HUD + virtual joystick must sit inside/over the portrait viewport.
+2) WALLS L/R (corridor): the playfield is bounded by walls on the LEFT and RIGHT edges. Add a sim constant CORRIDOR_HALF_W (e.g. 360 world px) in state.ts. Clamp player.x to [-CORRIDOR_HALF_W+radius, CORRIDOR_HALF_W-radius] in movement.ts (replace the ARENA x-clamp). Enemy swarm spawn x must stay within the corridor (clamp/limit the spawn x-range to ~±(CORRIDOR_HALF_W-40) in spawn.ts). Render visible wall columns at the corridor edges.
+3) CAMERA does NOT follow the player: horizontally FIXED on corridor center (world.x centers x=0, never p.x). Vertically it follows the SCROLL, not the player.
+4) CONTINUOUS DOWNWARD SCROLL (fix the snap): the world scrolls downward continuously with NO reset/snap (remove the 'floor.y = (time*50)%32' modulo snap). The floor must scroll infinitely (use a seamless TilingSprite floor OR reposition/tile the floor so it never runs out). Camera vertical = a continuous function of time (scrollY = MAP_SCROLL_SPEED * time). The player is confined to the on-screen vertical window (clamp player.y to the visible band [scrollY+margin, scrollY+viewHeightWorld-margin]) so as the screen scrolls the player is carried along and can move up/down within the screen. Enemies/pickups scroll with the world (they already live in world coords). Net effect: world scrolls down => sensation of moving up; pickups stay on-screen because the whole field scrolls together.
+
+IMPLEMENTATION NOTES:
+- Keep src/sim deterministic. The scroll offset can be derived from s.time (MAP_SCROLL_SPEED already exists in state.ts = 50). Player y-clamp uses a sim-side visible-band constant (choose VIEW_H_WORLD, e.g. ~1000 world px so ~720px screen at scale). Prefer computing the band from a sim constant, not from the DOM (sim must not read window).
+- The camera / letterbox / portrait viewport / wall render all live in src/render/stage.ts (render only). The player x-clamp (walls) + y-band clamp live in the sim (movement.ts + state.ts constants). The renderer maps world->screen inside the portrait viewport.
+- Remove player-follow: world.x = viewportCenterX - 0*scale (fixed on corridor center); world.y = viewportTop - scrollY*scale (scroll), NOT -p.y.
+- Update the harness/main if needed so headless still works (sim has no window; guard DOM reads).
+
+CONSTRAINTS: deterministic sim; no test/accept/package.json edits; gate green (autopilot still reaches+beats boss within the corridor). Verify visually (portrait, walls visible, camera fixed horizontally, floor scrolls smoothly with no snap).
+
+ACCEPTANCE: game renders in portrait with left/right walls; camera stays horizontally fixed (player can move to the walls without the view following); the floor scrolls downward continuously with no snap-back; player cannot leave the corridor or the vertical screen band.

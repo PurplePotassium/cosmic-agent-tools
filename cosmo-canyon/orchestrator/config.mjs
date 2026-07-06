@@ -30,10 +30,11 @@ export const SERIAL_DEFAULTS = Object.freeze({
 // caller can't mutate the shared table; schedule.mjs imports it.
 export const TIER_WEIGHT = Object.freeze({ light: 1, heavy: 3, structural: 5 });
 
-// §H7 — hard ceiling on parallelism. clampInt only floors the low end, so a VALID large int (e.g.
-// {"maxConcurrency":999} from a typo / bad GUI edit / hostile write) would sail through and open that many
-// worktrees+workers. Never widen past this regardless of what the file declares.
-export const MAX_CONCURRENCY = 5;
+// §H7 — hard ceiling on parallelism. clampInt only floors the low end, so a VALID large int would sail
+// through and open that many worktrees+workers. This stays the ONE high-side cap — a real bound so a typo /
+// hostile config can't exceed it. Operator-raised to 1000 (2026-07-03): the operator wants to fan out very
+// wide; the disjoint-files partition + daily tick cap still bound ACTUAL dispatch to the available work.
+export const MAX_CONCURRENCY = 1000;
 // Parallel-mode FLOOR: N=1 is disallowed in parallel (that's what serial mode is for) — a parallel run is clamped
 // to [MIN_PARALLEL, MAX_CONCURRENCY]. Serial mode is still always N=1 (the byte-for-byte fallback path).
 export const MIN_PARALLEL = 2;
@@ -63,6 +64,10 @@ export function readConfig() {
   const maxConcurrency = mode === "serial"
     ? 1
     : Math.min(MAX_CONCURRENCY, Math.max(MIN_PARALLEL, clampInt(c.maxConcurrency, 1, MAX_CONCURRENCY)));
+  // autoConcurrency (operator toggle, 2026-07-03): "ignore the number — decide for yourself how many agents
+  // to run to finish fastest". Only meaningful in parallel (serial is always N=1). Consumers (schedule.mjs)
+  // treat it as "use the MAX_CONCURRENCY ceiling" → fan out as wide as the available disjoint work allows.
+  const autoConcurrency = mode === "parallel" && c.autoConcurrency === true;
   const isolation = c.isolation === "worktree" || c.isolation === "inline" || c.isolation === "auto" ? c.isolation : "auto";
   // §AUDIT-2026-07-02 CRIT-1 — worktreeRoot is PINNED to the constant, NOT read from the file. config.json is in
   // bookkeep's ALLOW_CONTROL (a worker can land an edit to it through the normal gate), and this value flows into
@@ -79,9 +84,18 @@ export function readConfig() {
   const tbRaw = clampInt(raw && raw.tickBudget, 1, DEFAULT_TICK_BUDGET);
   const tickBudget = Math.min(tbRaw, MAX_TICK_BUDGET);
 
+  // §AUDIT-2026-07-04 — optional model overrides ({models:{work,planner}}), so a model bump is a config edit,
+  // not a supervisor.mjs code change (the hardcoded defaults were going stale). Strict charset (model-id shaped);
+  // anything else → null → the supervisor's built-in default. Never worker-widened: config.json edits still land
+  // only through ALLOW_CONTROL-gated commits, and a bogus id just fails the spawn loudly.
+  const mRaw = (raw && typeof raw === "object" && raw.models && typeof raw.models === "object") ? raw.models : {};
+  const modelStr = (v) => (typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$/.test(v) ? v : null);
+  const models = Object.freeze({ work: modelStr(mRaw.work), planner: modelStr(mRaw.planner) });
+
   return Object.freeze({
-    concurrency: Object.freeze({ mode, maxConcurrency, isolation, worktreeRoot, perAgentTimeoutMin, heavyCostReserve, heartbeatSec }),
+    concurrency: Object.freeze({ mode, maxConcurrency, autoConcurrency, isolation, worktreeRoot, perAgentTimeoutMin, heavyCostReserve, heartbeatSec }),
     tickBudget,
+    models,
   });
 }
 

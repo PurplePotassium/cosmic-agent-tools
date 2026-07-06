@@ -16,5 +16,23 @@
     "title": "Re-opened asset button.play — review shipped code",
     "reason": "",
     "rejected": "2026-07-02T10:29:12.649Z"
+  },
+  {
+    "id": "cc-0001-b",
+    "title": "Reclassify ui_mainmenu.txt acceptance: sim -> render/feel (operator FEEL-REVIEW)",
+    "reason": "STALE 2026-07-04: ui_mainmenu resolved via close-satisfied operator attest (asset Implemented 2026-07-02); no reclassify needed. (id de-duped from colliding cc-0001.)",
+    "rejected": "2026-07-04T05:45:00.000Z"
+  },
+  {
+    "id": "cc-0012",
+    "title": "Infra: worker diffs keep capturing control/.plan-*.json -> every run auto-reverts (systemic tamper, not scope)",
+    "reason": "FIXED 2026-07-04 audit remediation: .plan-{input,result,latch}.json untracked (git rm --cached; gitignore now effective) + added to bookkeep ALLOW_CONTROL. Tamper class eliminated.",
+    "rejected": "2026-07-04T05:45:00.000Z"
+  },
+  {
+    "id": "cc-0019",
+    "title": "Infra: weapon_levels_5 / ui_mainmenu spec is UNLANDABLE by workers — REQUIRES game/test/** edits the tamper guard revert",
+    "reason": "STALE 2026-07-04: both specs since landed (weapon level-5 scaling committed; ui_mainmenu closed via close-satisfied). test/** stays operator-only by design; the staging-race root cause (.plan-*.json tracked) is fixed.",
+    "rejected": "2026-07-04T05:45:00.000Z"
   }
 ]

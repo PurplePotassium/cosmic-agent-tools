@@ -38,7 +38,9 @@ function sha1hex(s) { return createHash("sha1").update(s).digest("hex"); }
 export function readySpecs() {
   const idx = readIndex();
   const rows = Array.isArray(idx.assets) ? idx.assets : [];
-  return rows.filter((a) => a && a.kind === "spec" && a.state === "ready");
+  // §AUDIT-2026-07-04 — authorityRetired excluded: a SATISFIED one-shot spec (landed fix) keeps its state +
+  // Implemented provenance but no longer compiles into the planner's north-star (spec-doc size control).
+  return rows.filter((a) => a && a.kind === "spec" && a.state === "ready" && !a.authorityRetired);
 }
 
 // THE authority hash — the SINGLE definition (15.24):
@@ -78,8 +80,9 @@ export function compileSpecs() {
       const key = (m && (m.manifestKey || m.filename)) || row.manifestKey || row.filename || row.id;
       const body = specBody(m).trim();
       doc += `\n\n## SPEC ${key}  <!-- ${row.id} rev${row.rev} -->\n\n${body}\n`;
-      index.specs.push({ id: row.id, key, rev: row.rev, contentHash: row.contentHash || null });
+      index.specs.push({ id: row.id, key, rev: row.rev, contentHash: row.contentHash || null, bytes: Buffer.byteLength(body) }); // §AUDIT-2026-07-04 — per-spec size (dashboard authority-size visibility)
     }
+    index.totalBytes = index.specs.reduce((n, s) => n + (s.bytes || 0), 0);
     if (!ids.length) doc += `\n\n<!-- EMPTY AUTHORITY: no Ready specs. Mark a Spec asset Ready to populate the north-star (§15.33). -->\n`;
     mkdirSync(controlRoot(), { recursive: true });
     atomicWrite(specDocPath(), doc);

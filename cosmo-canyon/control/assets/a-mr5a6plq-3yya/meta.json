@@ -1,0 +1,45 @@
+{
+  "id": "a-mr5a6plq-3yya",
+  "kind": "spec",
+  "filename": "fix_levelup_no_passives.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:750596661aa7b52b81dd56905454803741d40f68099a72bedeae674ca3b47213",
+  "instructions": "FIX: remove passive stat upgrades from level-ups and chests.\n\nDESIGN CHANGE (per Realm Survivors GDD): level-up / chest reward options are ONLY: new weapon, weapon level-up, weapon fusion, and weapon EVOLUTION (chest). Generic passive stat bonuses (Move Speed, Damage %, Aura Range, Attack Interval, Max HP, Magnet Radius) are NO LONGER part of the design — permanent stat bonuses come from character \"training\" passives outside a run, not from in-run level-ups.\n\nWHAT TO DO (src/sim/systems/upgrades.ts):\n- In buildLevelDraft() and buildChestDraft(), the candidate list is seeded with 'const candidates = UPGRADE_POOL.map(u=>u.id)'. Change BOTH to start EMPTY: 'const candidates: string[] = [];'. So the generic stat upgrade ids (dmg1/spd1/aoe1/rate1/hp1/mag1) are never offered.\n- Leave everything else (weapon:new / weapon:lvl / fusion / evolve draw order + rng calls) UNCHANGED so determinism is preserved.\n- Do NOT delete UPGRADE_POOL from src/sim/data/upgrades.ts — the protected test test/sim.upgrades.ts asserts UPGRADE_POOL.length>=6. Keep the pool + UpgradeDef type + applyUpgradePick's final else branch intact (harmless dead path).\n\nCONSTRAINTS: src/sim only, deterministic (no Math.random/Date.now/rAF/performance.now). Do NOT edit test/** or accept/** or package.json. Keep the gate green (tsc + tests): the win-path autopilot must still reach+beat the boss (weapons/fusions carry scaling now), and the level-up/chest drafts still produce 3 weapon options.\n\nACCEPTANCE: a level-up or chest draft never offers a generic stat bonus; every offered card is a weapon (new/level), fusion, or evolution. Gate green.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/sim/systems/upgrades.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5a6plq-3yya-r1",
+    "sha": "2be5f742223da5a4a956f248d4821e4a489d4bde",
+    "contentHash": "sha256:750596661aa7b52b81dd56905454803741d40f68099a72bedeae674ca3b47213",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:750596661aa7b52b81dd56905454803741d40f68099a72bedeae674ca3b47213",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5a6plq-3yya-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T18:48:06.152Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T18:42:53.343Z",
+  "updated": "2026-07-04T07:54:02.937Z",
+  "rev": 1,
+  "acceptanceKind": "feel",
+  "authorityRetired": true
+}

@@ -69,9 +69,9 @@ export function projectAssetToBead(asset) {
     : (asset.acceptanceKind || (/\b(feel|visual|juice|looks?|aesthetic|polish|vibe|readable|readability|ui|hud|menu|screen|button|title|layout|sprite|anim(?:ation)?|art|colou?r|theme|font|icon)\b/i.test(specText) ? "feel" : "sim"));
   const graderNeedsConfirm = kind === "spec"; // §15.15/15.17 — a planner-authored spec grader lands DISABLED until operator confirm
   const acceptance = kind === "image"
-    ? `Image render-reachability grader (auto-minted): getTexture('${key}') referenced + manifest '${key}' real + atlas frame + flipbook differs. bookkeep derive-binds the upload before grading.`
+    ? `Image render-reachability grader (auto-minted): getTexture('${key}') referenced + manifest '${key}' real + atlas frame + flipbook differs. bookkeep derive-binds the upload before grading. NOTE: the grader greps a LITERAL quoted key — if the real call site computes its key (data table/factory, e.g. charselect/mainmenu), wire the table properly AND add the literal getTexture('${key}') line to the preload block in src/render/realm-registry.ts.`
     : kind === "audio"
-    ? `Audio reached-by-playback grader (auto-minted): playSfx/playMusic('${key}') referenced + audio-manifest '${key}' real + decodable.`
+    ? `Audio reached-by-playback grader (auto-minted): playSfx/playMusic('${key}') referenced + audio-manifest '${key}' real + decodable. NOTE: literal quoted key required — for computed-key call sites also add the literal playSfx('${key}') line to src/render/realm-registry.ts.`
     : acceptanceKind === "feel"
     ? "Feel/visual spec: snapshot + ADVISORY critic → human-gated FEEL-REVIEW queue (only operator confirm flips Implemented, 15.18)."
     : "Sim-checkable spec: planner authors game/accept/<bead.id>.ts (PROTECTED); lands DISABLED until operator confirm + mutation-check + ACCEPT-PASS token (15.15/15.17).";
@@ -205,6 +205,7 @@ export function reconcileAssets({ now = Date.now() } = {}) {
   const mintable = [];
   for (const a of assets) {
     if (a.escalated || a.blockedNeedsOperator) { out.skipped++; continue; }   // hard-parked → never mint
+    if (a.authorityRetired) { out.skipped++; continue; }                       // §AUDIT-2026-07-04 — retired from authority → an edit must not mint work for a non-authority spec
     // §15.3: refuse to mint past ASSET_ABANDON_N UNLESS contentHash changed since the abandon (metadata wiggle ≠ reset)
     if ((a.abandonCount || 0) >= ASSET_ABANDON_N && (a.abandonedAtContentHash == null || a.abandonedAtContentHash === a.contentHash)) {
       setOperatorBlock(a.id);

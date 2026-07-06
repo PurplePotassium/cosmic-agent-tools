@@ -203,8 +203,8 @@
       </div>
 
       <div class="card">
-        <h2>✅ Backlog <span class="pill idle" id="cc-backlog-count" style="margin-left:auto;">0</span></h2>
-        <p class="muted" style="margin:0 0 0.4rem;">Read-only view of what the planner has queued from the Ready specs.</p>
+        <h2>✅ Backlog <span class="pill idle" id="cc-backlog-count" style="margin-left:auto;">0</span> <button class="btn-stop" style="padding:0.15rem 0.55rem;font-size:0.62rem;margin-left:0.4rem;" onclick="pruneCosmoBacklog()" title="Archive done/superseded/dead beads to backlog-archive.json (keeps live abandoned/blocked latches)">prune</button></h2>
+        <p class="muted" style="margin:0 0 0.4rem;">Read-only view of what the planner has queued from the Ready specs. <b>prune</b> archives terminal (done/superseded/dead) beads.</p>
         <div id="cc-backlog-list" style="margin-top:0.2rem;display:flex;flex-direction:column;gap:0.35rem;"></div>
       </div>
 
@@ -245,7 +245,8 @@
     <div class="card preview-card">
       <h2>🖥 Preview (:8780)
         <span style="margin-left:auto;display:flex;gap:0.4rem;">
-          <button type="button" style="padding:0.3rem 0.6rem;" onclick="ccReloadPreview()">↻ Reload</button>
+          <button type="button" id="cc-freeze-btn" class="btn-go" style="padding:0.3rem 0.6rem;" onclick="ccToggleFreeze(event)" title="Pause the game preview's auto-refresh so you can test without it reloading">⏸ Freeze auto-refresh</button>
+          <button type="button" class="cc-reload-btn" style="padding:0.3rem 0.6rem;" onclick="ccReloadPreview()">↻ Reload</button>
           <button type="button" style="padding:0.3rem 0.6rem;" onclick="window.open('http://localhost:8780/','_blank')">⧉ Popout</button>
           <button type="button" style="padding:0.3rem 0.6rem;" onclick="document.getElementById('cc-preview').requestFullscreen()">⛶ Fullscreen</button>
         </span>
@@ -253,9 +254,13 @@
       <!-- stale-preview nudge: shown when a new bead has landed since this iframe last loaded -->
       <div id="cc-preview-stale" style="display:none;">
         <span>🔄 New changes have landed since this preview loaded — reload to see them.</span>
-        <button type="button" class="btn-go" onclick="ccReloadPreview()">↻ Reload now</button>
+        <button type="button" class="btn-go cc-reload-btn" onclick="ccReloadPreview()">↻ Reload now</button>
       </div>
-      <iframe id="cc-preview" src="http://localhost:8780/"></iframe>
+      <div style="position:relative;">
+        <!-- reload feedback overlay: shown the instant Reload is hit, cleared on iframe load -->
+        <div id="cc-preview-loading" style="display:none;position:absolute;inset:0;z-index:5;align-items:center;justify-content:center;background:rgba(15,23,42,0.72);color:#e2e8f0;font-size:0.85rem;font-weight:600;">⏳ Reloading preview…</div>
+        <iframe id="cc-preview" src="http://localhost:8780/"></iframe>
+      </div>
       <details style="margin-top:0.5rem;"><summary class="mini" style="cursor:pointer;">Auto-snapshot (headless capture)</summary>
         <img id="cc-snapshot" src="/api/cosmocanyon/snapshot" style="display:none;max-width:100%;border-radius:6px;margin-top:0.4rem;">
       </details>
@@ -359,7 +364,7 @@
     const g = (goalRaw || 'X').replace(/[.\s]+$/, '');   // strip trailing period/space so WE control punctuation
     const doc = (document.getElementById('cc-pb-doc').value || '').trim().replace(/[.\s]+$/, '');
     const lines = ['Drive Cosmo Canyon to ' + g + '.'];
-    if (doc) lines.push('Read the design doc at ' + doc + ', extract the design, and author the necessary Ready Specs for it in the Asset Browser.');
+    if (doc) lines.push('Read the design doc at ' + doc + ', extract the design, and author the necessary Ready Specs for it in the Asset Browser. Make sure to store a local copy of the GDD to diff later in case I update it.');
     if (document.getElementById('cc-pb-assets').checked) {
       const forRaw = (document.getElementById('cc-pb-assets-for').value || '').trim().replace(/[.\s]+$/, '');
       const y = forRaw || g;   // Y defaults to the Goal (X) when its own field is left blank
@@ -422,7 +427,16 @@
         grid.appendChild(l); grid.appendChild(i);
       };
       num('Daily tick budget (ticks/day)', 'tickBudget', j.tickBudget, 1);   // supervisor DAILY_CAP — read live each cycle
-      if (parallel) num(`Max parallel workers (2–${max})`, 'maxConcurrency', c.maxConcurrency, 2, max, false);
+      if (parallel) {
+        const auto = !!c.autoConcurrency;
+        num(`Max parallel agents (2–${max})`, 'maxConcurrency', c.maxConcurrency, 2, max, auto);   // greyed out when auto is on
+        // auto toggle: "ignore the number — let the orchestrator decide how many agents to run to finish fastest"
+        const al = document.createElement('span'); al.textContent = 'Auto (orchestrator decides)';
+        const aw = document.createElement('label'); aw.style.cssText = 'justify-self:end;display:flex;align-items:center;gap:0.4rem;cursor:pointer;';
+        const ac = document.createElement('input'); ac.type = 'checkbox'; ac.checked = auto; ac.style.cssText = 'width:auto;flex:0 0 auto;margin:0;padding:0;';
+        ac.onchange = () => saveCosmoConfig({ autoConcurrency: ac.checked });
+        aw.appendChild(ac); grid.appendChild(al); grid.appendChild(aw);
+      }
       num('Per-agent timeout (min)', 'perAgentTimeoutMin', c.perAgentTimeoutMin, 1);
       num('Heavy-cost reserve', 'heavyCostReserve', c.heavyCostReserve, 1);
       num('Heartbeat (sec)', 'heartbeatSec', c.heartbeatSec, 1);
@@ -447,6 +461,7 @@
 
   async function acceptCosmoSugg(id) { try { await ccApi('/suggestions/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); pollCosmo(); } catch {} }
   async function rejectCosmoSugg(id) { const reason = prompt("Reject reason (planner won't re-suggest):") || ''; try { await ccApi('/suggestions/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, reason }) }); pollCosmo(); } catch {} }
+  async function pruneCosmoBacklog() { try { const r = await (await ccApi('/backlog/prune', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json(); if (r && r.archived != null) alert('Archived ' + r.archived + ' terminal bead(s) to backlog-archive.json; ' + r.kept + ' kept.'); pollCosmo(); } catch { alert('prune failed'); } }
 
   function renderBanner(s) {
     const alive = s.supervisor && s.supervisor.alive;
@@ -471,11 +486,42 @@
   let ccPreviewLoadedVer = null;   // the game version the iframe currently shows (null until first known)
   let ccPreviewCurVer = null;      // the latest game version observed from /status
   function ccGameVer(s) { return String((s && s.knownGood) || '') + ':' + ((s && s.counts && s.counts.completions != null) ? s.counts.completions : 0); }
+  // Reload is slow (iframe re-fetch + game boot). Give immediate input feedback: gray out the Reload buttons +
+  // veil the preview with a "Reloading…" overlay the instant it's clicked; clear both on the iframe's load.
+  function ccSetReloading(on) {
+    document.querySelectorAll('.cc-reload-btn').forEach(b => { b.disabled = on; b.style.opacity = on ? '0.5' : ''; b.style.pointerEvents = on ? 'none' : ''; });
+    const ov = document.getElementById('cc-preview-loading'); if (ov) ov.style.display = on ? 'flex' : 'none';
+  }
   function ccReloadPreview() {
-    const f = document.getElementById('cc-preview'); if (f) f.src = f.src;   // force iframe reload
+    const f = document.getElementById('cc-preview');
+    if (f) {
+      ccSetReloading(true);                                                  // instant feedback during the reload delay
+      f.addEventListener('load', () => ccSetReloading(false), { once: true });
+      setTimeout(() => ccSetReloading(false), 8000);                         // safety: clear even if load never fires (dev server down)
+      f.src = f.src;                                                         // force iframe reload (the slow part — also stops the running game)
+    }
     ccPreviewLoadedVer = ccPreviewCurVer;                                    // now current → clear the nudge
     const n = document.getElementById('cc-preview-stale'); if (n) n.style.display = 'none';
     const tab = document.querySelector('#cc-tabbar .tabbtn[data-tab="preview"]'); if (tab) tab.classList.remove('has-update');
+  }
+
+  // Freeze auto-refresh: toggles control/.preview-freeze via the server; the game's vite dev server then drops
+  // HMR reload/update pushes so the preview holds still while the operator tests. Unfreeze reloads once to catch up.
+  let ccPreviewFrozen = false;
+  function ccRenderFreezeBtn() {
+    const b = document.getElementById('cc-freeze-btn'); if (!b) return;
+    b.textContent = ccPreviewFrozen ? '▶ Resume auto-refresh' : '⏸ Freeze auto-refresh';
+    b.classList.toggle('btn-stop', ccPreviewFrozen); b.classList.toggle('btn-go', !ccPreviewFrozen);
+  }
+  async function ccToggleFreeze(e) {
+    if (e) e.preventDefault();
+    const next = !ccPreviewFrozen;
+    try {
+      await ccApi('/preview/freeze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ frozen: next }) });
+      ccPreviewFrozen = next; ccRenderFreezeBtn();
+      if (next) showToast('Auto-refresh paused — preview frozen for testing');
+      else { showToast('Auto-refresh resumed'); ccReloadPreview(); }         // catch up to latest on resume
+    } catch {}
   }
   function ccUpdatePreviewStaleness(s) {
     ccPreviewCurVer = ccGameVer(s);
@@ -489,6 +535,7 @@
     let s; try { s = await (await ccApi('/status')).json(); } catch { return; }
     renderBanner(s);
     ccUpdatePreviewStaleness(s);
+    if (typeof s.previewFrozen === 'boolean' && s.previewFrozen !== ccPreviewFrozen) { ccPreviewFrozen = s.previewFrozen; ccRenderFreezeBtn(); }
     const pill = document.getElementById('cc-status-pill');
     const alive = s.supervisor && s.supervisor.alive;
     pill.className = 'pill ' + (s.paused ? 'stopped' : alive ? 'running' : 'idle');
@@ -625,6 +672,7 @@
     if (a.hasOpenQuestions) tags.push('<span class="cc-tag q">❓ questions</span>');
     if (a.dirty) tags.push('<span class="cc-tag dirty">dirty</span>');
     if (impl) tags.push('<span class="cc-tag impl">impl (provisional)</span>');
+    if (a.authorityRetired) tags.push('<span class="cc-tag nr" title="retired from the compiled authority — code + provenance kept; not in spec-doc.md">retired</span>');
     // left column: thumb + an open-file button + a reveal-folder-on-disk button
     const thumbCol = '<div class="cc-thumbcol">' + thumb
       + '<button type="button" class="cc-thumbbtn" data-act="file" title="open the asset file in its default app (outside the browser)">⧉ file</button>'
@@ -668,6 +716,18 @@
       sat.title = 'Confirm this spec is already satisfied by existing code (verify it renders/works first) — flips it Implemented';
       sat.onclick = () => ccConfirmSatisfied(a.id); actions.appendChild(sat);
     }
+    // §AUDIT-2026-07-04 — retire a SATISFIED spec from the compiled authority (one-shot fix-specs shouldn't tax
+    // every planner tick forever). Keeps state/Implemented/provenance; distinct from ○ Not ready (that's a reopen).
+    if (a.kind === 'spec' && ready && impl && !a.authorityRetired) {
+      const ret = document.createElement('button'); ret.textContent = '📤 retire';
+      ret.title = 'Retire this satisfied spec from the compiled authority (spec-doc.md). Code + Implemented provenance stay; use for landed one-shot fix-specs.';
+      ret.onclick = () => ccRetireSpec(a.id, el, true); actions.appendChild(ret);
+    }
+    if (a.kind === 'spec' && a.authorityRetired) {
+      const ret = document.createElement('button'); ret.textContent = '↩ restore';
+      ret.title = 'Restore this spec into the compiled authority (spec-doc.md)';
+      ret.onclick = () => ccRetireSpec(a.id, el, false); actions.appendChild(ret);
+    }
     return el;
   }
 
@@ -702,13 +762,15 @@
       ccLastAssetSig = sig;
       document.getElementById('cc-asset-count').textContent = c.total;
       const tabCnt = document.getElementById('cc-tab-assets-cnt'); if (tabCnt) tabCnt.textContent = c.total;
-      document.getElementById('cc-asset-summary').textContent = `${filtered.length}/${c.total} shown · ${c.ready} ready · ${c.not_ready} not-ready · ${c.q} with questions · ${c.impl} implemented (provisional)`;
+      const auth = ccAuthorityInfo && ccAuthorityInfo.totalBytes != null ? ` · authority ${ccAuthorityInfo.count} specs / ${(ccAuthorityInfo.totalBytes / 1024).toFixed(0)}KB${ccAuthorityInfo.totalBytes > 100 * 1024 ? ' ⚠ bloated (retire/consolidate specs)' : ''}` : '';
+      document.getElementById('cc-asset-summary').textContent = `${filtered.length}/${c.total} shown · ${c.ready} ready · ${c.not_ready} not-ready · ${c.q} with questions · ${c.impl} implemented (provisional)` + auth;
     }
   }
 
   async function loadCosmoAssets(force) {
-    try { const j = await (await ccApi('/assets/list')).json(); ccRenderAssets(j.assets || [], !!force); } catch {}
+    try { const j = await (await ccApi('/assets/list')).json(); ccAuthorityInfo = j.authority || null; ccRenderAssets(j.assets || [], !!force); } catch {}
   }
+  let ccAuthorityInfo = null; // §AUDIT-2026-07-04 — {count,totalBytes} of the compiled spec authority (size visibility)
 
   function ccScheduleSave(id, el) { clearTimeout(ccSaveTimers[id]); ccSaveTimers[id] = setTimeout(() => ccSaveInstructions(id, el), 900); }
   async function ccSaveInstructions(id, el) {
@@ -743,6 +805,20 @@
       loadCosmoAssets(true);
     } catch { showToast('state failed', 'error'); }
     finally { el.dataset.stateBusy = '0'; }
+  }
+  async function ccRetireSpec(id, el, retired) {
+    try {
+      const post = (withConfirm) => ccApi('/assets/retire', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, rev: Number(el.dataset.rev), retired, ...(withConfirm ? { confirm: true } : {}) }) });
+      let r = await post(false); let j = await r.json();
+      if (r.status === 409 && j.needsConfirm) {
+        if (!confirm(j.error + '\n\nProceed anyway?')) return;
+        r = await post(true); j = await r.json();
+      }
+      if (!r.ok) { showToast(j.error || 'retire failed', 'error'); loadCosmoAssets(true); return; }
+      showToast(retired ? 'Retired from authority (code + provenance kept)' : 'Restored into authority');
+      if (j.asset && typeof j.asset.rev === 'number') { el.dataset.rev = j.asset.rev; if (ccAssetRows[id]) ccAssetRows[id].rev = j.asset.rev; }
+      loadCosmoAssets(true);
+    } catch { showToast('retire failed', 'error'); }
   }
   async function ccDeleteAsset(id, el) {
     let body = { id };

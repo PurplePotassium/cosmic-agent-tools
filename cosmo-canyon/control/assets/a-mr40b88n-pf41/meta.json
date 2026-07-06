@@ -2,9 +2,9 @@
   "id": "a-mr40b88n-pf41",
   "kind": "image",
   "filename": "fx.charsel_campfire.png",
-  "file": "file.r1.png",
+  "file": "file.r3.png",
   "mime": "image/png",
-  "contentHash": "sha256:d780e042a24ecaafa677d4fe1bf9e1a0380e061f638481ac3d56514289b6b2a6",
+  "contentHash": "sha256:dcea058cec1a39361d7f35260fd7263fcbaa6a7eb351c1365f10037fcfc4e18c",
   "instructions": "32x32, 4 frames, horizontal, 8fps. key: fx.charsel_campfire. Placeholder animated campfire flipbook (frames differ) for the character-select screen — it flickers.",
   "questions": [],
   "state": "ready",
@@ -17,12 +17,12 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr40b88n-pf41-r2",
-    "sha": "ca241de54aa621f875a2d24df32623763e7f4acd",
-    "contentHash": "sha256:d780e042a24ecaafa677d4fe1bf9e1a0380e061f638481ac3d56514289b6b2a6",
-    "rev": 2
+    "beadId": "asset-a-mr40b88n-pf41-r3",
+    "sha": "dad4787effa9be5d5db443f4e31686a400619c17",
+    "contentHash": "sha256:dcea058cec1a39361d7f35260fd7263fcbaa6a7eb351c1365f10037fcfc4e18c",
+    "rev": 3
   },
-  "implementedContentHash": "sha256:d780e042a24ecaafa677d4fe1bf9e1a0380e061f638481ac3d56514289b6b2a6",
+  "implementedContentHash": "sha256:dcea058cec1a39361d7f35260fd7263fcbaa6a7eb351c1365f10037fcfc4e18c",
   "feelConfirmed": null,
   "placeholderStale": false,
   "abandonCount": 0,
@@ -31,6 +31,6 @@
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T21:18:41.783Z",
-  "updated": "2026-07-02T21:26:23.515Z",
-  "rev": 2
+  "updated": "2026-07-04T04:59:17.028Z",
+  "rev": 3
 }

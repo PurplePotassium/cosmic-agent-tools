@@ -2,6 +2,7 @@
   "concurrency": {
     "mode": "parallel",
     "maxConcurrency": 5,
+    "autoConcurrency": false,
     "isolation": "worktree",
     "worktreeRoot": "C:/Vibes-cc-wt",
     "perAgentTimeoutMin": 45,

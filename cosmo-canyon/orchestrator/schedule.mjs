@@ -22,7 +22,7 @@
 //  • overlapping-files assets are SERIALIZED BY CONSTRUCTION — not co-scheduled (never a lock held across a
 //    wait → can't deadlock); the deferred item is priority-aged so a churning exclusive can't starve it.
 //  • ALL agy items → ONE serial lane (15.42: agy is worktree-blind); only claude items are parallel-eligible.
-import { readConfig, TIER_WEIGHT } from "./config.mjs";
+import { readConfig, TIER_WEIGHT, MAX_CONCURRENCY } from "./config.mjs";
 import { orderedLockNames } from "./lock.mjs";
 
 const TIERS = new Set(["light", "heavy", "structural"]);
@@ -108,13 +108,16 @@ function byPriorityAge(a, b) {
 // Returns { slots, mode, parallel:[...], serial:[...], deferred:[{id,reason}], picked, weightUsed }.
 export function schedule(candidates = [], opts = {}) {
   const cfg = opts.config || readConfig();
-  const { mode, maxConcurrency, heavyCostReserve } = cfg.concurrency;
+  const { mode, maxConcurrency, autoConcurrency, heavyCostReserve } = cfg.concurrency;
   const activeClaims = Array.isArray(opts.activeClaims) ? opts.activeClaims : [];
   const capRemaining = opts.capRemaining == null ? Infinity : Number(opts.capRemaining);
 
   const active = activeClaims.length;
+  // autoConcurrency (operator "decide for yourself") ⇒ fan out to the safety ceiling; the disjoint-files
+  // partition below + capRemaining still bound actual picks to the available work.
+  const effMax = autoConcurrency ? MAX_CONCURRENCY : maxConcurrency;
   // §15.21: slots computed HERE, right before dispatch — min(concurrency headroom, cap headroom), floored 0.
-  const slots = Math.max(0, Math.min(maxConcurrency - active, capRemaining === Infinity ? maxConcurrency - active : Math.floor(capRemaining)));
+  const slots = Math.max(0, Math.min(effMax - active, capRemaining === Infinity ? effMax - active : Math.floor(capRemaining)));
 
   // Files already owned by in-flight claims → the new plan must stay disjoint from them.
   const activeLeases = activeClaims.map((c) => ({

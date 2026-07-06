@@ -25,7 +25,7 @@
 //           byte cap, and gives the derive child a hard timeout + single-in-flight guard.
 import http from "node:http";
 import fs from "node:fs";
-import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, renameSync, openSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, renameSync, openSync, unlinkSync, readSync, closeSync } from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import { exec, execSync, spawn } from "node:child_process";
@@ -42,6 +42,9 @@ import { acquire as ccAcquire, release as ccRelease } from "./orchestrator/lock.
 // non-reentrant asset-<id> lock would self-deadlock). The one exception is DELETE (no store primitive): it
 // tombstones under an asset-<id> lock then calls rebuildIndex() as a separate step, matching the same design.
 import * as ccAssets from "./orchestrator/assets.mjs";
+// isTerminal = the orchestrator's single source of truth for "is this bead dead" (done/abandoned/blocked/
+// parked/superseded). The dashboard's "ready" count must use it so terminal beads don't show as actionable.
+import { isTerminal } from "./orchestrator/assets-core.mjs";
 // Worker-selection: the operator's ALLOWED model set + the orchestrator's task-fit pick (shared with the hosts).
 import { WORKER_OPTIONS, readAllowed, normalizeAllowed, agyCoolingDown } from "./orchestrator/agent-core.mjs";
 // Concurrency/runtime config — the SAME normalizer the loop hosts read through, so the GUI shows effective values.
@@ -95,6 +98,10 @@ const CC_HOST_LOG = path.join(CC_DIR, "logs", "host.log");
 const CC_AUTHORITY_CONSUMED = path.join(CC_CONTROL, ".authority-consumed"); // authority-consumed marker (gitignored)
 const CC_AUTHORITY_SETTLE = path.join(CC_CONTROL, ".authority-settle"); // §15.16 debounce window marker (gitignored)
 const CC_CONFIG = path.join(CC_CONTROL, "config.json");
+// Preview-freeze marker (gitignored runtime): while it exists, the game's vite dev server suppresses HMR
+// full-reload/update pushes (game/vite.config.ts `freezePreview` plugin) so the operator can test a running
+// build without it auto-refreshing out from under them (2026-07-03).
+const CC_PREVIEW_FREEZE = path.join(CC_CONTROL, ".preview-freeze");
 const CC_ASSETS = path.join(CC_GAME_DIR, "assets");
 const CC_MANIFEST = path.join(CC_ASSETS, "manifest.json");
 const CC_SOURCE = path.join(CC_ASSETS, "source");
@@ -180,6 +187,11 @@ function ccRunDerive(cb) {
 
 // ── vite (:8780) keep-alive + auto-snapshot cadence (owned by THIS host now) ──
 let ccViteStarting = false;
+// §AUDIT-2026-07-04 — cap append-forever child logs (vite.log/host.log had NO rotation → unbounded growth from
+// a chatty/stuck child). One rolled generation (.old) keeps recent history for debugging.
+function ccRotateLog(p, maxBytes = 5 * 1024 * 1024) {
+  try { if (statSync(p).size > maxBytes) { try { unlinkSync(`${p}.old`); } catch {} renameSync(p, `${p}.old`); } } catch {}
+}
 function ccEnsureVite() {
   if (ccViteStarting) return;
   if (!existsSync(path.join(CC_GAME_DIR, "package.json"))) return;
@@ -188,6 +200,7 @@ function ccEnsureVite() {
     ccViteStarting = true;
     const log = path.join(CC_DIR, "logs", "vite.log");
     try { mkdirSync(path.join(CC_DIR, "logs"), { recursive: true }); } catch {}
+    ccRotateLog(log);
     exec(`npm run dev >> "${log}" 2>&1`, { cwd: CC_GAME_DIR, windowsHide: true }, () => { ccViteStarting = false; });
     setTimeout(() => { ccViteStarting = false; }, 15000);
     console.log("[cc] starting vite dev server on :8780");
@@ -226,7 +239,7 @@ function readJsonBody(req, maxBytes) {
 // ── route handlers ───────────────────────────────────────────────────────────
 function hStatus(res) {
   const backlog = ccReadArr(CC_BACKLOG);
-  const ready = backlog.filter((b) => !["blocked", "abandoned", "done"].includes(b.status));
+  const ready = backlog.filter((b) => !isTerminal(b.status)); // was an inline [blocked,abandoned,done] list that under-counted — parked/superseded beads leaked in as "ready"
   const blocked = backlog.filter((b) => b.status === "blocked");
   const abandoned = backlog.filter((b) => b.status === "abandoned");
   let lastStatus = {}; try { lastStatus = readJson(CC_STATUS); } catch {}
@@ -236,7 +249,7 @@ function hStatus(res) {
   let guardAlert = null; if (existsSync(CC_GUARD_ALERT)) { try { guardAlert = JSON.parse(ccReadFile(CC_GUARD_ALERT)); } catch {} }
   let agyStrikes = 0; try { agyStrikes = parseInt(ccReadFile(CC_AGY_STRIKES).trim(), 10) || 0; } catch {}
   let stalled = null; if (existsSync(path.join(CC_CONTROL, ".stalled"))) { try { stalled = JSON.parse(ccReadFile(path.join(CC_CONTROL, ".stalled"))); } catch { stalled = { sinceCommit: "?" }; } }
-  let knownGood = null; try { knownGood = execSync(`git -C "${CC_GAME_REPO}" rev-parse --short cc-known-good`, { encoding: "utf-8" }).trim(); } catch {} // §SPLIT — the GAME repo's known-good (what rollback restores)
+  let knownGood = null; try { knownGood = execSync(`git -C "${CC_GAME_REPO}" rev-parse --short cc-known-good`, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch {} // §SPLIT — the GAME repo's known-good (what rollback restores). stdio discards git's stderr so a not-yet-created tag doesn't spam "fatal: Needed a single revision" on every /status poll.
   const supPid = ccAlive(CC_SUP_PID);
   let supStarted = null; if (supPid) { try { supStarted = statSync(CC_SUP_PID).mtime.toISOString(); } catch {} }
   let mode = "serial"; try { mode = readJson(CC_CONFIG).concurrency.mode || "serial"; } catch {}
@@ -244,23 +257,30 @@ function hStatus(res) {
     supervisor: { alive: !!supPid, pid: supPid || null, started: supStarted },
     inFlight: tick, stage: lastStatus.stage || "idle", lastStatus,
     paused, pausedReason, guardAlert, agyStrikes, stalled, knownGood, mode,
+    previewFrozen: existsSync(CC_PREVIEW_FREEZE),
     usage: { today: ccUsageToday(), cap: (() => { try { return ccReadConfig().tickBudget || CC_DAILY_CAP; } catch { return CC_DAILY_CAP; } })() },
     counts: { ready: ready.length, blocked: blocked.length, abandoned: abandoned.length, completions: ccReadArr(CC_COMPLETIONS).length, suggestions: ccReadArr(CC_SUGGESTIONS).filter((s) => s.status !== "closed").length },
     snapshotMtime: (() => { try { return statSync(CC_SNAPSHOT).mtimeMs; } catch { return 0; } })(),
   });
 }
 
+let ccStartingSup = false; // §AUDIT-2026-07-04 — check-then-spawn had a window: a double-clicked Start (two POSTs) could spawn TWO supervisors before the pid file landed
 function hStart(res) {
   ccEnsureVite();
+  if (ccStartingSup) return sendJson(res, 200, { ok: true, already: true, pid: null, starting: true });
   if (ccAlive(CC_SUP_PID)) return sendJson(res, 200, { ok: true, already: true, pid: ccAlive(CC_SUP_PID) });
-  try { unlinkSync(CC_PAUSED); } catch {}
-  try { mkdirSync(path.join(CC_DIR, "logs"), { recursive: true }); } catch {}
-  let fd; try { fd = openSync(CC_HOST_LOG, "a"); } catch { fd = "ignore"; }
-  const child = spawn("node", [CC_SUPERVISOR], { cwd: CC_DIR, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
-  child.unref();
-  try { ccAtomicWrite(CC_SUP_PID, String(child.pid)); } catch {}
-  console.log(`[cc] supervisor started pid ${child.pid}`);
-  sendJson(res, 200, { ok: true, pid: child.pid });
+  ccStartingSup = true;
+  try {
+    try { unlinkSync(CC_PAUSED); } catch {}
+    try { mkdirSync(path.join(CC_DIR, "logs"), { recursive: true }); } catch {}
+    ccRotateLog(CC_HOST_LOG);
+    let fd; try { fd = openSync(CC_HOST_LOG, "a"); } catch { fd = "ignore"; }
+    const child = spawn("node", [CC_SUPERVISOR], { cwd: CC_DIR, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
+    child.unref();
+    try { ccAtomicWrite(CC_SUP_PID, String(child.pid)); } catch {}
+    console.log(`[cc] supervisor started pid ${child.pid}`);
+    sendJson(res, 200, { ok: true, pid: child.pid });
+  } finally { ccStartingSup = false; }
 }
 function hStop(res) {
   try { ccAtomicWrite(CC_PAUSED, JSON.stringify({ reason: "manual", at: new Date().toISOString() })); } catch {}
@@ -290,6 +310,16 @@ function hBacklogDelete(res, b) {
   const id = b && b.id; if (!id) return sendJson(res, 400, { error: "id required" });
   if (!ID_RE.test(String(id))) return sendJson(res, 400, { error: "invalid id" }); // §15i 15.45
   try { ccWithLock("backlog", () => ccWriteArr(CC_BACKLOG, ccReadArr(CC_BACKLOG).filter((x) => x.id !== id))); sendJson(res, 200, { ok: true }); } catch (e) { sendJson(res, 500, { error: e.message }); }
+}
+function hBacklogPrune(res) {
+  // §GC — archive terminal FOSSIL beads (done/superseded/dead) out of backlog.json → backlog-archive.json.
+  // Spawns the CLI (which locks 'backlog' internally + is fire-latch-safe) so the server never re-locks the
+  // non-reentrant backlog lock nor pulls the orchestrator import graph into the long-lived server process.
+  try {
+    const out = execSync(`node "${path.join(CC_DIR, "orchestrator", "prune-backlog.mjs")}" --apply`, { cwd: CC_DIR, encoding: "utf-8" });
+    const r = JSON.parse((out || "").trim().split("\n").pop() || "{}");
+    sendJson(res, 200, { ok: true, ...r });
+  } catch (e) { sendJson(res, 500, { error: e.message }); }
 }
 function hSuggAccept(res, b) {
   const id = b && b.id; if (!id) return sendJson(res, 400, { error: "id required" });
@@ -332,6 +362,9 @@ function hConfigPost(res, b) {
   const clampI = (v, min, max) => { const n = Math.floor(Number(v)); if (!Number.isFinite(n) || n < min) return null; return max ? Math.min(n, max) : n; };
   if (b.mode !== undefined) c.mode = b.mode === "parallel" ? "parallel" : "serial";
   if (b.maxConcurrency !== undefined) { const n = clampI(b.maxConcurrency, MIN_PARALLEL, MAX_CONCURRENCY); if (n !== null) c.maxConcurrency = n; }
+  // autoConcurrency: operator toggle "ignore the number, orchestrator decides how many agents to run". readConfig
+  // only honors it in parallel mode; store the raw boolean here.
+  if (b.autoConcurrency !== undefined) c.autoConcurrency = !!b.autoConcurrency;
   if (b.isolation !== undefined && ["auto", "worktree", "inline"].includes(b.isolation)) c.isolation = b.isolation;
   if (b.worktreeRoot !== undefined && typeof b.worktreeRoot === "string" && /^[A-Za-z]:[\\/]\S/.test(b.worktreeRoot)) c.worktreeRoot = b.worktreeRoot.replace(/\\/g, "/").replace(/\/+$/, "");
   if (b.perAgentTimeoutMin !== undefined) { const n = clampI(b.perAgentTimeoutMin, 1); if (n !== null) c.perAgentTimeoutMin = n; }
@@ -343,11 +376,31 @@ function hConfigPost(res, b) {
   try { ccWithLock("agent", () => ccAtomicWrite(CC_CONFIG, JSON.stringify(raw, null, 2) + "\n")); const cfg = ccReadConfig(); sendJson(res, 200, { ok: true, config: cfg.concurrency, tickBudget: cfg.tickBudget }); }
   catch (e) { sendJson(res, 500, { error: e.message }); }
 }
+// Preview-freeze toggle: create/remove the `.preview-freeze` marker. While present, the game's vite dev server
+// drops HMR full-reload/update pushes (game/vite.config.ts freezePreview plugin) so the running preview stops
+// auto-refreshing while the operator tests it. The marker is a gitignored runtime file (never committed).
+function hPreviewFreeze(res, b) {
+  const frozen = !!(b && b.frozen);
+  try {
+    if (frozen) ccAtomicWrite(CC_PREVIEW_FREEZE, JSON.stringify({ at: new Date().toISOString() }));
+    else { try { unlinkSync(CC_PREVIEW_FREEZE); } catch {} }
+    sendJson(res, 200, { ok: true, frozen });
+  } catch (e) { sendJson(res, 500, { error: e.message }); }
+}
 function hFocusPost(res, b) { // blind single-field overwrite → atomic-rename, no lock needed (§6)
   try { ccAtomicWrite(CC_FOCUS, (b && b.focus || "").toString()); sendJson(res, 200, { ok: true }); } catch (e) { sendJson(res, 500, { error: e.message }); }
 }
 function hAux(res) {
-  const tail = (p, n) => { try { return readFileSync(p, "utf-8").replace(/^﻿/, "").split("\n").slice(-n).join("\n"); } catch { return ""; } };
+  // §AUDIT-2026-07-04 — bounded tail: the old readFileSync+split loaded the WHOLE file per 3s poll (host.log
+  // grows unboundedly between rotations). Read only the last 64KB via fd — same output for any sane tail window.
+  const tail = (p, n) => {
+    try {
+      const st = statSync(p); const len = Math.min(st.size, 65536);
+      const fd = openSync(p, "r"); const buf = Buffer.alloc(len);
+      try { readSync(fd, buf, 0, len, st.size - len); } finally { closeSync(fd); }
+      return buf.toString("utf-8").replace(/^﻿/, "").split("\n").slice(-n).join("\n");
+    } catch { return ""; }
+  };
   sendJson(res, 200, { plannerLog: tail(CC_PLANNER_LOG, 40), feelReview: tail(CC_FEELREVIEW, 30), hostLog: tail(CC_HOST_LOG, 60) });
 }
 function hUpload(res, b) {
@@ -376,7 +429,7 @@ function hRollback(res) {
   try {
     // §SPLIT — roll back the GAME repo (that's what a bad land dirties) to its cc-known-good. The C:/Vibes control
     // plane (backlog/completions/asset store) is intentionally NOT reset — that would discard asset uploads + bookkeeping.
-    const tag = execSync(`git -C "${CC_GAME_REPO}" rev-parse cc-known-good`, { encoding: "utf-8" }).trim();
+    const tag = execSync(`git -C "${CC_GAME_REPO}" rev-parse cc-known-good`, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     ccWithLock("git-tree", () => {
       execSync(`git -C "${CC_GAME_REPO}" reset --hard ${tag}`, { encoding: "utf-8" });
       try { execSync(`git -C "${CC_GAME_REPO}" clean -fd`, { encoding: "utf-8" }); } catch {} // NEVER -x → keep node_modules/dist/derived
@@ -490,7 +543,20 @@ function ccPlaceholderSvg(label, sub) {
 }
 
 // GET /assets/list — readIndex + §15.25 rev-check rows-vs-meta → rebuild-on-drift. Returns {assets,counts}.
+// §AUDIT-2026-07-04 — this is the dashboard's 3s hot poll but rebuilt the world each hit: a 483KB assets.json
+// parse + a per-asset meta drift rescan + a 286KB completions parse + both manifests. Cache the finished response
+// keyed on the 4 source-file mtimes (any real change = instant recompute), with a 10s hard TTL so an
+// out-of-band hand edit to a meta.json (the §15.25 drift case — bumps none of the keyed mtimes) is still
+// caught within ~3 poll cycles.
+let ccListCache = { key: "", t: 0, body: null };
+function ccListKey() {
+  const mt = (p) => { try { return statSync(p).mtimeMs; } catch { return -1; } };
+  return [path.join(CC_CONTROL, "assets.json"), CC_COMPLETIONS, CC_MANIFEST, path.join(CC_ASSETS, "audio-manifest.json"), path.join(CC_CONTROL, "spec-index.json")].map(mt).join("|");
+}
 function hAssetsList(res) {
+  const cacheKey = ccListKey();
+  if (ccListCache.body && ccListCache.key === cacheKey && Date.now() - ccListCache.t < 10000)
+    return sendText(res, 200, ccListCache.body, "application/json");
   let idx = ccAssets.readIndex();
   try {
     const rowRev = new Map((idx.assets || []).map((r) => [r.id, r.rev]));
@@ -521,7 +587,35 @@ function hAssetsList(res) {
       if (idx.counts) idx.counts.implemented = implN;
     }
   } catch {}
-  sendJson(res, 200, idx);
+  // §AUDIT-2026-07-04 — authority-size visibility: surface the compiled spec-doc's spec count + total bytes
+  // (spec-compile now writes per-spec bytes into spec-index.json) so authoring bloat is SEEN, not discovered in audits.
+  try { const si = readJson(path.join(CC_CONTROL, "spec-index.json")); idx.authority = { count: si.count ?? null, totalBytes: si.totalBytes ?? null }; } catch {}
+  const body = JSON.stringify(idx);
+  ccListCache = { key: cacheKey, t: Date.now(), body };
+  sendText(res, 200, body, "application/json");
+}
+
+// POST /assets/retire {id,rev,retired,confirm} — §AUDIT-2026-07-04: retire a SATISFIED spec from the compiled
+// authority (or restore it). NOT the reopen path — state, provenance and Implemented stay intact, no rev bump;
+// the spec simply stops compiling into spec-doc.md. Mirrors the §15.5 drain guard: retiring needs confirm when
+// it would EMPTY the live authority or remove the spec-legacy monolith.
+function hAssetsRetire(res, b) {
+  const id = String((b && b.id) || "");
+  if (!ASSET_ID_RE.test(id)) return sendJson(res, 400, { error: "invalid id" });
+  const rev = b && b.rev;
+  if (typeof rev !== "number") return sendJson(res, 400, { error: "rev (number) required" });
+  const retired = !!(b && b.retired);
+  let meta; try { ccAssets.validateId(id); meta = ccAssets.readAsset(id); } catch { return sendJson(res, 404, { error: "no such asset" }); }
+  if (meta.kind !== "spec") return sendJson(res, 400, { error: "retire is for SPEC assets (authority) only" });
+  if (retired && meta.state === "ready" && !(b && b.confirm)) {
+    const live = (ccAssets.readIndex().assets || []).filter((a) => a && a.kind === "spec" && a.state === "ready" && !a.authorityRetired).length;
+    const drainsToEmpty = live <= 1;
+    const isMonolith = meta.source === "spec-legacy";
+    if (drainsToEmpty || isMonolith) return sendJson(res, 409, { needsConfirm: true, drainsToEmpty, monolith: isMonolith,
+      error: `Retiring this spec ${drainsToEmpty ? "EMPTIES the compiled authority (the loop idles)" : "removes the authority monolith (spec-legacy)"}. Resubmit confirm:true.` });
+  }
+  try { const next = ccAssets.setAuthorityRetired(id, rev, retired); ccRefreshSpecAuthority(); sendJson(res, 200, { ok: true, asset: next }); }
+  catch (e) { sendJson(res, /rev mismatch/.test(e.message) ? 409 : 400, { error: e.message }); }
 }
 
 // GET /assets/file?id= — serve the asset's REAL stored bytes: image → its art, SPEC → its text, audio → its
@@ -590,6 +684,30 @@ function hAssetsOpen(res, b) {
 // corrupt the asset. Null here + the endpoint's explicit presence guard are the two-layer defense.
 function ccDecodeB64(s) { if (typeof s !== "string") return null; try { return Buffer.from(s.replace(/^data:[^;]+;base64,/, ""), "base64"); } catch { return null; } }
 
+// §AUDIT-2026-07-04 — spec-authoring rails. Every planner tick reads the COMPILED Ready-spec set, so an
+// oversized or duplicated spec taxes every future plan tick forever. Gate at the ONLY input surface:
+// warn ≥8KB, refuse ≥24KB without confirm:true (a spec is REQUIREMENTS, not a pasted design chapter), and
+// flag a NEW spec whose token set ≥60%-overlaps an existing Ready spec (extend the original instead).
+const CC_SPEC_WARN_BYTES = 8 * 1024, CC_SPEC_MAX_BYTES = 24 * 1024, CC_SPEC_OVERLAP = 0.6;
+const CC_SPEC_STOP = new Set("the a an of to and or for with in on at is are be it its this that from into use when then will must should can each all any not no if else per game player enemy screen".split(" "));
+function ccSpecTokens(s) { return new Set((String(s || "").toLowerCase().match(/[a-z0-9_.]{4,}/g) || []).filter((w) => !CC_SPEC_STOP.has(w))); }
+function ccSpecOverlapWith(text) {
+  const nt = ccSpecTokens(text); if (nt.size < 20) return null; // tiny spec → overlap meaningless
+  let best = null;
+  try {
+    for (const r of (ccAssets.readIndex().assets || [])) {
+      if (!r || r.kind !== "spec" || r.state !== "ready" || r.authorityRetired) continue;
+      let body = r.instructions || "";
+      if (!body && r.file) { try { body = readFileSync(path.join(CC_ASSETS_DIR, r.id, r.file), "utf-8"); } catch {} }
+      const ot = ccSpecTokens(body); if (ot.size < 20) continue;
+      let inter = 0; for (const w of nt) if (ot.has(w)) inter++;
+      const ov = inter / Math.min(nt.size, ot.size);
+      if (!best || ov > best.overlap) best = { id: r.id, name: r.filename || r.id, overlap: ov };
+    }
+  } catch {}
+  return best && best.overlap >= CC_SPEC_OVERLAP ? best : null;
+}
+
 // POST /assets/create — sniff + degenerate/cap reject → createAsset (state not_ready). Collision WARN (non-blocking).
 async function hAssetsCreate(res, b) {
   const fileB64 = b && b.file;
@@ -606,6 +724,18 @@ async function hAssetsCreate(res, b) {
   if (sniff.kind === "image") { const v = await ccValidateImage(buf, sniff.fmt); if (!v.ok) return sendJson(res, v.code, { error: v.error }); }
   const ch = "sha256:" + createHash("sha256").update(buf).digest("hex");
   let warn = null;
+  if (sniff.kind === "spec") {
+    // effective authority body = instructions if present, else the file text (mirrors spec-compile's specBody)
+    const effBody = instructions.trim() || buf.toString("utf-8");
+    const effBytes = Buffer.byteLength(effBody);
+    if (effBytes > CC_SPEC_MAX_BYTES && !(b && b.confirm))
+      return sendJson(res, 409, { needsConfirm: true, error: `spec body is ${(effBytes / 1024).toFixed(1)}KB (cap ${CC_SPEC_MAX_BYTES / 1024}KB) — a spec is REQUIREMENTS, one concern per spec, not a pasted design chapter. Split or trim it, or resubmit confirm:true.` });
+    if (!(b && b.confirm)) {
+      const dup = ccSpecOverlapWith(effBody);
+      if (dup) return sendJson(res, 409, { needsConfirm: true, overlapWith: dup.id, error: `~${Math.round(dup.overlap * 100)}% token overlap with existing Ready spec "${dup.name}" — extend THAT spec (replace / edit its Instructions) instead of re-stating it, or resubmit confirm:true.` });
+    }
+    if (effBytes > CC_SPEC_WARN_BYTES) warn = `large spec (${(effBytes / 1024).toFixed(1)}KB) — every planner tick reads the compiled authority; keep specs lean`;
+  }
   try {
     const rows = ccAssets.readIndex().assets || [];
     const dupHash = rows.find((r) => r.contentHash && r.contentHash === ch);
@@ -640,6 +770,8 @@ async function hAssetsReplace(res, b) {
   const sniff = ccSniffKind(buf, { filename: meta.filename || "", declared: meta.kind });
   if (sniff.kind !== meta.kind) return sendJson(res, 422, { error: `replacement is ${sniff.kind || "unrecognized"}, asset is ${meta.kind}` });
   if (sniff.kind === "image") { const v = await ccValidateImage(buf, sniff.fmt); if (!v.ok) return sendJson(res, v.code, { error: v.error }); }
+  if (sniff.kind === "spec" && buf.length > CC_SPEC_MAX_BYTES && !(b && b.confirm))
+    return sendJson(res, 409, { needsConfirm: true, error: `spec body is ${(buf.length / 1024).toFixed(1)}KB (cap ${CC_SPEC_MAX_BYTES / 1024}KB) — split or trim (requirements, not a design chapter), or resubmit confirm:true.` });
   const isReal = ccIsRealAsset(meta);
   if (isReal && !(b && b.confirm)) return sendJson(res, 409, { needsConfirm: true, error: "replacing an implemented/real asset — resubmit confirm:true (prior bytes kept in history/, slot forced not_ready)" });
   let next;
@@ -656,6 +788,13 @@ function hAssetsInstructions(res, b) {
   const rev = b && b.rev;
   if (typeof rev !== "number") return sendJson(res, 400, { error: "rev (number) required" });
   if (typeof (b && b.instructions) !== "string") return sendJson(res, 400, { error: "instructions (string) required" });
+  {
+    // §AUDIT-2026-07-04 — spec size gate on the Instructions surface too (instructions ARE the spec body when set)
+    let kind = null; try { ccAssets.validateId(id); kind = ccAssets.readAsset(id).kind; } catch { return sendJson(res, 404, { error: "no such asset" }); }
+    const bytes = Buffer.byteLength(b.instructions);
+    if (kind === "spec" && bytes > CC_SPEC_MAX_BYTES && !(b && b.confirm))
+      return sendJson(res, 409, { needsConfirm: true, error: `spec instructions are ${(bytes / 1024).toFixed(1)}KB (cap ${CC_SPEC_MAX_BYTES / 1024}KB) — split into separate specs or trim, or resubmit confirm:true.` });
+  }
   try { ccAssets.validateId(id); const next = ccAssets.setInstructions(id, rev, b.instructions); if (next.kind === "spec") ccRefreshSpecAuthority(); sendJson(res, 200, { ok: true, asset: next }); }
   catch (e) { sendJson(res, (/rev mismatch/.test(e.message) || /^no asset/.test(e.message)) ? 409 : 400, { error: e.message }); } // deleted-out-from-under → 409 so the client resyncs (it only reloads on 409), not a dead-end 400 toast
 }
@@ -861,10 +1000,12 @@ async function route(req, res, p, u) {
   if (m === "POST" && p === "/api/cosmocanyon/rollback") return hRollback(res);
   if ((m === "POST" || m === "DELETE") && p.startsWith("/api/cosmocanyon/")) {
     const body = await readJsonBody(req, CC_BODY_MAX);
+    if (p === "/api/cosmocanyon/backlog/prune") return hBacklogPrune(res);
     if (p === "/api/cosmocanyon/suggestions/accept") return hSuggAccept(res, body);
     if (p === "/api/cosmocanyon/suggestions/reject") return hSuggReject(res, body);
     if (p === "/api/cosmocanyon/agent") return hAgentPost(res, body);
     if (p === "/api/cosmocanyon/config") return hConfigPost(res, body);
+    if (p === "/api/cosmocanyon/preview/freeze") return hPreviewFreeze(res, body);
     if (p === "/api/cosmocanyon/assets/upload") return hUpload(res, body);
     // §15d folder-per-asset store writes
     if (p === "/api/cosmocanyon/assets/create" && m === "POST") return hAssetsCreate(res, body);
@@ -872,6 +1013,7 @@ async function route(req, res, p, u) {
     if (p === "/api/cosmocanyon/assets/instructions" && m === "POST") return hAssetsInstructions(res, body);
     if (p === "/api/cosmocanyon/assets/answer" && m === "POST") return hAssetsAnswer(res, body);
     if (p === "/api/cosmocanyon/assets/state" && m === "POST") return hAssetsState(res, body);
+    if (p === "/api/cosmocanyon/assets/retire" && m === "POST") return hAssetsRetire(res, body);
     if (p === "/api/cosmocanyon/assets/open" && m === "POST") return hAssetsOpen(res, body);
     if (p === "/api/cosmocanyon/assets/reveal" && m === "POST") return hAssetsReveal(res, body);
     if (p === "/api/cosmocanyon/assets/feel-confirm" && m === "POST") return hFeelConfirm(res, body);

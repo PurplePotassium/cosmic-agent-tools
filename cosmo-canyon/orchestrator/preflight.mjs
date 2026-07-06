@@ -60,6 +60,13 @@ try { reconcileActive(); } catch {} // §15c GC the killed tick's active.json ro
 // 4. §SPLIT — defensive clean GAME tree before looping (the game is its own repo; a control/assets upload lives in
 //    C:/Vibes and is untouched). An uncommitted control tree is fine/expected, so we only scrub the game here.
 const gdirty = ggitQuiet("status --porcelain").trim();
-if (gdirty) resetGameTo("HEAD");
+if (gdirty) {
+  // cc-safety — a dirty game tree at loop boot is almost always LEFTOVER manual WIP from a prior session
+  // (uncommitted). STASH it (recoverable: `git -C cosmo-canyon/game stash list` / `stash apply`) BEFORE the
+  // reset --hard, so hand-edits are never SILENTLY destroyed — this exact boot-wipe cost a full manual game
+  // rebuild on 2026-07-04. If the stash fails, resetGameTo still runs (no regression vs the old behavior).
+  ggitQuiet('stash push -u -m "cc-safety: dirty game tree at loop boot — recover via git -C cosmo-canyon/game stash list"');
+  resetGameTo("HEAD");
+}
 
 done(true, `branch ${b}, no rival loop, tree clean`);

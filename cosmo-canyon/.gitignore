@@ -19,7 +19,9 @@ control/.agy-cooldown
 control/.plan-latch.json
 control/.plan-input.json
 control/.plan-result.json
+control/.plan-completions.md
 control/.tick-stats.json
+control/.preview-freeze
 control/locks/
 
 # §15 runtime paths (claims, active tasks, asset history/trash, host mutex, latches, per-agent agy pids)
@@ -43,6 +45,10 @@ control/.unsure.json
 # runBookkeep; MUST be ignored or bookkeep's tree-wide scope guard flags them out-of-scope = spurious revert.
 control/.merge-tick.json
 control/.merge-regate-fails.json
+
+# §GC backlog prune — local archive of terminal fossil beads pruned out of backlog.json. Gitignored (like
+# the merge markers above) so post-tick's prune can write it without bookkeep's tree-wide scope guard flagging it.
+control/backlog-archive.json
 
 # §15 durable AUTHORITY — MUST stay committable (never ignored). No broad rule ignores these today; these
 # negations are belt-and-suspenders so a future `control/*`-style rule can't accidentally shadow the

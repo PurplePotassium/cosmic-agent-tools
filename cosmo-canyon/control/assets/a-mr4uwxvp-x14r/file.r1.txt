@@ -1,0 +1,127 @@
+GOAL
+Replace the placeholder Warrior/Ranger/Mage character roster (keyed 'a'/'b'/'c') everywhere with the canonical GDD roster of three characters — Explorer, Warrior, Rogue — driven by a single new registry module in the deterministic sim (src/sim/data/characters.ts). This is a DATA + WIRING task only. You are NOT implementing new weapons here (a separate spec covers new weapon ids); map GDD weapons to EXISTING weapon ids as described below.
+
+HARD RULES (state and obey):
+- NEVER edit anything under game/test/** or game/accept/** (a tamper guard reverts and blocks the run). If a test needs updating, note it in your report; do not touch it.
+- src/sim/** MUST stay deterministic: NO Math.random, Date.now, performance.now, requestAnimationFrame, or any wall-clock/random source. characters.ts is pure static data + pure helper functions only — it must not import from src/render/**.
+- src/render/** MAY use performance.now for animation (charselect already does).
+- Keep the gate green: `npm run -s typecheck` (tsc --noEmit) and the test suite must both pass when you finish. Run them.
+- Placeholder art is fine and the game must NEVER break: getTexture(key) auto-declares unknown keys as grey-box placeholders and swaps in real art asynchronously if present, so referencing a not-yet-seeded key is safe. Always fall back real->placeholder; never throw on a missing texture.
+
+IMPORTANT PRE-FACT (verified): the texture keys this spec references for the new roster — player.explorer_m, player.explorer_f, player.warrior, player.rogue, hero.explorer, hero.warrior, hero.rogue, portrait.explorer, portrait.warrior, portrait.rogue — are NOT yet present in game/assets/manifest.json. That is EXPECTED and fine: getTexture() auto-declares any unknown key as a placeholder (see src/assets/registry.ts getTexture -> declare), so these render as labeled grey boxes until real art is seeded. Do NOT add them to the manifest and do NOT block on them. Just reference them by key.
+
+STEP 1 — CREATE src/sim/data/characters.ts
+Define a CharacterId union and a CHARACTERS registry. Exact shape:
+
+  export type CharacterId = 'explorer' | 'warrior' | 'rogue';
+
+  export interface PassiveTraining {
+    id: string;         // stable id, e.g. 'determination'
+    title: string;      // display name, e.g. 'Determination'
+    perLevel: number;   // fractional stat bonus per level, e.g. 0.15 for +15%/level
+  }
+
+  export interface CharacterDef {
+    id: CharacterId;
+    name: string;               // display name
+    desc: string;               // one-line flavor/role line for the info panel
+    defaultWeaponId: string;    // must be a WEAPON_POOL id (map below)
+    weaponPool: string[];       // WEAPON_POOL ids this character contributes to the level-up draft pool when in party
+    passive: PassiveTraining;
+    metaMechanic: string | null;// meta-mechanic id (or null if none yet)
+    charselKey: string;         // charselect portrait texture key
+    heroKey: string;            // in-stage 32x32 hero texture key
+    portraitKey: string;        // VN bust portrait texture key
+    maxHp: number;              // starting max HP for a run led by this character
+    speed: number;              // starting move speed (px/s)
+  }
+
+  export const CHARACTERS: Record<CharacterId, CharacterDef> = { ... };
+
+WEAPON-ID MAPPING (first pass — map GDD weapons to EXISTING WEAPON_POOL ids; existing ids are: axe, knives, fireball, bomb-kunai, viking-spread, fire-axe, ragnarok, infinite-kunai, god-spread). Where the GDD names a weapon with no existing equivalent, map it to the closest existing id AND add a `// TODO(new-weapon): GDD '<Name>' -> needs dedicated id '<suggested-id>'` comment on that line. DO NOT create new weapon ids or edit weapons.ts in this spec.
+  - Shuriken       -> 'knives'   // TODO(new-weapon): GDD 'Shuriken' (straight piercing) -> needs dedicated id 'shuriken'
+  - Wand of Fireball -> 'fireball'
+  - Acid Potion    -> 'fireball' // TODO(new-weapon): GDD 'Acid Potion' -> needs dedicated id 'acid-potion'
+  - Holy Symbol    -> 'fireball' // TODO(new-weapon): GDD 'Holy Symbol' -> needs dedicated id 'holy-symbol'
+  - Crossbow       -> 'knives'   // TODO(new-weapon): GDD 'Crossbow' -> needs dedicated id 'crossbow'
+  - Greatsword     -> 'axe'      // TODO(new-weapon): GDD 'Greatsword' (front sweep) -> needs dedicated id 'greatsword'
+  - Whip           -> 'axe'      // TODO(new-weapon): GDD 'Whip' -> needs dedicated id 'whip'
+  - Throwing Hammer-> 'axe'      // TODO(new-weapon): GDD 'Throwing Hammer' -> needs dedicated id 'throwing-hammer'
+  - Flail          -> 'axe'      // TODO(new-weapon): GDD 'Flail' -> needs dedicated id 'flail'
+  - Tower Shield   -> 'axe'      // TODO(new-weapon): GDD 'Tower Shield' -> needs dedicated id 'tower-shield'
+  - Throwing Knives-> 'knives'
+  - Smoke Bomb     -> 'bomb-kunai' // TODO(new-weapon): GDD 'Smoke Bomb' -> needs dedicated id 'smoke-bomb'
+
+Deduplicate each weaponPool array so a weapon id appears at most once. After mapping+dedup a pool of distinct existing ids may be small (that is fine — the separate new-weapons spec will widen it later).
+
+EXACT registry values to author:
+  explorer: {
+    id:'explorer', name:'Explorer', desc:'Explorer — balanced piercing shots, grows tougher',
+    defaultWeaponId:'knives',  // Shuriken -> knives (TODO shuriken)
+    weaponPool: dedup(['knives','fireball','fireball','fireball','knives']) => ['knives','fireball'],  // Shuriken, Wand of Fireball, Acid Potion, Holy Symbol, Crossbow
+    passive:{ id:'determination', title:'Determination', perLevel:0.15 },  // +15% max health per level
+    metaMechanic: null,
+    charselKey:'player.explorer_m', heroKey:'hero.explorer', portraitKey:'portrait.explorer',
+    maxHp:250, speed:220
+  }
+  warrior: {
+    id:'warrior', name:'Warrior', desc:'Warrior — heavy front-sweep bruiser',
+    defaultWeaponId:'axe',     // Greatsword -> axe (TODO greatsword)
+    weaponPool: dedup(['axe','axe','axe','axe','knives','axe']) => ['axe','knives'],  // Greatsword, Whip, Throwing Hammer, Flail, Crossbow, Tower Shield
+    passive:{ id:'weapon_mastery', title:'Weapon Mastery', perLevel:0.15 },  // +15% damage per level
+    metaMechanic:'warrior_fire_all',  // bottom-right button fires ALL weapons once (0.2s apart), ignoring cooldowns, 30s cooldown
+    charselKey:'player.warrior', heroKey:'hero.warrior', portraitKey:'portrait.warrior',
+    maxHp:300, speed:220
+  }
+  rogue: {
+    id:'rogue', name:'Rogue', desc:'Rogue — nimble fan of knives, applies poison',
+    defaultWeaponId:'knives',  // Throwing Knives -> knives
+    weaponPool: dedup(['knives','knives','fireball','knives','bomb-kunai']) => ['knives','fireball','bomb-kunai'],  // Throwing Knives, Shuriken, Acid Potion, Crossbow, Smoke Bomb
+    passive:{ id:'magnet', title:'Magnet', perLevel:0.15 },  // +15% pickup range per level
+    metaMechanic:'rogue_apply_poison',  // level-up option 'Apply Poison to X'; poison bombs as extra pickups
+    charselKey:'player.rogue', heroKey:'hero.rogue', portraitKey:'portrait.rogue',
+    maxHp:250, speed:260
+  }
+
+Provide a stringify/helper: NONE required beyond the record, but DO export a convenience `export const CHARACTER_IDS: CharacterId[] = ['explorer','warrior','rogue'];` and `export function getCharacter(id: string): CharacterDef { return CHARACTERS[(id as CharacterId)] ?? CHARACTERS.explorer; }` (defensive default so an unknown localStorage value never crashes).
+
+STEP 2 — REPLACE the charselect roster + art (src/render/charselect.ts)
+Current state: charselect.ts hardcodes a local `CHARS` array of 3 objects (ids 'a'/'b'/'c', keys player.charsel_a/_b/_c, names Warrior/Ranger/Mage). Replace this so it is DERIVED from the characters registry:
+- import { CHARACTERS, CHARACTER_IDS, getCharacter } from '../sim/data/characters'.
+- Build the local display list from CHARACTER_IDS in order: for each id, pull name, desc, charselKey, defaultWeaponId, maxHp, speed, passive from CHARACTERS. The sprite texture key is now the character's `charselKey` (Explorer uses the gender-selected key — see below), NOT player.charsel_a/_b/_c. Remove ALL references to player.charsel_a / _b / _c and the strings 'Warrior'/'Ranger'/'Mage' from this file.
+- Explorer gender: read localStorage 'rs_explorer_gender' (default 'male'). If the character being rendered is 'explorer', use charselKey='player.explorer_m' when gender==='male' else 'player.explorer_f'. Warrior always uses 'player.warrior'; Rogue always 'player.rogue'. Re-read gender in show() (not just init) so a change made on the Who-Are-You screen is reflected.
+- The info panel stats line should read something like: `HP: {maxHp}  SPD: {speed}  Weapon: {defaultWeaponId}` and ALSO show the passive title, e.g. append `  Passive: {passive.title} (+{Math.round(passive.perLevel*100)}%/lvl)`.
+- Persistence: when SELECT is confirmed, `localStorage.setItem('rs_selected_character', id)` where id is one of 'explorer'|'warrior'|'rogue' (NOT 'a'/'b'/'c'). In show(), read the saved id and default to 'explorer' if absent/invalid (use getCharacter's defaulting or a findIndex fallback to 0).
+- Keyboard L/R/Enter/Escape navigation and the campfire/ember FX stay as-is; only the data source and texture keys change. The per-frame texture refresh loop (`this.charSprites[i].texture = getTexture(key)`) MUST use the (possibly gender-resolved) charselKey so real art swaps in.
+- UNLOCK GATING: read localStorage 'rs_unlocked_characters' (JSON string[]; default ['explorer'] when absent — and write that default back on first read). Characters not in the unlocked set should still be shown but visibly LOCKED (dim/grey tint + a small 'LOCKED' label) and NOT selectable (pointer + keyboard skip them, SELECT disabled while a locked one is highlighted). Explorer is always unlocked. Keep this simple; a full unlock-progression flow is out of scope.
+
+STEP 3 — REWIRE startRun() loadout (src/main.ts)
+Current startRun() branches on selectedChar === 'b' / 'c' / else and hardcodes weapons + maxHp + speed for the 'a'/'b'/'c' scheme. Replace that block with registry-driven logic:
+- import { getCharacter } from './sim/data/characters'.
+- `const selectedChar = localStorage.getItem('rs_selected_character') || 'explorer';`
+- `const def = getCharacter(selectedChar);`
+- Set `st.player.weapons = [{ weaponId: def.defaultWeaponId, level: 1, timer: 0 }];`
+- Set `st.player.maxHp = def.maxHp; st.player.hp = def.maxHp; st.player.speed = def.speed;`
+- Keep `lastHp = st.player.hp;` afterwards.
+- Remove the old 'b'/'c'/else if-chain entirely. Do NOT introduce Math.random here (this is render/host code so wall-clock is technically allowed, but none is needed).
+NOTE: the party-system spec (party_system.txt) will later further extend startRun to apply party passives; keep this change minimal and compatible (a single selected leader). Do not implement the party pool here.
+
+STEP 4 — REWIRE worldmap character widget (src/render/worldmap.ts)
+The top-left widget currently maps selectedChar 'b'->Ranger/🏹, 'c'->Mage/🔮, else Warrior/⚔️. Replace `_updateCharWidget()` to use the registry:
+- import { getCharacter } from '../sim/data/characters'.
+- `const def = getCharacter(localStorage.getItem('rs_selected_character') || 'explorer');`
+- Set the name text to `${def.name}\nTap to Change 🔄`.
+- For the avatar glyph, pick a simple emoji per id: explorer '🧭', warrior '⚔️', rogue '🗡️' (a small inline map is fine; this is cosmetic). Remove the 'a'/'b'/'c' and Warrior/Ranger/Mage strings.
+
+GENDER/UNLOCK DEFAULTS (write-through):
+- 'rs_explorer_gender' default 'male'.
+- 'rs_selected_character' default 'explorer'.
+- 'rs_unlocked_characters' default ['explorer'] (JSON array). When you read it and it's absent, set it to '["explorer"]'.
+
+ACCEPTANCE (must be objectively verifiable):
+1. Gate: `npm run -s typecheck` exits 0 and the test suite passes. State the commands you ran and that they were green.
+2. Grep proof: `grep -R "charsel_a\|charsel_b\|charsel_c\|Ranger\|Mage" src/render src/main.ts` returns NO matches (the placeholder scheme is fully removed from these files). Report the command output.
+3. Registry proof: src/sim/data/characters.ts exists, exports CHARACTERS with exactly the three ids explorer/warrior/rogue, each with defaultWeaponId that is a real WEAPON_POOL id, and contains no import from '../render' / '../../render'. Confirm src/sim stays free of Math.random/Date.now/performance.now (grep those in the new file — zero hits).
+4. Visual: run the app (Vite dev server + Claude Preview). On the character-select screen, snapshot/inspect shows three heroes labelled EXPLORER, WARRIOR, ROGUE (not Warrior/Ranger/Mage). The Explorer portrait sprite adopts texture key player.explorer_m by default (grey-box placeholder is acceptable — verify the key via preview_eval reading the sprite's intended key or via a console log, since real art may be absent). Selecting Explorer and confirming sets localStorage 'rs_selected_character' === 'explorer' (verify with preview_eval `localStorage.getItem('rs_selected_character')`).
+5. Loadout: after selecting Warrior and starting a run, `window.__cc.getState()` (or the live raw state via the harness) shows player.maxHp===300 and the single equipped weapon id is 'axe'; selecting Rogue yields speed 260 and weapon 'knives'; Explorer yields maxHp 250 / weapon 'knives'. Report the three observed values.
+6. Worldmap widget shows the selected character's real name (Explorer/Warrior/Rogue), not 'Warrior/Ranger/Mage'.

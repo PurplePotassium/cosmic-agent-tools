@@ -1,0 +1,48 @@
+{
+  "id": "a-mr5e64ku-88if",
+  "kind": "spec",
+  "filename": "stage_bugfixes_v2.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:5c9e29ce6abf48e448fcdcce50986df4203397df5f125fc6fd594142b9a42415",
+  "instructions": "STAGE BUG FIXES v2 (feel/visual + sim): (1) seamless infinite floor scroll via TilingSprite.tilePosition (no tile-snap); (2) player projectiles persist until off-screen or enemy impact (not a short fixed range); (3) render hardening: WebGL context-loss/restore handler so a lost GPU context does not freeze the stage. Verified visually + gate green.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/render/stage.ts",
+    "src/sim/systems/weapons.ts",
+    "src/sim/state.ts",
+    "src/main.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5e64ku-88if-r1",
+    "sha": "7b3ad4061de2eea7c74de0435df1d9da2a5f0496",
+    "contentHash": "sha256:5c9e29ce6abf48e448fcdcce50986df4203397df5f125fc6fd594142b9a42415",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:5c9e29ce6abf48e448fcdcce50986df4203397df5f125fc6fd594142b9a42415",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5e64ku-88if-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T20:37:58.878Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T20:34:24.559Z",
+  "updated": "2026-07-04T07:54:03.006Z",
+  "rev": 1,
+  "acceptanceKind": "feel",
+  "authorityRetired": true
+}

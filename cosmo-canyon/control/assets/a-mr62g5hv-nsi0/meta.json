@@ -1,0 +1,41 @@
+{
+  "id": "a-mr62g5hv-nsi0",
+  "kind": "spec",
+  "filename": "weapons_consolidated.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:1728e47e2e9d58dd28f7d26b51ff949d2301fe28539f34cfcc95b73fdb9bf579",
+  "instructions": "",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr62g5hv-nsi0-r2",
+    "sha": "81c4d1168786c609fd873be0a585eac68e26761f",
+    "contentHash": "sha256:1728e47e2e9d58dd28f7d26b51ff949d2301fe28539f34cfcc95b73fdb9bf579",
+    "rev": 2
+  },
+  "implementedContentHash": "sha256:1728e47e2e9d58dd28f7d26b51ff949d2301fe28539f34cfcc95b73fdb9bf579",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr62g5hv-nsi0-r2",
+    "rev": 2,
+    "by": "agent",
+    "at": "2026-07-04T07:54:59.120Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-04T07:54:03.092Z",
+  "updated": "2026-07-04T07:54:59.120Z",
+  "rev": 2
+}

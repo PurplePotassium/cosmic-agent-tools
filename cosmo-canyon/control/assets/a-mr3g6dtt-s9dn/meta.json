@@ -2,9 +2,9 @@
   "id": "a-mr3g6dtt-s9dn",
   "kind": "image",
   "filename": "slider.knob.png",
-  "file": "file.r4.png",
+  "file": "file.r8.png",
   "mime": "image/png",
-  "contentHash": "sha256:98dd0f5957bdc08e97f8d0ae3db1e63c9d837b05dc1da26819bed152e1eb5480",
+  "contentHash": "sha256:d6725ab73c38913aaf3fc682c438f856b8f7ff7ff83f102b6e60c0f4eae7cd1f",
   "instructions": "Volume slider knob/handle (the draggable thumb) for the settings menu. key: slider.knob\nsize: 20x28\nUsed in render/settings.ts as the draggable handle (getTexture('slider.knob')) on BOTH the Music-volume and SFX-volume slider tracks.",
   "questions": [],
   "state": "ready",
@@ -17,12 +17,12 @@
   "importHeading": null,
   "source": null,
   "implementedBy": {
-    "beadId": "asset-a-mr3g6dtt-s9dn-r7",
-    "sha": "44ef21e43d7f92cc8aaa38638c54654d4d8cff4b",
-    "contentHash": "sha256:98dd0f5957bdc08e97f8d0ae3db1e63c9d837b05dc1da26819bed152e1eb5480",
-    "rev": 7
+    "beadId": "asset-a-mr3g6dtt-s9dn-r8",
+    "sha": "fd2d359d86c63298efed1f6574b1d36f7a767823",
+    "contentHash": "sha256:d6725ab73c38913aaf3fc682c438f856b8f7ff7ff83f102b6e60c0f4eae7cd1f",
+    "rev": 8
   },
-  "implementedContentHash": "sha256:98dd0f5957bdc08e97f8d0ae3db1e63c9d837b05dc1da26819bed152e1eb5480",
+  "implementedContentHash": "sha256:d6725ab73c38913aaf3fc682c438f856b8f7ff7ff83f102b6e60c0f4eae7cd1f",
   "feelConfirmed": null,
   "placeholderStale": false,
   "abandonCount": 2,
@@ -31,6 +31,6 @@
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T11:55:03.425Z",
-  "updated": "2026-07-03T05:55:29.710Z",
-  "rev": 7
+  "updated": "2026-07-04T04:55:41.733Z",
+  "rev": 8
 }

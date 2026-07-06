@@ -1,0 +1,8 @@
+GDD ALIGNMENT: character rosters + 6 weapon slots.
+1) src/sim/systems/upgrades.ts: MAX_WEAPON_SLOTS 3 -> 6 (GDD "Six-slot capacity by default"). Draft/fusion logic already loops over slots; keep it correct for 6.
+2) src/sim/data/characters.ts: set each character's defaultWeaponId + weaponPool to the GDD weapons (the real ids now exist in WEAPON_POOL):
+   - explorer: defaultWeaponId 'shuriken'; weaponPool ['shuriken','wand-of-fireball','acid-potion','holy-symbol','crossbow']; passive Determination (+15% maxHP/lvl) [keep]; metaMechanic null.
+   - warrior: defaultWeaponId 'greatsword'; weaponPool ['greatsword','whip','throwing-hammer','flail','crossbow','tower-shield']; passive Weapon Mastery (+15% dmg/lvl) [keep]; metaMechanic 'warrior_fire_all' [keep].
+   - rogue: defaultWeaponId 'throwing-knives'; weaponPool ['throwing-knives','shuriken','acid-potion','crossbow','smoke-bomb']; passive Magnet (+15% pickup/lvl) [keep]; metaMechanic 'rogue_apply_poison' [keep].
+   Remove the stale TODO comments. All ids MUST exist in WEAPON_POOL (data/weapons.ts).
+CONSTRAINTS: data only (headless tests use newGame default 'knives', unaffected). Gate green (tsc + full sim.ts).

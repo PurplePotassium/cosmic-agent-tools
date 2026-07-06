@@ -1,0 +1,44 @@
+{
+  "id": "a-mr4uwy1e-vttb",
+  "kind": "spec",
+  "filename": "adventure_beat.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:ba2330cdc1c6a3f8db704a8e40d0288baca182f49a4957af7065d0db2afa20f3",
+  "instructions": "GOAL: Build the Adventure-Beat screen (GDD 'Adventure Beat'): shown before each Stage (on Adventure start and between Stages), it presents (usually two) choice options — each an image + an action label + an effect description — and picking one applies its effect to the upcoming run, then proceeds to the next Story Beat (if any) or straight into the Stage. Data-driven beat definitions. UI/feel/layout screen verified VISUALLY via headless snapshot — no sim test.\n\nHARD RULES (honor verbatim): NEVER edit anything under game/test/** or game/accept/**. src/render/** MAY use performance.now. Do NOT create any import from src/sim/** onto render. Beat definitions on this screen are static data (no randomness needed); if any random selection is added, it MUST use the sim's seeded rng (rng.ts) or a pure seed hash — never Math.random — so snapshots reproduce. Keep the gate green. Placeholder art is fine.\n\nGROUNDING FACTS (confirmed): screens are classes in src/render/<name>.ts with init(app, ...callbacks)/show()/hide()/sync(W,H)/`readonly root = new Container()`, constructed + wired in main.ts, and sync'd every frame (see charselect.ts, worldmap.ts). `getTexture(key)` returns a placeholder then swaps real atlas art in async, so every Sprite must RE-PULL getTexture(key) and reassign `.texture` (+ re-apply width/height) each frame in sync() (see mainmenu.ts btnBgs loop). The run's live state is `harness.raw(): GameState | null` — but this screen runs BEFORE the run begins (or between runs), so effects should be recorded as CARRIED UPGRADES on the active AdventureProgress (see adventure_system.txt), applied at the NEXT run start by `applyCarriedToGameState`, NOT by poking a live GameState here.\n\nAVAILABLE ART KEYS (seeded, Ready): `panel.beat` (340x220, the beat frame/background), `card.beat_option` (150x180, one choice card). Use these; pull them per-frame per the swap pattern. Draw the action/effect text over the card in the existing monospace style used across screens.\n\nBEAT DATA MODEL (define in this file, exported so main.ts/tests can reference; keep it plain data): `interface BeatOption { id: string; action: string /* short label, e.g. 'Sleep' */; effect: string /* human text, e.g. '+25 Max HP next match' */; imageKey: string /* defaults to 'card.beat_option' */; apply: (progress: AdventureProgress) => AdventureProgress /* PURE: returns a NEW progress with the effect encoded as a carriedUpgrade, or a chosen next biome */ }` and `interface BeatDef { id: string; prompt: string /* e.g. 'A fork in the road' */; options: BeatOption[] /* usually 2 */ }`. Provide an exported `BEATS: Record<string, BeatDef>` (or an array + lookup) authored with at least these GDD examples: a 'fork in the road' beat (Forest left vs Wheat Fields/other biome right — the effect sets the next stage's biome via a carriedUpgrade like { kind:'nextBiome', value:0 } plus the biome string, OR via a dedicated field — coordinate the encoding with adventure_system.txt's CarriedUpgrade/applyCarriedToGameState so it actually takes effect); and a 'rest' beat (Sleep → +25 Max HP next match, i.e. carriedUpgrade { kind:'maxHpBonus', value:25 }; Maintain equipment → +10% Damage next match, i.e. { kind:'damageMult', value:0.10 }). Keep `apply` pure and deterministic (no rng, no Date.now); it only appends/updates carriedUpgrades on a cloned progress.\n\nCREATE src/render/adventure.ts — class `AdventureBeatUI`:\n- Fields mirror siblings: `readonly root = new Container()`; a `panel.beat` background Sprite; a prompt Text; a row of option cards (one `card.beat_option` Sprite each) with the action label + effect text drawn on/under each card.\n- `init(app, onChoose: (updated: AdventureProgress) => void)`: add root to app.stage, `root.visible=false`. `onChoose` hands the updated progress back to main.ts, which persists it and proceeds to the next screen.\n- `show(beatId: string, progress: AdventureProgress)`: look up `BEATS[beatId]` (fallback to a generic 2-option rest beat if missing, with a labeled TODO), render the prompt and one card per option (action + effect text), stash the current progress, `root.visible=true`. Each option card is interactive (pointerover/out tint like other screens); pointerdown → compute `updated = option.apply(progress)`, `hide()`, then `onChoose(updated)`.\n- `hide()`: root.visible=false. `sync(screenW, screenH)`: early-return if hidden; center panel.beat (fit, don't distort), lay the option cards in a centered row, position prompt above and effect/action text on each card; RE-PULL getTexture for panel.beat and every card.beat_option each frame and reassign texture + width/height; recompute positions from screenW/screenH (responsive).\n\nWIRE IN main.ts: construct `const adventureBeat = new AdventureBeatUI();`; `adventureBeat.init(renderer.app, (updated) => { activeProgress = updated; saveAdventure(updated); /* proceed: if this beat is followed by a story beat, show it; else startRun() for the current stage */ });` — coordinate with adventure_system.txt so the beat is shown at the right point in the Stage→beat→Stage flow (before each stage). Provide a helper in main.ts, e.g. `showBeatForCurrentStage()`, that picks the beat id for the current stage (from the AdventureDef/StageDescriptor or a simple mapping) and calls `adventureBeat.show(beatId, activeProgress)`. Add `adventureBeat.sync(W,H)` to the per-frame sync block, and include the beat screen in main.ts's 'menu visible?' overlay guards so the sim doesn't step underneath it (mirror worldMap/charSelect checks).\n\nVISUAL / ACCEPTANCE (headless snapshot): screenshot the Adventure-Beat screen and confirm the panel.beat frame, a prompt, and TWO option cards each showing an image + an action label + an effect line are visible and centered. Confirm picking an option (a) advances past the beat (screen hides, next screen/stage appears) and (b) records the effect: dump `activeProgress.carriedUpgrades` (or localStorage rs_adventure) and verify e.g. the Sleep option added a maxHpBonus upgrade, or the fork option set the next biome. Verify the effect actually manifests on the next run (e.g. after choosing Sleep, the next run's `harness.raw().player.maxHp` is 25 higher than the base for that character) — this proves the wiring to applyCarriedToGameState. Placeholder art fine. Keep the gate green.",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/render/adventure.ts",
+    "src/main.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr4uwy1e-vttb-r1",
+    "sha": "b61dcb78a3d559702237ee3f9cec8adcdf4c9b1f",
+    "contentHash": "sha256:ba2330cdc1c6a3f8db704a8e40d0288baca182f49a4957af7065d0db2afa20f3",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:ba2330cdc1c6a3f8db704a8e40d0288baca182f49a4957af7065d0db2afa20f3",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr4uwy1e-vttb-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T18:16:17.036Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T11:35:23.474Z",
+  "updated": "2026-07-03T18:16:17.036Z",
+  "rev": 1
+}

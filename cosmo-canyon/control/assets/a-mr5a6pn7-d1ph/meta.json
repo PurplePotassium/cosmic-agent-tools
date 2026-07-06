@@ -1,0 +1,47 @@
+{
+  "id": "a-mr5a6pn7-d1ph",
+  "kind": "spec",
+  "filename": "fix_aura_holy_symbol_only.txt",
+  "file": "file.r1.txt",
+  "mime": "text/plain",
+  "contentHash": "sha256:e12f0ee3ef8e9975167829981f8ecaa69c7961ac2c5da366f4e2f77e238501e6",
+  "instructions": "FIX: remove the passive damage aura around the player unless they have the Holy Symbol.\n\nCurrently combatSystem() runs a player-centered AoE \"aura\" pulse (uses p.attackDamage/attackRange/attackInterval) that damages every enemy in range every attackInterval — a passive aura EVERY player has. Per the GDD the player should have NO passive aura; the Holy Symbol WEAPON provides a \"constant character AoE\" aura only when equipped.\n\nWHAT TO DO:\n- combat.ts: gate the auto-attack aura block (the 'p.attackTimer -= FIXED_DT; while(...) { aoe over enemies+destructibles }') so it ONLY runs when the player has the Holy Symbol weapon: guard with hasWeapon(s,'holy-symbol'). When the player lacks holy-symbol, no passive aura fires (all damage comes from equipped weapons via weapons.ts).\n- render/stage.ts: the passive-aura visuals (the weaponFxGfx holy-aura flash keyed off weaponAoeFires, and the player 'aura' glow if any) should not read as a permanent aura for a player without holy-symbol. The weaponAoeFires-driven flash already fires for any AoE weapon; that is fine (it is a per-fire flash, not a permanent ring). Do NOT draw a permanent passive aura ring around a player who lacks holy-symbol.\n\nWINNABILITY (IMPORTANT — keep the gate green WITHOUT editing protected tests):\n- test/sim.win-loss.ts requires the SEED=3 autopilot to reach+beat the 600hp boss within 6000 ticks using ONLY the default headless loadout (newGame default weapons). With the passive aura gated off, that loadout must still win via a WEAPON. The current default is a single 'axe' (straight-up, misses a non-aligned boss). Change newGame's default headless loadout in state.ts to a NEAREST-TARGETING weapon that the autopilot's boss-pursuit keeps on-target (e.g. 'fireball' aoe-nearest, or 'knives' spread-nearest) so SEED=3 still wins. Do NOT use 'holy-symbol' as the default (that would re-enable the aura AND break the LOSS path).\n- test/sim.win-loss.ts LOSS PATH requires a STATIONARY newGame(42) default-loadout player (no picks) to DIE within 3000 ticks. Verify the chosen default weapon is weak/slow enough that a surrounded stationary player still dies. If a nearest-targeting default keeps the player alive too long, pick a weaker default (single-target slow like 'crossbow') or reduce its level-1 damage — but the FIRST constraint (SEED=3 wins) must also hold. Tune only src/sim balance; NEVER edit tests.\n- Run the sim tests yourself while iterating (node test/_select.mjs, or tsx test/sim.win-loss.ts) to confirm both WIN and LOSS hold before calling bookkeep.\n\nCONSTRAINTS: deterministic sim; no test/accept/package.json edits; gate green.\n\nACCEPTANCE: a player without holy-symbol has no passive damage aura (damage only from weapons); equipping Holy Symbol restores a constant AoE aura; SEED=3 wins and stationary SEED=42 loses (gate green).",
+  "questions": [],
+  "state": "ready",
+  "dirty": false,
+  "hasOpenQuestions": false,
+  "manifestKey": null,
+  "files": [
+    "src/sim/systems/combat.ts",
+    "src/sim/state.ts",
+    "src/render/stage.ts"
+  ],
+  "placeholderOnly": false,
+  "importDocId": null,
+  "importHeading": null,
+  "source": null,
+  "implementedBy": {
+    "beadId": "asset-a-mr5a6pn7-d1ph-r1",
+    "sha": "96cf6c0c4cbded71e496b8bc36704d28824e261a",
+    "contentHash": "sha256:e12f0ee3ef8e9975167829981f8ecaa69c7961ac2c5da366f4e2f77e238501e6",
+    "rev": 1
+  },
+  "implementedContentHash": "sha256:e12f0ee3ef8e9975167829981f8ecaa69c7961ac2c5da366f4e2f77e238501e6",
+  "feelConfirmed": {
+    "beadId": "asset-a-mr5a6pn7-d1ph-r1",
+    "rev": 1,
+    "by": "operator",
+    "at": "2026-07-03T18:59:35.767Z"
+  },
+  "placeholderStale": false,
+  "abandonCount": 0,
+  "questionRounds": 0,
+  "abandonedAtContentHash": null,
+  "escalated": false,
+  "blockedNeedsOperator": false,
+  "created": "2026-07-03T18:42:53.395Z",
+  "updated": "2026-07-04T07:54:02.797Z",
+  "rev": 1,
+  "acceptanceKind": "feel",
+  "authorityRetired": true
+}

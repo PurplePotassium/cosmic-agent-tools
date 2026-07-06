@@ -1,0 +1,32 @@
+DESIGN RULES — operator rulings 2026-07-04 (STANDING AUTHORITY; supersedes any older spec text that conflicts)
+
+These are binding design constraints for Realm Survivors (cosmo-canyon/game). They correct prototype
+bleed-through. Planners: treat these as invariants — do NOT mint tasks that violate them.
+
+1. NO WEAPON FUSION in this version. Fusion (fuseWeapons, FUSION_RECIPES, fusion draft cards) is
+   prototype legacy. It must NEVER be offered in real-game drafts (a party pool is always set in real
+   runs; the code already excludes it there). The sim/test vestiges stay ONLY because protected headless
+   tests exercise them. If fusion ever returns, it will be designed as a NEW CHARACTER'S META-MECHANIC —
+   not a generic draft option. Do not re-wire it into drafts, chests, or UI.
+
+2. TIER-1 WEAPON COVERAGE. Every Tier-1 weapon must (a) appear in at least one character's weaponPool and
+   (b) have an evolution path terminating in at least one Tier-3 form. Current chains (complete):
+   axe, knives, fireball(->greater-fireball->cataclysm), shuriken, wand-of-fireball, throwing-knives,
+   javelin, crossbow, greatsword, holy-symbol, whip, throwing-hammer, flail, acid-potion,
+   tower-shield(->aegis-wall->bulwark-eternal), smoke-bomb(->nightshade-bomb->oblivion-veil),
+   magic-missile, chain-lightning, frost-shard, sky-strike, arcane-nova, toxic-cloud, curse-skull,
+   seismic-slam. Reactive-family evolutions trigger via family lists in combat.ts with tier-scaled damage.
+   When adding a NEW weapon: give it a pool slot + a full evolution chain, mark it partyOnly:true
+   (determinism rail — see docs/KNOWLEDGE.md), rarity 'common'.
+
+3. ROGUE POISON BOMB = ENEMY DROP. Poison bombs drop from slain normal enemies (POISON_BOMB.dropChance
+   roll in combat.killEnemy, gated on rogueInParty). There is NO ambient/timed spawn. The older
+   poison_bomb_pickup.txt spec describing a 12s timer cadence is RETIRED — its throw-on-pickup + cloud
+   behavior remains valid; only the spawn mechanism changed.
+
+4. FUSION-ONLY OUTPUTS (bomb-kunai, viking-spread, fire-axe, ragnarok, infinite-kunai, god-spread) are
+   NOT part of this version's real-game content. They stay defined for the protected tests only. Do not
+   add them to character pools or drafts.
+
+ACCEPTANCE: no code change required by this spec — it encodes rulings already implemented and verified
+(gate 26/26 green; win-path byte-identical). Planner behavior only.

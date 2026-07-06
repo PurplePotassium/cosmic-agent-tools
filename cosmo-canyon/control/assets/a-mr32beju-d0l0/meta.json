@@ -26,8 +26,8 @@
   "feelConfirmed": {
     "beadId": "asset-a-mr32beju-d0l0-r14",
     "rev": 14,
-    "by": "agent",
-    "at": "2026-07-03T06:00:28.072Z"
+    "by": "operator",
+    "at": "2026-07-03T18:08:50.281Z"
   },
   "placeholderStale": false,
   "abandonCount": 0,
@@ -36,6 +36,6 @@
   "escalated": false,
   "blockedNeedsOperator": false,
   "created": "2026-07-02T05:27:03.018Z",
-  "updated": "2026-07-03T06:00:28.073Z",
+  "updated": "2026-07-03T18:08:50.281Z",
   "rev": 14
 }
