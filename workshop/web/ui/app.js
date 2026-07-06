@@ -520,14 +520,14 @@ function PipelineCard({ p, log, extras, personalityConfig, onDesired, onBundle, 
         ${MODES.map((m) => html`<option value=${m}>${m}</option>`)}
       </select>
       ${p.modeOverride && html`<button title="clear override, back to the configured mode" onClick=${() => onMode(p.name, "")}>✕</button>`}
-      ${personalityConfig.enabled && html`<select class="chip" value=${p.personality || "none"}
+      ${editBundle && personalityConfig.enabled && html`<select class="chip" value=${p.personality || "none"}
         onChange=${(e) => onPersonality(p.name, e.target.value)}
         title=${"personality flavor injected into the prompt" + (p.personalityOverride ? " — live override, applies from the next pass" : " — click to override the configured personality")}>
         <option value="none">none</option>
         <option value="random">random</option>
         ${personalityConfig.list.map((name) => html`<option value=${name}>${name}</option>`)}
       </select>`}
-      ${p.personalityOverride && html`<button title="clear override, back to the configured personality" onClick=${() => onPersonality(p.name, "")}>✕</button>`}
+      ${editBundle && p.personalityOverride && html`<button title="clear override, back to the configured personality" onClick=${() => onPersonality(p.name, "")}>✕</button>`}
       ${p.backlogExclusive > 0 && html`<span class="chip">own backlog: ${p.backlogExclusive}</span>`}
       <span class="spacer"></span>
       <button title="switch agent/model for the next pass" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
