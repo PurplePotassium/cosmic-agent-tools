@@ -145,7 +145,7 @@ select.chip { background: var(--bg); font: inherit; cursor: pointer; }
   border-bottom: 1px solid var(--border);
 }
 .task-row:last-child { border-bottom: none; }
-.task-row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.task-row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-row .actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
 .task-row:hover .actions { opacity: 1; }
 .task-row .actions button { padding: 1px 7px; font-size: 0.75rem; }
