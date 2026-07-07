@@ -771,12 +771,13 @@ func (w *Worker) commitIfDirty(ctx context.Context, pass *domain.Pass, task *dom
 	if err != nil || !dirty {
 		return ""
 	}
-	subject := fmt.Sprintf("ws(%s) iter %d [%s]", w.cfg.Pipeline.Name, pass.N, res.drv.Name())
+	progress := statedir.ReadProgress(w.cfg.StateDir)
+	subject := commitSubject(w.cfg.Pipeline.Name, pass.N, res.drv.Name(), task, progress)
 	trailers := [][2]string{{"Workshop-Pass", fmt.Sprint(pass.ID)}}
 	if task != nil {
 		trailers = append(trailers, [2]string{"Workshop-Task", task.ID})
 	}
-	sha, err := gitx.CommitAll(ctx, w.cfg.RepoDir, gitx.BuildCommitMessage(subject, trailers))
+	sha, err := gitx.CommitAll(ctx, w.cfg.RepoDir, gitx.BuildCommitMessage(subject, commitBody(progress), trailers))
 	if err != nil {
 		w.event(ctx, "commit.failed", w.cfg.Pipeline.Name, pass.ID, map[string]any{"error": err.Error()})
 		return ""
@@ -784,6 +785,49 @@ func (w *Worker) commitIfDirty(ctx context.Context, pass *domain.Pass, task *dom
 	w.patchPass(ctx, pass.ID, store.PassPatch{CommitSHA: &sha})
 	w.event(ctx, "commit", w.cfg.Pipeline.Name, pass.ID, map[string]any{"sha": sha, "subject": subject})
 	return sha
+}
+
+// commitSubject keeps the machine-parsed "ws(name) iter N [driver]" prefix
+// (the e2e suite and log scans key on it) and appends the task title so a
+// bare `git log --oneline` says what the pass actually did.
+func commitSubject(pipeline string, n int, drvName string, task *domain.Task, progress domain.Progress) string {
+	subject := fmt.Sprintf("ws(%s) iter %d [%s]", pipeline, n, drvName)
+	title := progress.Task
+	if task != nil && task.Title != "" {
+		title = task.Title
+	}
+	if title = strings.Join(strings.Fields(title), " "); title == "" {
+		return subject
+	}
+	subject += ": " + title
+	if r := []rune(subject); len(r) > 72 {
+		subject = string(r[:71]) + "…"
+	}
+	return subject
+}
+
+// commitBody turns the agent's self-report into the commit message body:
+// the result (what changed, the problem, why this fix), any snag note, and
+// the decisions record. A pass committed mid-flight (failed/timed-out work)
+// usually has only a plan — fall back to that so the commit still explains
+// what was being attempted.
+func commitBody(progress domain.Progress) string {
+	var parts []string
+	if s := strings.TrimSpace(progress.Result); s != "" {
+		parts = append(parts, s)
+	}
+	if s := strings.TrimSpace(progress.Note); s != "" {
+		parts = append(parts, "Note: "+s)
+	}
+	if s := strings.TrimSpace(progress.Decisions); s != "" {
+		parts = append(parts, "Decisions: "+s)
+	}
+	if len(parts) == 0 {
+		if s := strings.TrimSpace(progress.Plan); s != "" {
+			parts = append(parts, "Unfinished pass; plan was: "+s)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (w *Worker) failTask(ctx context.Context, task *domain.Task) {

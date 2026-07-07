@@ -237,16 +237,21 @@ func AheadCount(ctx context.Context, dir, base, branch string) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(out))
 }
 
-// BuildCommitMessage assembles a subject plus git trailers.
-func BuildCommitMessage(subject string, trailers [][2]string) string {
-	if len(trailers) == 0 {
-		return subject
-	}
+// BuildCommitMessage assembles a subject, an optional body, and git trailers.
+// The trailers stay in their own final block so git still parses them as
+// trailers even when the body has multiple paragraphs.
+func BuildCommitMessage(subject, body string, trailers [][2]string) string {
 	var b strings.Builder
 	b.WriteString(subject)
-	b.WriteString("\n\n")
-	for _, tr := range trailers {
-		fmt.Fprintf(&b, "%s: %s\n", tr[0], tr[1])
+	if body = strings.TrimSpace(body); body != "" {
+		b.WriteString("\n\n")
+		b.WriteString(body)
+	}
+	if len(trailers) > 0 {
+		b.WriteString("\n\n")
+		for _, tr := range trailers {
+			fmt.Fprintf(&b, "%s: %s\n", tr[0], tr[1])
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

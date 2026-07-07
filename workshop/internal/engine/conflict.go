@@ -159,12 +159,14 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 		return fail(domain.FailExit, "gate red on resolution")
 	}
 
+	progress := statedir.ReadProgress(w.cfg.StateDir)
+
 	// Conclude the merge under our subject if the agent didn't commit.
 	sha := ""
 	if gitx.HasMergeHead(ctx, resolveDir) || mustDirty(ctx, resolveDir) {
 		subject := fmt.Sprintf("ws(%s) resolve %s [%s]", name, laneBranch, res.drv.Name())
 		trailers := [][2]string{{"Workshop-Task", task.ID}, {"Workshop-Pass", fmt.Sprint(pass.ID)}}
-		if sha, err = gitx.CommitAll(ctx, resolveDir, gitx.BuildCommitMessage(subject, trailers)); err != nil {
+		if sha, err = gitx.CommitAll(ctx, resolveDir, gitx.BuildCommitMessage(subject, commitBody(progress), trailers)); err != nil {
 			return fail(domain.FailExit, "merge commit failed: "+err.Error())
 		}
 	} else if head, err := gitx.RevParse(ctx, resolveDir, "HEAD"); err == nil {
@@ -174,7 +176,6 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 		sha = head
 	}
 
-	progress := statedir.ReadProgress(w.cfg.StateDir)
 	result := progress.Result
 	if result == "" {
 		result = "resolved merge conflict on " + laneBranch

@@ -47,7 +47,7 @@ func TestCommitAllWithTrailers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg := BuildCommitMessage("ws(main) iter 1 [claude]", [][2]string{
+	msg := BuildCommitMessage("ws(main) iter 1 [claude]", "Fixed the thing.\n\nDecisions: kept it simple.", [][2]string{
 		{"Workshop-Task", "ws-123"}, {"Workshop-Pass", "7"},
 	})
 	sha, err := CommitAll(ctx, dir, msg)

@@ -131,7 +131,7 @@ func TestBoundedRunCommits(t *testing.T) {
 	if len(commits) != 3 { // initial + 2 passes
 		t.Fatalf("commits: %v", commits)
 	}
-	if commits[0].Subject != "ws(main) iter 2 [fake]" || commits[1].Subject != "ws(main) iter 1 [fake]" {
+	if commits[0].Subject != "ws(main) iter 2 [fake]: second task" || commits[1].Subject != "ws(main) iter 1 [fake]: first task" {
 		t.Fatalf("subjects: %q, %q", commits[0].Subject, commits[1].Subject)
 	}
 

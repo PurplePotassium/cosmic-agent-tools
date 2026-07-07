@@ -70,8 +70,13 @@ unverifiable, REVERT your edits rather than leave the tree broken.
 On verified success, OVERWRITE `progress.json`:
 
 ```json
-{ "phase": "done", "task": "<task title>", "result": "<what you did + how it verified>", "decisions": "", "note": "", "updated": "<ISO-8601 UTC now>" }
+{ "phase": "done", "task": "<task title>", "result": "<what changed, the problem it addressed, why this fix, and how it verified>", "decisions": "", "note": "", "updated": "<ISO-8601 UTC now>" }
 ```
+
+The engine uses `result` (and `decisions`/`note`) as the body of the pass's
+auto-commit message, so write it for a future `git log` reader: 2-4 plain
+sentences summarizing the change, the problem it solves, and why you fixed it
+the way you did — not just "done" or a restated task title.
 
 `decisions` (optional, 1–3 lines): judgment calls a future reviewer would ask
 about — assumptions you made, alternatives you rejected, anything you did
