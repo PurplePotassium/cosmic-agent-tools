@@ -72,7 +72,9 @@ func taskUsage() {
 	fmt.Print(`usage: workshop task <subcommand>
 
   add "title" [--detail d] [--type t] [--backlog shared|<pipeline>]
-              [--pin [agent]:[model][:effort]] [--first]
+              [--pin [agent]:[model][:effort]] [--first] [--expand]
+              (--expand: a "for each X, add a task" meta-task — the pass
+               enqueues one proposal per item instead of doing the work)
   list        [--json] [--all]
   tag <id> <type>          ('-' clears the type -> re-classified)
   pin <id> [agent]:[model][:effort]   (empty segments keep routing's choice)
@@ -144,6 +146,7 @@ func taskAdd(args []string) int {
 	backlogName := fs.String("backlog", "shared", "shared, or a pipeline name")
 	pin := fs.String("pin", "", "[agent]:[model][:effort] pin")
 	first := fs.Bool("first", false, "place at the top of its backlog")
+	expand := fs.Bool("expand", false, `expansion meta-task: the pass enqueues one proposal per enumerated item instead of doing the work`)
 	pos := parseMixed(fs, args)
 	if len(pos) < 1 {
 		fmt.Fprintln(os.Stderr, "error: task add needs a title")
@@ -166,6 +169,9 @@ func taskAdd(args []string) int {
 		return 2
 	}
 	task := &domain.Task{Backlog: backlog, Type: strings.ToLower(*typ), Title: title, Detail: *detail}
+	if *expand {
+		task.Meta = map[string]string{domain.ExpandMetaKey: "true"}
+	}
 	warnUnknownType(a, task.Type)
 	if *pin != "" {
 		if task.Pin, err = parsePin(*pin); err != nil {
@@ -222,6 +228,9 @@ func taskList(args []string) int {
 			fmt.Printf("\n== %s ==\n", backlogLabel(current))
 		}
 		flags := ""
+		if t.IsExpand() {
+			flags += " EXPAND"
+		}
 		if !t.Pin.IsZero() {
 			flags += " pin=" + pinLabel(t.Pin)
 		}

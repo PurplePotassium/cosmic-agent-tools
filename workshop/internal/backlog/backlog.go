@@ -36,17 +36,18 @@ func (s *Service) Snapshot(ctx context.Context) ([]*domain.Task, error) {
 // Ingest turns agent proposals into tasks: titles are deduped (normalized)
 // against every open/claimed task in every backlog AND against each other; a
 // proposal may target the shared backlog (default) or a known pipeline's
-// backlog. At most maxAccept proposals are accepted. Returns the added tasks.
-func (s *Service) Ingest(ctx context.Context, from string, proposals []domain.Proposal, knownPipelines map[string]bool, maxAccept int) ([]*domain.Task, error) {
+// backlog. At most maxAccept proposals are accepted; valid, non-duplicate
+// proposals beyond the cap come back as dropped so the caller can surface
+// the lost ideas instead of discarding them silently.
+func (s *Service) Ingest(ctx context.Context, from string, proposals []domain.Proposal, knownPipelines map[string]bool, maxAccept int) (added []*domain.Task, dropped []domain.Proposal, err error) {
 	if len(proposals) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// The snapshot and the inserts run in ONE transaction: the store shares a
 	// single connection, so an open transaction serializes concurrent ingests.
 	// Without it, two workers finishing passes at once could both snapshot the
 	// backlog before either inserts and admit the same-titled proposal twice.
-	var added []*domain.Task
-	err := s.st.WithTx(ctx, func(ctx context.Context, tx *store.TaskTx) error {
+	err = s.st.WithTx(ctx, func(ctx context.Context, tx *store.TaskTx) error {
 		existing, err := tx.ListTasks(ctx, store.TaskFilter{
 			Statuses: []domain.TaskStatus{domain.TaskOpen, domain.TaskClaimed},
 		})
@@ -58,11 +59,13 @@ func (s *Service) Ingest(ctx context.Context, from string, proposals []domain.Pr
 			seen[normTitle(t.Title)] = true
 		}
 		for _, p := range proposals {
-			if len(added) >= maxAccept {
-				break
-			}
 			key := normTitle(p.Title)
 			if key == "" || seen[key] {
+				continue
+			}
+			if len(added) >= maxAccept {
+				seen[key] = true // report each lost idea once
+				dropped = append(dropped, p)
 				continue
 			}
 			backlog := domain.MainBacklog
@@ -91,9 +94,9 @@ func (s *Service) Ingest(ctx context.Context, from string, proposals []domain.Pr
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return added, nil
+	return added, dropped, nil
 }
 
 // statedirSharedLabel mirrors statedir.SharedLabel without the import cycle

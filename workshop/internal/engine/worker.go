@@ -38,6 +38,15 @@ const (
 	HaltBreaker = "breaker"
 )
 
+// Proposal-ingest caps. proposalCap bounds a pass's freeform follow-up
+// suggestions (the contract's "AT MOST 2" — an anti-busywork throttle).
+// expandProposalCap bounds an expand task's enumeration instead: high enough
+// for any real "for each X", low enough to stop a runaway agent.
+const (
+	proposalCap       = 2
+	expandProposalCap = 100
+)
+
 // ErrHalted is returned by Loop when the pipeline stopped itself (auth
 // failure or circuit breaker) rather than finishing its iterations.
 var ErrHalted = errors.New("engine: pipeline halted")
@@ -446,6 +455,9 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 	var taskBlock, typeFragment string
 	if task != nil {
 		taskBlock = prompt.TaskBlock(task)
+		if task.IsExpand() {
+			taskBlock = prompt.ExpandBlock(task)
+		}
 		if task.Type != "" {
 			typeFragment = w.fragment(filepath.Join("types", task.Type+".md"))
 		}
@@ -695,14 +707,42 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 	if progress.Decisions != "" && logFile != nil {
 		fmt.Fprintf(logFile, "\n--- decisions ---\n%s\n", progress.Decisions)
 	}
+	// Proposals are read before the phase bookkeeping: an EXPAND task's
+	// proposals are its actual deliverable, so whether "done" really is done
+	// depends on them. Expand proposals are operator-ordered work, not
+	// freeform ideas — they are ingested even when the pipeline's mode
+	// refuses proposals, and exempt from the freeform cap.
+	expand := task.IsExpand()
+	_, acceptProposals := w.modeFlags(ctx)
+	var props []domain.Proposal
+	if acceptProposals || expand {
+		var perr error
+		props, perr = statedir.ReadProposals(w.cfg.StateDir)
+		if perr != nil {
+			// A malformed proposals.json must not fail the pass, but silence
+			// would hide the broken agent contract forever — surface it.
+			w.event(ctx, "proposals.invalid", name, pass.ID, map[string]any{"error": perr.Error()})
+		}
+	}
+
 	outcome := domain.OutcomeDone
 	switch progress.Phase {
 	case "done":
-		if task != nil {
+		switch {
+		case expand && len(props) == 0:
+			// The enumeration never happened: nothing to enqueue means the
+			// task is retried, not completed — "done" would silently strand
+			// every item the operator asked for.
+			outcome = domain.OutcomeNoChange
+			w.failTask(ctx, task)
+			w.event(ctx, "task.failed", name, pass.ID, map[string]any{
+				"task": passTaskTitle(task), "phase": progress.Phase, "note": "expand task produced no proposals",
+			})
+		case task != nil:
 			if err := w.st.CompleteTask(ctx, task.ID, name, progress.Result); err == nil {
 				w.event(ctx, "task.done", name, pass.ID, map[string]any{"task": task.ID, "title": task.Title})
 			}
-		} else {
+		default:
 			title := progress.Task
 			if title == "" {
 				title = "(invented task)"
@@ -726,16 +766,23 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 		})
 	}
 
-	if _, acceptProposals := w.modeFlags(ctx); acceptProposals {
-		props, perr := statedir.ReadProposals(w.cfg.StateDir)
-		if perr != nil {
-			// A malformed proposals.json must not fail the pass, but silence
-			// would hide the broken agent contract forever — surface it.
-			w.event(ctx, "proposals.invalid", name, pass.ID, map[string]any{"error": perr.Error()})
+	if acceptProposals || expand {
+		maxAccept := proposalCap
+		if expand {
+			maxAccept = expandProposalCap
 		}
-		if added, err := w.bl.Ingest(ctx, name, props, w.cfg.KnownPipelines, 2); err == nil {
+		if added, dropped, err := w.bl.Ingest(ctx, name, props, w.cfg.KnownPipelines, maxAccept); err == nil {
 			for _, t := range added {
 				w.event(ctx, "task.created", name, pass.ID, map[string]any{"task": t.ID, "title": t.Title, "origin": "agent"})
+			}
+			if len(dropped) > 0 {
+				titles := make([]string, len(dropped))
+				for i, p := range dropped {
+					titles[i] = p.Title
+				}
+				w.event(ctx, "proposals.dropped", name, pass.ID, map[string]any{
+					"count": len(dropped), "cap": maxAccept, "titles": titles,
+				})
 			}
 		}
 	}

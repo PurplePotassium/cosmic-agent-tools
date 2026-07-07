@@ -138,6 +138,15 @@ type Task struct {
 	Updated time.Time `json:"-"`
 }
 
+// ExpandMetaKey marks an expansion meta-task ("for each X, add a task"):
+// the pass's deliverable is proposals.json with one entry per enumerated
+// item — exempt from the freeform proposal cap — and a pass that reports
+// done with no proposals is failed, not completed.
+const ExpandMetaKey = "expand"
+
+// IsExpand reports whether t is an expansion meta-task. Nil-safe.
+func (t *Task) IsExpand() bool { return t != nil && t.Meta[ExpandMetaKey] == "true" }
+
 // Pipeline is the configuration-shaped description of one worker lane.
 // Runtime state (iteration counter, breaker, halt reason) lives in the store
 // and engine, not here.

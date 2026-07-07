@@ -96,6 +96,11 @@ across ALL backlogs, then write `proposals.json` as an array of AT MOST 2:
 
 No busywork, no re-adds of completed items, nothing already queued anywhere.
 
+The backlog is the ONLY task list. Never park planned or remaining work in
+repository files (TODO docs, task tables) — work not in the backlog does not
+exist. If you have more follow-ups than the cap allows, propose the most
+important ones and name the rest in `progress.json`'s `note`.
+
 ## Stop conditions
 
 - Exactly one verified increment, then stop. Do not start a second task.

@@ -33,7 +33,7 @@ func TestConcurrentIngestDedupesSameTitle(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := svc.Ingest(ctx, "worker", proposals, nil, 10); err != nil {
+			if _, _, err := svc.Ingest(ctx, "worker", proposals, nil, 10); err != nil {
 				t.Errorf("ingest: %v", err)
 			}
 		}()
@@ -57,27 +57,34 @@ func TestConcurrentIngestDedupesSameTitle(t *testing.T) {
 }
 
 // A single ingest still dedupes within its own batch and against existing
-// tasks, and honors maxAccept.
+// tasks, and honors maxAccept — reporting what the cap cost as dropped.
+// Dups (of existing tasks or within the batch) are NOT dropped ideas: they
+// are already queued, so only genuinely lost proposals come back.
 func TestIngestDedupeAndCap(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
 	// Pre-existing task the ingest must not duplicate.
-	if _, err := svc.Ingest(ctx, "seed", []domain.Proposal{{Title: "already here"}}, nil, 10); err != nil {
+	if _, _, err := svc.Ingest(ctx, "seed", []domain.Proposal{{Title: "already here"}}, nil, 10); err != nil {
 		t.Fatal(err)
 	}
 
-	added, err := svc.Ingest(ctx, "worker", []domain.Proposal{
-		{Title: "already here"},        // dup of existing -> skipped
+	added, dropped, err := svc.Ingest(ctx, "worker", []domain.Proposal{
+		{Title: "already here"},        // dup of existing -> skipped, not dropped
 		{Title: "brand new one"},       // accepted
-		{Title: "  brand new one  "},   // normalized dup within batch -> skipped
-		{Title: "second new idea"},     // would be accepted, but cap is 1
+		{Title: "  brand new one  "},   // normalized dup within batch -> skipped, not dropped
+		{Title: "second new idea"},     // over the cap -> dropped
+		{Title: "second new idea"},     // dup of a DROPPED title -> reported once, not twice
+		{Title: "third new idea"},      // over the cap -> dropped
 	}, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(added) != 1 || added[0].Title != "brand new one" {
 		t.Fatalf("added = %v, want exactly [brand new one]", titles(added))
+	}
+	if len(dropped) != 2 || dropped[0].Title != "second new idea" || dropped[1].Title != "third new idea" {
+		t.Fatalf("dropped = %+v, want the two capped-out unique titles", dropped)
 	}
 }
 

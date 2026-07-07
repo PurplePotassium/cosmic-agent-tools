@@ -104,6 +104,24 @@ func TestComposeContainsAllPieces(t *testing.T) {
 	}
 }
 
+// ExpandBlock keeps the fenced task data and appends the expansion directive
+// that overrides the contract's one-increment framing and proposal cap.
+func TestExpandBlock(t *testing.T) {
+	got := ExpandBlock(&domain.Task{ID: "ws-7", Title: "for each weapon, add an update task", Detail: "see the wiki"})
+	for _, want := range []string{
+		"<task-data>",
+		"for each weapon, add an update task",
+		"THIS IS AN EXPANSION TASK",
+		"ONE proposal per item",
+		"does NOT apply",
+		"empty proposals.json",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expand block missing %q", want)
+		}
+	}
+}
+
 func TestPersonalityDirective(t *testing.T) {
 	if got := PersonalityDirective(""); got != "" {
 		t.Fatalf("empty personality should render nothing, got %q", got)

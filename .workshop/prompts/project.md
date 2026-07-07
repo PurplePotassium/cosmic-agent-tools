@@ -34,6 +34,14 @@ against scaffolded repos.
 - Keep the e2e suite hermetic: temp state dirs, temp git config, no real
   agents, no network.
 
+## Task seeding
+
+- When a task (or a doc it points to) says "for each X" — one task per weapon, per
+  package, per file — enqueue a task for **every** X, not a subjectively-chosen
+  subset. If the full set is too big for now, enqueue them all anyway and note a
+  suggested order; never park the remainder only in a doc where no pass will
+  pick them up.
+
 ## Style
 
 - Match the existing idiom: table-lite tests, terse doc comments explaining

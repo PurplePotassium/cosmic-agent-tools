@@ -113,6 +113,29 @@ func TaskBlock(t *domain.Task) string {
 	return b.String()
 }
 
+// ExpandBlock wraps TaskBlock for an expansion meta-task ("for each X, add a
+// task"). It overrides the base contract's one-increment framing and proposal
+// cap, which otherwise make such a task impossible to satisfy — the agent
+// would do a subset itself and park the rest outside the backlog.
+func ExpandBlock(t *domain.Task) string {
+	return TaskBlock(t) + `
+
+THIS IS AN EXPANSION TASK. Your one increment IS the enumeration — you are
+converting "for each X" into real backlog tasks, not doing them:
+
+- Enumerate EVERY item the task describes (read the repo and docs as needed)
+  and write proposals.json with ONE proposal per item. The usual proposal cap
+  does NOT apply to this pass; the engine dedupes against already-queued
+  titles, so never trim the list yourself.
+- Make each proposal self-contained: a title plus a detail rich enough for a
+  fresh-context pass to do the work without re-reading this task.
+- Do NOT do the per-item work and do NOT edit repository files — the backlog
+  is the only place work is tracked. With no code change there is nothing to
+  verify, so skip the verify command.
+- Then report done in progress.json, stating in result how many tasks you
+  proposed. Finishing with an empty proposals.json marks this pass failed.`
+}
+
 // InventBlock is the tail block for an idle pipeline allowed to invent work.
 func InventBlock(p domain.Pipeline) string {
 	var b strings.Builder

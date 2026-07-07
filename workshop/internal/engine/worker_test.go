@@ -190,6 +190,117 @@ func TestProposalsIngestedWithDedupe(t *testing.T) {
 	if len(open) != 3 {
 		t.Fatalf("open tasks: %d (%v)", len(open), titles)
 	}
+	// The capped-out proposal must not vanish silently: a proposals.dropped
+	// event names the lost idea so the operator can rescue it.
+	evs, err := r.st.EventsSince(ctx, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dropped map[string]any
+	for _, ev := range evs {
+		if ev.Type == "proposals.dropped" {
+			dropped = ev.Payload
+		}
+	}
+	if dropped == nil {
+		t.Fatal("no proposals.dropped event for the capped-out proposal")
+	}
+	if fmt.Sprint(dropped["count"]) != "1" || !strings.Contains(fmt.Sprint(dropped["titles"]), "one too many") {
+		t.Fatalf("proposals.dropped payload: %v", dropped)
+	}
+}
+
+// An expand task's proposals are its deliverable: every enumerated item is
+// ingested — the freeform cap does not apply — even on a proposal-refusing
+// (drain-mode) pipeline, and the task completes without any repo edit.
+func TestExpandTaskIngestsAllProposals(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", NoEdit: true, Proposals: []domain.Proposal{
+		{Title: "update Whip"}, {Title: "update Garlic"}, {Title: "update Fire Wand"}, {Title: "update Runetracer"},
+	}}, func(cfg *WorkerConfig) {
+		cfg.Pipeline.AcceptProposals = false // drain must not block operator-ordered expansion
+	})
+	ctx := context.Background()
+	task, err := r.st.AddTask(ctx, &domain.Task{
+		Title: "for each weapon, add an update task",
+		Meta:  map[string]string{domain.ExpandMetaKey: "true"},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.st.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.TaskDone {
+		t.Fatalf("expand task should complete: %+v", got)
+	}
+	open, _ := r.st.ListTasks(ctx, store.TaskFilter{Statuses: []domain.TaskStatus{domain.TaskOpen}})
+	if len(open) != 4 {
+		t.Fatalf("all 4 enumerated proposals should be ingested, got %d: %+v", len(open), open)
+	}
+	evs, _ := r.st.EventsSince(ctx, 0, 1000)
+	for _, ev := range evs {
+		if ev.Type == "proposals.dropped" {
+			t.Fatalf("nothing may be dropped from an expansion: %v", ev.Payload)
+		}
+	}
+}
+
+// An expand task that reports done without writing any proposals enqueued
+// nothing: the engine fails and retries it instead of completing it.
+func TestExpandTaskWithNoProposalsFails(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", NoEdit: true}, nil)
+	ctx := context.Background()
+	task, err := r.st.AddTask(ctx, &domain.Task{
+		Title: "for each weapon, add an update task",
+		Meta:  map[string]string{domain.ExpandMetaKey: "true"},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := r.worker.RunPass(ctx)
+	if err != nil || res != PassRan {
+		t.Fatalf("res=%v err=%v", res, err)
+	}
+	got, _ := r.st.GetTask(ctx, task.ID)
+	if got.Status != domain.TaskOpen || got.Attempts != 1 {
+		t.Fatalf("done-with-no-proposals must retry the expand task: %+v", got)
+	}
+	comps, _ := r.st.ListCompletions(ctx, 5)
+	if len(comps) != 0 {
+		t.Fatalf("no completion may be recorded: %+v", comps)
+	}
+	passes, _ := r.st.RecentPasses(ctx, "main", 5)
+	if len(passes) != 1 || passes[0].Outcome != domain.OutcomeNoChange {
+		t.Fatalf("passes: %+v", passes)
+	}
+}
+
+// The wiring from Task.Meta to the prompt: an expand task's composed prompt
+// must carry the expansion directive instead of the plain task block only.
+func TestExpandTaskPromptCarriesDirective(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy"}, nil)
+	ctx := context.Background()
+	task, err := r.st.AddTask(ctx, &domain.Task{
+		Title: "for each weapon, add an update task",
+		Meta:  map[string]string{domain.ExpandMetaKey: "true"},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, _, _, err := r.worker.preparePass(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(full, "THIS IS AN EXPANSION TASK") {
+		t.Fatal("expand directive missing from the composed prompt")
+	}
 }
 
 // A syntactically corrupt proposals.json must not fail the pass — but it
