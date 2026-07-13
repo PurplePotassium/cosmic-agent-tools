@@ -48,7 +48,30 @@ func (t *TaskTx) AddTask(ctx context.Context, task *domain.Task, top bool) (*dom
 // transaction holds the store's only connection (SetMaxOpenConns(1)), so a
 // plain Store method called inside fn blocks on the pool forever — a
 // deadlock, not an error.
+//
+// fn may run MORE THAN ONCE: the single connection serializes only this
+// process, but other processes (`workshop task add`, agents shelling out
+// mid-pass) write to the same WAL file, and a deferred read→write
+// transaction whose snapshot another process invalidated fails with
+// SQLITE_BUSY_SNAPSHOT — which busy_timeout does NOT wait out. Such routine
+// collisions are retried here, so fn must not accumulate state across calls
+// (assign results, don't append to captured slices).
 func (s *Store) WithTx(ctx context.Context, fn func(context.Context, *TaskTx) error) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err = s.runTx(ctx, fn); err == nil || !isBusyErr(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt+1) * 40 * time.Millisecond):
+		}
+	}
+	return err
+}
+
+func (s *Store) runTx(ctx context.Context, fn func(context.Context, *TaskTx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -58,6 +81,17 @@ func (s *Store) WithTx(ctx context.Context, fn func(context.Context, *TaskTx) er
 		return err
 	}
 	return tx.Commit()
+}
+
+// isBusyErr matches SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT from the modernc
+// driver, which formats codes into the message rather than exposing typed
+// errno values.
+func isBusyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "database is locked")
 }
 
 func scanTask(r rowScanner) (*domain.Task, error) {
@@ -270,6 +304,10 @@ func (s *Store) CompleteTask(ctx context.Context, id, pipeline, result string) e
 
 // FailTask records a blocked/reverted/failed attempt: attempts++, backoff via
 // notBefore, released back to open — or stuck once attempts reach maxAttempts.
+// The status guard mirrors CompleteTask's: a task finalized concurrently (the
+// operator marked it done from the dashboard while a pass had it claimed)
+// must not be resurrected to open by that pass's later failure — the caller
+// gets ErrNotFound instead.
 func (s *Store) FailTask(ctx context.Context, id string, backoff time.Duration, maxAttempts int) (*domain.Task, error) {
 	now := time.Now().UTC()
 	t, err := scanTask(s.db.QueryRowContext(ctx, `
@@ -278,12 +316,38 @@ func (s *Store) FailTask(ctx context.Context, id string, backoff time.Duration, 
 			status = CASE WHEN attempts + 1 >= ? THEN 'stuck' ELSE 'open' END,
 			claimed_by = '', claim_pass = 0,
 			not_before = ?, updated = ?
-		WHERE id = ?
+		WHERE id = ? AND status IN ('open', 'claimed')
 		RETURNING `+taskCols, maxAttempts, toMillis(now.Add(backoff)), toMillis(now), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return t, err
+}
+
+// ReleaseOrphanClaims returns every claimed task to open, without penalty.
+// A claim only ever belongs to a live pass of the single running engine, so
+// at engine startup (under the engine lock, before any worker starts) a
+// claimed row can only be a leftover from a crashed process. Without this the
+// task is stranded forever: Claim considers only open tasks, and proposal
+// dedupe swallows re-adds of the same title. Call ONLY at engine startup —
+// from a CLI path it would release the live engine's in-flight claims.
+func (s *Store) ReleaseOrphanClaims(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET status = 'open', claimed_by = '', claim_pass = 0, updated = ? WHERE status = 'claimed'`,
+		toMillis(time.Now().UTC()))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// SetTaskClaimPass back-fills the claiming pass id on a claimed task: the
+// claim happens before StartPass mints the pass row, so the worker patches
+// it in once the id exists (provenance for forensics, not control flow).
+func (s *Store) SetTaskClaimPass(ctx context.Context, id string, passID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET claim_pass = ? WHERE id = ? AND status = 'claimed'`, passID, id)
+	return err
 }
 
 // ReleaseTask returns a claimed task to open without penalty (pass never ran).

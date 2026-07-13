@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -78,6 +80,33 @@ func TestReadMissingAndEmpty(t *testing.T) {
 	}
 	if err := ReadJSON(empty, &v); !errors.Is(err, ErrEmpty) {
 		t.Fatalf("empty file: got %v, want ErrEmpty", err)
+	}
+}
+
+// TestRenameRetryPredicates pins which errno values each path rides out:
+// sharing/lock violations (32/33) everywhere, plus — rename only, Windows
+// only — ERROR_ACCESS_DENIED (5), which MoveFileEx reports when the
+// destination is held open without FILE_SHARE_DELETE (CRT/.NET/PowerShell
+// readers). Reads must NOT retry errno 5: there it is a real permission error.
+func TestRenameRetryPredicates(t *testing.T) {
+	for _, errno := range []syscall.Errno{32, 33} {
+		if !isSharingViolation(errno) || !isRenameRetryable(errno) {
+			t.Errorf("errno %d must be retryable on both paths", errno)
+		}
+	}
+	if isSharingViolation(syscall.Errno(5)) {
+		t.Error("reads must not retry ERROR_ACCESS_DENIED")
+	}
+	if got, want := isRenameRetryable(syscall.Errno(5)), runtime.GOOS == "windows"; got != want {
+		t.Errorf("isRenameRetryable(5) = %v on %s, want %v", got, runtime.GOOS, want)
+	}
+	// Wrapped the way os.Rename actually returns it.
+	wrapped := &os.LinkError{Op: "rename", Old: "a", New: "b", Err: syscall.Errno(32)}
+	if !isRenameRetryable(wrapped) {
+		t.Error("wrapped sharing violation must be retryable")
+	}
+	if isRenameRetryable(errors.New("plain")) {
+		t.Error("non-errno errors must not be retried")
 	}
 }
 

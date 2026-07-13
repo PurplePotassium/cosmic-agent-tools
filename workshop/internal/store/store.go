@@ -9,6 +9,7 @@ package store
 
 import (
 	"context"
+	crand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -226,8 +227,17 @@ func (s *Store) Prune(ctx context.Context, keepEvents, keepPasses int) error {
 	return nil
 }
 
+// ulidEntropy uses crypto/rand: ulid.Make's default entropy is math/rand
+// seeded once from the wall clock, so two PROCESSES starting in the same
+// Windows clock tick (0.5–15.6 ms quantization) share a seed and mint
+// byte-identical id streams — and ids here are primary keys written by
+// parallel `workshop task add` processes.
+var ulidEntropy = &ulid.LockedMonotonicReader{MonotonicReader: ulid.Monotonic(crand.Reader, 0)}
+
 // NewID mints a sortable task/completion id: "ws-" + lowercase ULID.
-func NewID() string { return "ws-" + strings.ToLower(ulid.Make().String()) }
+func NewID() string {
+	return "ws-" + strings.ToLower(ulid.MustNew(ulid.Now(), ulidEntropy).String())
+}
 
 // PipelineBundle returns the live agent/model/effort override for a pipeline
 // (zero bundle when unset). This is the operator's "switch model for the

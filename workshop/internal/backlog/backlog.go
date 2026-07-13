@@ -47,7 +47,12 @@ func (s *Service) Ingest(ctx context.Context, from string, proposals []domain.Pr
 	// single connection, so an open transaction serializes concurrent ingests.
 	// Without it, two workers finishing passes at once could both snapshot the
 	// backlog before either inserts and admit the same-titled proposal twice.
+	// WithTx may retry the closure on cross-process SQLITE_BUSY, so results
+	// accumulate in per-attempt locals and are ASSIGNED to the named returns
+	// at the end — appending to the outer slices would double them on retry.
 	err = s.st.WithTx(ctx, func(ctx context.Context, tx *store.TaskTx) error {
+		var accepted []*domain.Task
+		var overflow []domain.Proposal
 		existing, err := tx.ListTasks(ctx, store.TaskFilter{
 			Statuses: []domain.TaskStatus{domain.TaskOpen, domain.TaskClaimed},
 		})
@@ -63,9 +68,9 @@ func (s *Service) Ingest(ctx context.Context, from string, proposals []domain.Pr
 			if key == "" || seen[key] {
 				continue
 			}
-			if len(added) >= maxAccept {
+			if len(accepted) >= maxAccept {
 				seen[key] = true // report each lost idea once
-				dropped = append(dropped, p)
+				overflow = append(overflow, p)
 				continue
 			}
 			backlog := domain.MainBacklog
@@ -78,19 +83,23 @@ func (s *Service) Ingest(ctx context.Context, from string, proposals []domain.Pr
 			}
 			task, err := tx.AddTask(ctx, &domain.Task{
 				Backlog: backlog,
-				Type:    p.Type,
-				Title:   strings.TrimSpace(p.Title),
-				Detail:  p.Detail,
-				Files:   p.Files,
-				Origin:  domain.OriginAgent,
-				Meta:    map[string]string{"proposedBy": from},
+				// Agents write freeform types; normalize or the task can be
+				// stranded (case-sensitive claim filter) or, worse, steer the
+				// prompt-fragment path. Invalid types auto-classify instead.
+				Type:   domain.NormalizeType(p.Type),
+				Title:  strings.TrimSpace(p.Title),
+				Detail: p.Detail,
+				Files:  p.Files,
+				Origin: domain.OriginAgent,
+				Meta:   map[string]string{"proposedBy": from},
 			}, false)
 			if err != nil {
 				return err
 			}
 			seen[key] = true
-			added = append(added, task)
+			accepted = append(accepted, task)
 		}
+		added, dropped = accepted, overflow
 		return nil
 	})
 	if err != nil {

@@ -88,6 +88,37 @@ func TestIngestDedupeAndCap(t *testing.T) {
 	}
 }
 
+// Agent-authored proposal types must be normalized: the SQL claim filter is
+// case-sensitive (a task typed "Art" is invisible to types=["art"] forever),
+// and the type doubles as a prompt-fragment path segment, so freeform values
+// like "../x" must be neutralized to "" (auto-classify).
+func TestIngestNormalizesProposalTypes(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	added, _, err := svc.Ingest(ctx, "worker", []domain.Proposal{
+		{Title: "draw boss sprite", Type: "Art"},
+		{Title: "cleanup pass", Type: "../../secret-notes"},
+		{Title: "trim audio", Type: "  AUDIO  "},
+	}, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"draw boss sprite": "art",
+		"cleanup pass":     "", // invalid -> auto-classify
+		"trim audio":       "audio",
+	}
+	if len(added) != len(want) {
+		t.Fatalf("added %d tasks, want %d: %v", len(added), len(want), titles(added))
+	}
+	for _, task := range added {
+		if task.Type != want[task.Title] {
+			t.Errorf("task %q type = %q, want %q", task.Title, task.Type, want[task.Title])
+		}
+	}
+}
+
 func titles(ts []*domain.Task) []string {
 	out := make([]string, len(ts))
 	for i, t := range ts {

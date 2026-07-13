@@ -109,6 +109,8 @@ export function subscribe(handlers) {
     "breaker.tripped", "auth.halt", "auth.suspected", "wedge.killed",
     "gate.red", "driver.effort_ignored", "driver.model_unknown", "pass.setup_failed",
     "pipeline.bundle", "integration.merge_failed",
+    "pipeline.needs_restart", "pipeline.mode", "pipeline.personality",
+    "integration.error", "proposals.dropped", "proposals.ingest_failed",
     "inquiry.log", "inquiry.asked", "inquiry.answered",
   ];
   for (const t of types) {

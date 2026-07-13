@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -67,14 +68,27 @@ func NewIntegrator(cfg IntegratorConfig, st *store.Store, b *bus.Bus) *Integrato
 // Loop runs rounds until ctx cancels.
 func (ig *Integrator) Loop(ctx context.Context) {
 	for {
-		if _, err := ig.RunRound(ctx); err != nil && ctx.Err() != nil {
-			return
+		if _, err := ig.RunRound(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			// A persistently failing queue must not be an invisible no-op:
+			// workers keep committing to lanes while nothing ever lands.
+			// Bounded runs surface this through the supervisor; the live
+			// loop only has the event stream.
+			ig.event(ctx, "integration.error", "", map[string]any{"op": "round", "error": err.Error()})
 		}
 		if !sleepCtx(ctx, ig.cfg.Interval) {
 			return
 		}
 	}
 }
+
+// intentCommitSubject is the subject RunRound gives the operator's dirty
+// .workshop/** edits. reconcileTrunk keys on it: intent commits ride ABOVE
+// crash merges and must be replayed over the reconciled trunk, never treated
+// as the "human commit" that stops the unvetted-merge strip.
+const intentCommitSubject = "workshop: goal/config update"
 
 type pendingLane struct {
 	pipeline   string
@@ -131,7 +145,7 @@ func (ig *Integrator) RunRound(ctx context.Context) (int, error) {
 		}
 	}
 	if intentDirty {
-		if _, err := gitx.CommitAll(ctx, repo, "workshop: goal/config update"); err != nil {
+		if _, err := gitx.CommitAll(ctx, repo, intentCommitSubject); err != nil {
 			return 0, err
 		}
 	}
@@ -326,19 +340,52 @@ func (ig *Integrator) reconcileTrunk(ctx context.Context) error {
 	mergePrefix := "Merge branch '" + ig.cfg.BranchPrefix
 	target := head
 	var strippedBranches []string
+	var intents []string // intent commits above/between crash merges, newest first
+walk:
 	for i := 0; target != green && i < 100; i++ {
 		parents, subject, err := gitx.CommitInfo(ctx, repo, target)
-		if err != nil || len(parents) != 2 || !strings.HasPrefix(subject, mergePrefix) {
-			break // human or intent commit: everything below it stays
+		if err != nil {
+			break
 		}
-		strippedBranches = append(strippedBranches, mergeSubjectBranch(subject))
-		target = parents[0]
+		switch {
+		case len(parents) == 2 && strings.HasPrefix(subject, mergePrefix):
+			strippedBranches = append(strippedBranches, mergeSubjectBranch(subject))
+			target = parents[0]
+		case len(parents) == 1 && subject == intentCommitSubject:
+			// Our own goal/config commit — RunRound creates it BEFORE this
+			// reconcile runs, so it routinely sits on top of the very crash
+			// merges we're here to strip. Walk past it and replay it below;
+			// treating it as a stop commit would bury the unvetted merges
+			// forever (they'd never re-land through the gate).
+			intents = append(intents, target)
+			target = parents[0]
+		default:
+			break walk // human commit: everything below it stays
+		}
 	}
-	if target == head {
-		return nil
+	if len(strippedBranches) == 0 {
+		return nil // only intent/human commits above green: nothing unvetted
 	}
 	if err := gitx.ResetHard(ctx, repo, target); err != nil {
 		return fmt.Errorf("integrator: reconcile trunk: %w", err)
+	}
+	// Replay the operator's goal/config commits over the reconciled trunk —
+	// they are legitimate work the reset just removed.
+	for i := len(intents) - 1; i >= 0; i-- { // oldest first
+		if err := gitx.CherryPick(ctx, repo, intents[i]); err != nil {
+			// A conflicting replay must not destroy operator edits: abort
+			// the pick and put trunk back exactly as found. This round then
+			// degrades to the old skip-nothing behavior instead of losing
+			// the goal edit.
+			_ = gitx.CherryPickAbort(ctx, repo)
+			if rerr := gitx.ResetHard(ctx, repo, head); rerr != nil {
+				return fmt.Errorf("integrator: reconcile rollback: %v (during replay: %v)", rerr, err)
+			}
+			ig.event(ctx, "integration.skipped", "", map[string]any{
+				"why": "cannot replay goal/config commit over reconciled trunk", "error": err.Error(),
+			})
+			return nil
+		}
 	}
 	// Forget the stripped lanes' seen-tips: a crashed round may have already
 	// marked them landed, which would otherwise strand their work (0 ahead
@@ -421,10 +468,17 @@ func (ig *Integrator) collectPending(ctx context.Context) ([]pendingLane, error)
 // skip-until-advanced and clean up.
 func (ig *Integrator) resolutionPending(ctx context.Context, p domain.Pipeline, li *domain.LaneIntegration) (pendingLane, bool) {
 	task, err := ig.st.GetTask(ctx, li.ConflictTaskID)
-	if err != nil {
-		// Task vanished: unpark.
+	if errors.Is(err, store.ErrNotFound) {
+		// Task vanished (operator deleted it): unpark.
 		li.ConflictTaskID = ""
 		_ = ig.st.PutIntegration(ctx, li)
+		return pendingLane{}, false
+	}
+	if err != nil {
+		// Transient store error: stay parked and retry next round. Unparking
+		// here would mint a DUPLICATE conflict task for the same lane tip —
+		// two passes sharing one resolve worktree, each destroying the
+		// other's work in cleanup.
 		return pendingLane{}, false
 	}
 	switch task.Status {

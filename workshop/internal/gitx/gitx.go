@@ -278,6 +278,31 @@ func CommitAll(ctx context.Context, dir, message string) (string, error) {
 	return runOut(ctx, dir, "rev-parse", "--short", "HEAD")
 }
 
+// CherryPick replays one commit onto HEAD, keeping its message. On a
+// conflict (or any failure) the caller must CherryPickAbort before touching
+// the tree again.
+func CherryPick(ctx context.Context, dir, commit string) error {
+	if err := rejectFlagLike(commit); err != nil {
+		return err
+	}
+	_, err := run(ctx, dir, "cherry-pick", commit)
+	if err != nil {
+		var ge *Error
+		if isIdentityError(err, &ge) {
+			_, err = run(ctx, dir,
+				"-c", "user.name=Workshop", "-c", "user.email=workshop@localhost",
+				"cherry-pick", commit)
+		}
+	}
+	return err
+}
+
+// CherryPickAbort cancels an in-progress cherry-pick, restoring HEAD.
+func CherryPickAbort(ctx context.Context, dir string) error {
+	_, err := run(ctx, dir, "cherry-pick", "--abort")
+	return err
+}
+
 func isIdentityError(err error, ge **Error) bool {
 	e, ok := err.(*Error)
 	if !ok {

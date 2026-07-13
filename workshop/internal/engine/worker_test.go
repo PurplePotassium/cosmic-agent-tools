@@ -251,6 +251,46 @@ func TestExpandTaskIngestsAllProposals(t *testing.T) {
 	}
 }
 
+// An expand enumeration larger than the per-pass cap must not complete the
+// task: the overflow would be stranded forever (the ExpandBlock prompt even
+// promises "never trim the list yourself"). The pass accepts a cap's worth,
+// then the task is retried — accepted items dedupe, so each retry drains up
+// to another cap's worth until nothing is dropped.
+func TestExpandTaskOverCapRetriesInsteadOfCompleting(t *testing.T) {
+	props := make([]domain.Proposal, expandProposalCap+3)
+	for i := range props {
+		props[i] = domain.Proposal{Title: fmt.Sprintf("update item %03d", i)}
+	}
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", NoEdit: true, Proposals: props}, nil)
+	ctx := context.Background()
+	task, err := r.st.AddTask(ctx, &domain.Task{
+		Title: "for each item, add an update task",
+		Meta:  map[string]string{domain.ExpandMetaKey: "true"},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := r.worker.RunPass(ctx)
+	if err != nil || res != PassRan {
+		t.Fatalf("res=%v err=%v", res, err)
+	}
+	got, _ := r.st.GetTask(ctx, task.ID)
+	if got.Status != domain.TaskOpen || got.Attempts != 1 {
+		t.Fatalf("over-cap expansion must retry the expand task, not complete it: %+v", got)
+	}
+	open, _ := r.st.ListTasks(ctx, store.TaskFilter{Statuses: []domain.TaskStatus{domain.TaskOpen}})
+	accepted := 0
+	for _, o := range open {
+		if o.ID != task.ID {
+			accepted++
+		}
+	}
+	if accepted != expandProposalCap {
+		t.Fatalf("accepted %d proposals, want the full cap %d", accepted, expandProposalCap)
+	}
+}
+
 // An expand task that reports done without writing any proposals enqueued
 // nothing: the engine fails and retries it instead of completing it.
 func TestExpandTaskWithNoProposalsFails(t *testing.T) {

@@ -151,6 +151,46 @@ func TestRegistry(t *testing.T) {
 	}
 }
 
+// TestFindAgyEnvOverrideGuard pins the same security guard findClaude has: a
+// relative WORKSHOP_AGY_BIN must be absolutized against the launch cwd (never
+// left to resolve against cmd.Dir — the agent's worktree, where a previous
+// pass could have committed a malicious binary), and the target must exist as
+// a file.
+func TestFindAgyEnvOverrideGuard(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "agy-stub")
+	if err := os.WriteFile(stub, []byte("stub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("WORKSHOP_AGY_BIN", stub)
+	got, err := findAgy()
+	if err != nil || got != stub {
+		t.Fatalf("absolute override: got %q, %v; want %q", got, err, stub)
+	}
+
+	// A relative override resolves against the launch cwd and comes back
+	// absolute, so it can never re-resolve inside a worktree later.
+	t.Chdir(dir)
+	t.Setenv("WORKSHOP_AGY_BIN", "agy-stub")
+	got, err = findAgy()
+	if err != nil {
+		t.Fatalf("relative override: %v", err)
+	}
+	if !filepath.IsAbs(got) || got != stub {
+		t.Fatalf("relative override not absolutized: got %q, want %q", got, stub)
+	}
+
+	t.Setenv("WORKSHOP_AGY_BIN", filepath.Join(dir, "does-not-exist"))
+	if _, err := findAgy(); err == nil {
+		t.Fatal("missing override binary must be refused")
+	}
+	t.Setenv("WORKSHOP_AGY_BIN", dir)
+	if _, err := findAgy(); err == nil {
+		t.Fatal("directory override must be refused")
+	}
+}
+
 func TestAgyPlanRefusesOversizedPrompt(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("command-line cap is a Windows constraint")

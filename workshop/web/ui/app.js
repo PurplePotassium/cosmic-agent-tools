@@ -40,7 +40,7 @@ function ago(iso) {
 
 function eventTone(type) {
   if (/done|landed|resolved|commit$|classified/.test(type)) return "good";
-  if (/failed|halt|breaker|wedge|dropped|red|abandoned/.test(type)) return "bad";
+  if (/failed|halt|breaker|wedge|dropped|red|abandoned|error/.test(type)) return "bad";
   if (/conflict|suspected|skipped|ignored|stuck|incomplete|unknown/.test(type)) return "warn";
   return "";
 }
@@ -76,7 +76,14 @@ function describeEvent(ev) {
     case "driver.model_unknown": return `model "${p.model}" may be wrong for agent ${p.agent} — off its known families`;
     case "pipeline.bundle": return p.cleared ? "model override cleared"
       : `model override → ${[p.agent, p.model, p.effort].filter(Boolean).join(":")}`;
-    case "pipeline.needs_restart": return `added — relaunching the engine to activate this lane; it comes up parked, so resume it to start running`;
+    case "pipeline.needs_restart": return p.action === "removed"
+      ? `removed — relaunching the engine so this lane's worker actually stops`
+      : `added — relaunching the engine to activate this lane; it comes up parked, so resume it to start running`;
+    case "pipeline.mode": return p.cleared ? "mode override cleared" : `mode override → ${p.mode}`;
+    case "pipeline.personality": return p.cleared ? "personality override cleared" : `personality override → ${p.personality}`;
+    case "integration.error": return `integration error${p.op ? " (" + p.op + ")" : ""}: ${p.error || ""}`.slice(0, 140);
+    case "proposals.dropped": return `${p.count} proposal${p.count === 1 ? "" : "s"} dropped over the per-pass cap (${p.cap}): ${(p.titles || []).join("; ")}`.slice(0, 160);
+    case "proposals.ingest_failed": return `failed to save ${p.count ? p.count + " " : ""}proposed follow-up${p.count === 1 ? "" : "s"}: ${p.error || ""}`.slice(0, 140);
     case "integration.merge_failed": return `merge failed (will retry): ${p.error || ""}`.slice(0, 140);
     case "inquiry.asked": return `asked: ${p.question || ""}`;
     case "inquiry.answered": return p.ok ? "inquiry answered" : "inquiry FAILED";
@@ -161,7 +168,11 @@ function GoalCard({ goal, onSave }) {
     <h2>Goal <span class="muted">(.workshop/GOAL.md — versioned)</span></h2>
     <textarea rows="8" value=${text} onInput=${(e) => { setText(e.target.value); setDirty(true); }}></textarea>
     ${dirty && html`<div style="margin-top:6px; display:flex; gap:6px;">
-      <button class="primary" onClick=${async () => { await onSave(text); setDirty(false); }}>save</button>
+      <button class="primary" onClick=${async () => {
+        // Same error surface as act(): a failed save (server restarted → stale
+        // token, etc.) must be visible, and the edit stays dirty for a retry.
+        try { await onSave(text); setDirty(false); } catch (e) { alert(e.message); }
+      }}>save</button>
       <button onClick=${() => { setText(goal); setDirty(false); }}>discard</button>
     </div>`}
   </div>`;
@@ -238,9 +249,15 @@ function AddTask({ pipelines, types, onAdd }) {
   const fileInput = useRef(null);
 
   const addFiles = async (files) => {
-    for (const file of [...files].filter((f) => f.type.startsWith("image/"))) {
-      const dataUrl = await readAsDataURL(file);
-      setAttachments((prev) => [...prev, { name: file.name || "pasted-image.png", dataUrl }]);
+    // Callers (paste handler, file input) are fire-and-forget, so a FileReader
+    // failure must be surfaced here or it vanishes as an unhandled rejection.
+    try {
+      for (const file of [...files].filter((f) => f.type.startsWith("image/"))) {
+        const dataUrl = await readAsDataURL(file);
+        setAttachments((prev) => [...prev, { name: file.name || "pasted-image.png", dataUrl }]);
+      }
+    } catch (err) {
+      alert(`attaching image failed: ${err.message}`);
     }
   };
   const onPaste = (e) => {
@@ -470,7 +487,8 @@ function AddPipelineForm({ extras, onAdd }) {
   }
   const submit = async () => {
     if (!name.trim()) return;
-    await onAdd({ name: name.trim(), agent: agent || undefined, model: model.trim() || undefined, effort: effort || undefined });
+    const ok = await onAdd({ name: name.trim(), agent: agent || undefined, model: model.trim() || undefined, effort: effort || undefined });
+    if (ok === false) return; // add failed — keep the form open with its values for a fix-and-retry
     setName(""); setAgent(""); setModel(""); setEffort(""); setOpen(false);
   };
   return html`<div class="card bundle-editor" style="margin-bottom:10px">
@@ -715,6 +733,18 @@ const ALERT_TYPES = {
   "task.stuck": "warn",
   "gate.red": "warn",
   "pipeline.needs_restart": "warn",
+  "integration.error": "warn",
+  "proposals.ingest_failed": "warn",
+};
+
+// Events older than this cutoff (~10s before this page load) are history —
+// the SSE stream replays a recent tail on every fresh connection so the feed
+// has context, but a replayed event must not re-fire the "something just
+// happened" side effects (completion chime, alert banner).
+const HISTORY_CUTOFF_MS = Date.now() - 10_000;
+const isHistorical = (ev) => {
+  const t = ev.ts ? new Date(ev.ts).getTime() : NaN;
+  return Number.isFinite(t) && t < HISTORY_CUTOFF_MS;
 };
 
 function App() {
@@ -790,8 +820,11 @@ function App() {
       },
       onEvent: (ev) => {
         setFeed((prev) => [ev, ...prev].slice(0, 120));
-        if (ev.type === "task.done" && soundOnRef.current) playChime();
-        const tone = ALERT_TYPES[ev.type];
+        // Replayed history fills the feed only — chimes and alert banners are
+        // "right now" signals and must not resurrect for stale events.
+        const fresh = !isHistorical(ev);
+        if (fresh && ev.type === "task.done" && soundOnRef.current) playChime();
+        const tone = fresh && ALERT_TYPES[ev.type];
         if (tone) {
           setAlerts((prev) => [...prev, {
             id: `${ev.seq}-${ev.type}`, tone, pipeline: ev.pipeline, text: describeEvent(ev),
@@ -846,7 +879,15 @@ function App() {
     "code", "tests", "docs", "art", "audio",
   ])];
 
-  const act = async (fn) => { try { await fn(); } catch (e) { alert(e.message); } await refresh(); };
+  // act wraps a mutation: surface failure, refetch either way. Returns whether
+  // the mutation succeeded so callers with local state to clear (forms) can
+  // keep it on failure.
+  const act = async (fn) => {
+    let ok = true;
+    try { await fn(); } catch (e) { ok = false; alert(e.message); }
+    await refresh();
+    return ok;
+  };
 
   // Toggling on both persists the choice and previews the chime — the click is
   // the user gesture browsers require to unlock the AudioContext, so later

@@ -138,6 +138,23 @@ type Task struct {
 	Updated time.Time `json:"-"`
 }
 
+// NormalizeType canonicalizes a task type: lowercased, trimmed, and
+// restricted to [a-z0-9_-]; anything else returns "" (= auto-classify).
+// Types are compared case-sensitively in the SQL claim filter and the
+// routing map, AND used as a prompt-fragment path segment
+// (prompts/types/<type>.md) — so a freeform value from an agent proposal
+// must never pass through verbatim: "Art" would be unclaimable by a
+// types=["art"] pipeline, and "../x" would read files outside prompts/.
+func NormalizeType(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return ""
+		}
+	}
+	return s
+}
+
 // ExpandMetaKey marks an expansion meta-task ("for each X, add a task"):
 // the pass's deliverable is proposals.json with one entry per enumerated
 // item — exempt from the freeform proposal cap — and a pass that reports

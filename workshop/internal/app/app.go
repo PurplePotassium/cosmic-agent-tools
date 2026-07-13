@@ -221,11 +221,15 @@ func ReadEngineLock(stateDir string) (pid int, started time.Time, ok bool) {
 	return el.PID, el.Started, true
 }
 
+// staleLockSeq disambiguates stale-lock claim names within one process (two
+// goroutines racing acquireEngineLock share a pid).
+var staleLockSeq atomic.Int64
+
 // acquireEngineLock takes the per-repo engine singleton lock, clearing a
 // stale lock left by a crashed engine. It returns the release func.
 func (a *App) acquireEngineLock() (func(), error) {
 	path := EngineLockPath(a.StateDir)
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 5; attempt++ {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			enc := json.NewEncoder(f)
@@ -233,10 +237,32 @@ func (a *App) acquireEngineLock() (func(), error) {
 			f.Close()
 			return func() { _ = os.Remove(path) }, nil
 		}
-		if pid, started, ok := ReadEngineLock(a.StateDir); ok && pid != os.Getpid() && proc.AliveSince(pid, started) {
+		pid, started, ok := ReadEngineLock(a.StateDir)
+		if ok && pid != os.Getpid() && proc.AliveSince(pid, started) {
 			return nil, fmt.Errorf("another workshop engine is already running for this repo (pid %d) — stop it first (`workshop stop`, --force if wedged)", pid)
 		}
-		_ = os.Remove(path) // stale lock from a crashed engine
+		if !ok && attempt < 2 {
+			// Unreadable could be another engine mid-write (created, not yet
+			// encoded) rather than a crash's leftover; give the writer a beat
+			// before treating the lock as stale.
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		// Stale lock from a crashed engine. Claim it atomically before
+		// deleting: rename to a unique name, so of two racers exactly one
+		// succeeds and removes it. A bare check-then-remove here could delete
+		// the OTHER racer's freshly created lock (both failed O_EXCL, both
+		// saw the dead pid) and let two engines run. The loser's rename
+		// fails, it loops, and then sees the winner's fresh lock — alive pid,
+		// the proper error above.
+		claimed := fmt.Sprintf("%s.stale-%d-%d", path, os.Getpid(), staleLockSeq.Add(1))
+		if err := os.Rename(path, claimed); err == nil {
+			_ = os.Remove(claimed)
+		} else {
+			// Lost the claim race: let the winner finish recreating its
+			// fresh lock so the next probe sees a live holder.
+			time.Sleep(25 * time.Millisecond)
+		}
 	}
 	return nil, fmt.Errorf("cannot acquire the engine lock at %s", path)
 }
@@ -277,6 +303,11 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 	// lock) — running it on every app.Open let a mere `workshop status`
 	// mark another process's in-flight pass as failed.
 	_, _ = a.Store.CleanupOrphanPasses(ctx)
+	// Same for claims: a crash between claim and settle leaves the task
+	// status='claimed' forever — invisible to Claim (open-only) and its title
+	// blocked by proposal dedupe. No pass can be live here (engine lock is
+	// held, no worker started), so every claim is an orphan.
+	_, _ = a.Store.ReleaseOrphanClaims(ctx)
 	// Cap the append-only tables; an always-on loop grows them unboundedly.
 	_ = a.Store.Prune(ctx, 20000, 5000)
 	// Come up parked: seed the operator halt under the engine lock, before
@@ -348,8 +379,21 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 			p := &pipelines[i]
 			p.Branch = cfg.Git.BranchPrefix + p.Name
 			p.Dir = a.RepoDir + "-wt-" + p.Name
-			if err := gitx.AddWorktree(ctx, a.RepoDir, p.Dir, p.Branch, trunk); err != nil {
-				return fmt.Errorf("worktree for %s: %w", p.Name, err)
+			// Same rationale as the trunk probe above: on a Halt-triggered
+			// relaunch a killed git child can briefly keep a grip on
+			// repo/.git (Windows), so the first worktree ops can transiently
+			// fail; retry rather than take the whole server down.
+			for attempt := 0; ; attempt++ {
+				if err := gitx.AddWorktree(ctx, a.RepoDir, p.Dir, p.Branch, trunk); err == nil {
+					break
+				} else if attempt >= 10 {
+					return fmt.Errorf("worktree for %s: %w", p.Name, err)
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(50 * time.Millisecond):
+				}
 			}
 			// Lanes sync from the gate-proven green ref, never live trunk
 			// (mid-round trunk holds unvetted merges that may be reset away).

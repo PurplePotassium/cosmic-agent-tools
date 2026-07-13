@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -108,7 +109,8 @@ equivalent — set project.trunk / project.verify / [spice] in
 		Files   []string `json:"files"`
 	}
 	var oldBacklog []oldTask
-	if err := statedir.ReadJSON(filepath.Join(*from, "backlog.json"), &oldBacklog); err == nil {
+	switch err := statedir.ReadJSON(filepath.Join(*from, "backlog.json"), &oldBacklog); {
+	case err == nil:
 		n := 0
 		for _, ot := range oldBacklog {
 			if strings.TrimSpace(ot.Title) == "" {
@@ -125,8 +127,14 @@ equivalent — set project.trunk / project.verify / [spice] in
 			}
 		}
 		copied(fmt.Sprintf("backlog.json (%d)", n), "shared backlog")
-	} else {
-		skip("backlog.json", "not found or empty")
+	case os.IsNotExist(err):
+		skip("backlog.json", "not found")
+	case errors.Is(err, statedir.ErrEmpty):
+		skip("backlog.json", "empty")
+	default:
+		// A backlog.json that EXISTS but won't parse is real data we failed
+		// to import — a "skipped" line here would silently drop the backlog.
+		failw("backlog.json", err)
 	}
 
 	// completions.json -> history
@@ -137,7 +145,8 @@ equivalent — set project.trunk / project.verify / [spice] in
 		Completed string `json:"completed"`
 	}
 	var oldComps []oldCompletion
-	if err := statedir.ReadJSON(filepath.Join(*from, "completions.json"), &oldComps); err == nil {
+	switch err := statedir.ReadJSON(filepath.Join(*from, "completions.json"), &oldComps); {
+	case err == nil:
 		n := 0
 		for _, oc := range oldComps {
 			if strings.TrimSpace(oc.Title) == "" {
@@ -154,17 +163,24 @@ equivalent — set project.trunk / project.verify / [spice] in
 			}
 		}
 		copied(fmt.Sprintf("completions.json (%d)", n), "completion history")
-	} else {
-		skip("completions.json", "not found or empty")
+	case os.IsNotExist(err):
+		skip("completions.json", "not found")
+	case errors.Is(err, statedir.ErrEmpty):
+		skip("completions.json", "empty")
+	default:
+		failw("completions.json", err)
 	}
 
+	// The marker means "this state dir already imported a legacy backlog".
+	// A failed run did NOT — stamping it anyway would make the retry (after
+	// fixing the legacy file) refuse to run without --force.
+	if failed {
+		fmt.Fprintln(os.Stderr, "\nmigration finished WITH ERRORS — review the FAILED lines above; nothing was marked migrated, fix and re-run")
+		return 1
+	}
 	_ = statedir.WriteJSON(marker, map[string]string{
 		"from": *from, "when": time.Now().UTC().Format(time.RFC3339),
 	})
-	if failed {
-		fmt.Fprintln(os.Stderr, "\nmigration finished WITH ERRORS — review the FAILED lines above")
-		return 1
-	}
 
 	fmt.Println(`
 done. Next:

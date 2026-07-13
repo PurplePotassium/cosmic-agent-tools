@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// initialReplayEvents is how far back a connection with no Last-Event-ID
+// starts: enough recent history to fill the activity feed, without replaying
+// the entire persisted log (up to the prune cap) into every fresh page load.
+const initialReplayEvents = 200
+
 // getEvents is the SSE stream: replay from Last-Event-ID (the store is the
 // durable log), then live from the bus. Log lines arrive as ephemeral
 // events (seq 0) — they replay from pass log files, not from here.
@@ -23,11 +28,23 @@ func (s *Server) getEvents(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "retry: 3000\n\n")
 	flusher.Flush()
 
-	since := int64(0)
+	// A resuming client (Last-Event-ID, or an explicit ?since=) gets the exact
+	// gap replay — every event after the last one it saw. A FRESH connection
+	// has no gap to fill: replaying the whole persisted log (up to the prune
+	// cap) machine-guns weeks of history into the dashboard on every load, so
+	// it starts from a recent tail instead.
+	since, fresh := int64(0), true
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
 		since, _ = strconv.ParseInt(v, 10, 64)
+		fresh = false
 	} else if v := r.URL.Query().Get("since"); v != "" {
 		since, _ = strconv.ParseInt(v, 10, 64)
+		fresh = false
+	}
+	if fresh {
+		if latest, err := s.App.Store.LatestEventSeq(r.Context()); err == nil && latest > initialReplayEvents {
+			since = latest - initialReplayEvents
+		}
 	}
 
 	send := func(seq int64, typ string, payload any) bool {

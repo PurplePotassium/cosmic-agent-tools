@@ -12,6 +12,7 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/route"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/store"
 )
@@ -48,6 +49,17 @@ func cmdTask(args []string) int {
 // the first positional, which silently eats trailing flags — a real footgun
 // for `task add "title" --type art`).
 func parseMixed(fs *flag.FlagSet, args []string) []string {
+	// Honor the conventional "--" end-of-flags marker: everything after the
+	// first literal "--" is positional, verbatim, and must never be re-fed to
+	// fs.Parse — otherwise `task add -- "--leading-dash-title"` explodes with
+	// "flag provided but not defined".
+	var tail []string
+	for i, a := range args {
+		if a == "--" {
+			args, tail = args[:i], args[i+1:]
+			break
+		}
+	}
 	var positional []string
 	for {
 		if err := fs.Parse(args); err != nil {
@@ -62,7 +74,7 @@ func parseMixed(fs *flag.FlagSet, args []string) []string {
 			i++
 		}
 		if i >= len(rest) {
-			return positional
+			return append(positional, tail...)
 		}
 		args = rest[i:]
 	}
@@ -304,22 +316,22 @@ func taskTag(args []string) int {
 // warnUnknownType prints an advisory (never blocking) when typ is outside the
 // project's type vocabulary: a task tagged with a type no pipeline filters on
 // sits in the backlog undrained. Empty type means "auto-classify" — always ok.
+// The vocabulary is the union of [types.*] routing keys AND every pipeline's
+// `types = [...]` filter — a type only a pipeline declares is still known.
 func warnUnknownType(a *app.App, typ string) {
-	warnUnknownTypeTo(os.Stderr, a.Res().Config.Types, typ)
+	cfg := a.Res().Config
+	warnUnknownTypeTo(os.Stderr, route.Vocabulary(cfg.Types, cfg.ResolvedPipelines()), typ)
 }
 
 // warnUnknownTypeTo is the testable core of warnUnknownType: it takes the
 // vocabulary and sink explicitly so the CLI warning can be asserted without
 // standing up an App.
-func warnUnknownTypeTo(w io.Writer, types map[string]domain.Bundle, typ string) {
-	if typ == "" {
+func warnUnknownTypeTo(w io.Writer, vocab map[string]bool, typ string) {
+	if typ == "" || vocab[strings.ToLower(typ)] {
 		return
 	}
-	if _, ok := types[typ]; ok {
-		return
-	}
-	known := make([]string, 0, len(types))
-	for t := range types {
+	known := make([]string, 0, len(vocab))
+	for t := range vocab {
 		known = append(known, t)
 	}
 	sort.Strings(known)
@@ -442,8 +454,8 @@ func taskMv(args []string) int {
 func taskRm(args []string) int {
 	fs := flag.NewFlagSet("task rm", flag.ExitOnError)
 	repo := fs.String("repo", "", "repository path")
-	_ = fs.Parse(args)
-	if fs.NArg() != 1 {
+	pos := parseMixed(fs, args)
+	if len(pos) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: workshop task rm <id>")
 		return 2
 	}
@@ -455,11 +467,11 @@ func taskRm(args []string) int {
 		return 2
 	}
 	defer a.Close()
-	if err := a.DeleteTask(ctx, fs.Arg(0)); err != nil {
+	if err := a.DeleteTask(ctx, pos[0]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	fmt.Println("removed", fs.Arg(0))
+	fmt.Println("removed", pos[0])
 	return 0
 }
 

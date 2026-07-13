@@ -167,16 +167,17 @@ func cmdUp(args []string) int {
 	defer a.Close()
 
 	// A second `workshop up` in the same repo just surfaces the running one.
-	if si, err := server.ReadInfo(a.StateDir); err == nil {
+	switch si, state := classifyServerRecord(a.StateDir, pingServer, proc.AliveSince); state {
+	case recordResponding:
 		url := fmt.Sprintf("http://127.0.0.1:%d/", si.Port)
-		if pingServer(si.Port, si.Token) {
-			fmt.Printf("workshop already running for this repo (pid %d) — %s\n", si.PID, url)
-			if !*noOpen && a.Res().Config.Server.OpenBrowser {
-				openBrowser(url + "#token=" + si.Token)
-			}
-			return 0
+		fmt.Printf("workshop already running for this repo (pid %d) — %s\n", si.PID, url)
+		if !*noOpen && a.Res().Config.Server.OpenBrowser {
+			openBrowser(url + "#token=" + si.Token)
 		}
-		_ = os.Remove(server.InfoPath(a.StateDir))
+		return 0
+	case recordUnresponsive:
+		fmt.Fprintf(os.Stderr, "error: another workshop appears to be running for this repo (pid %d) but is not responding — leaving its server.json in place; use `workshop stop --force` to kill it\n", si.PID)
+		return 1
 	}
 
 	ctl := app.NewEngineControl(func(ctx context.Context, startStopped bool) error {
@@ -248,6 +249,36 @@ func cmdUp(args []string) int {
 		}
 	}
 	return 0
+}
+
+// serverRecordState classifies a pre-existing server.json during `up`.
+type serverRecordState int
+
+const (
+	recordNone         serverRecordState = iota // no (readable) server.json
+	recordResponding                            // ping OK — surface the running server
+	recordUnresponsive                          // ping failed but the PID is alive — never clobber
+	recordStale                                 // ping failed AND the PID is dead — record removed
+)
+
+// classifyServerRecord decides what `up` does with an existing server.json.
+// ping and alive are injectable (pingServer / proc.AliveSince in production).
+// The record is only removed when its process is provably dead: a slow or
+// wedged-but-alive server must keep its server.json, or a second `up` would
+// orphan the live instance (mirrors cmdStop's AliveSince fallback).
+func classifyServerRecord(stateDir string, ping func(port int, token string) bool, alive func(pid int, started time.Time) bool) (*server.ServerInfo, serverRecordState) {
+	si, err := server.ReadInfo(stateDir)
+	if err != nil {
+		return nil, recordNone
+	}
+	if ping(si.Port, si.Token) {
+		return si, recordResponding
+	}
+	if alive(si.PID, si.Started) {
+		return si, recordUnresponsive
+	}
+	_ = os.Remove(server.InfoPath(stateDir))
+	return si, recordStale
 }
 
 func cmdStatus(args []string) int {

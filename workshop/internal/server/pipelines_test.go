@@ -132,6 +132,65 @@ func TestPostPipelineRejectsBadName(t *testing.T) {
 	}
 }
 
+// TestDeletePipelineRelaunchesEngine pins the delete-side of the config/engine
+// split: removing a lane only edits config, so without a relaunch the deleted
+// lane's worker keeps running with no dashboard card to control it. A
+// successful delete must publish pipeline.needs_restart (action=removed) and
+// fire OnHalt, exactly like postPipeline; a rejected delete must do neither.
+func TestDeletePipelineRelaunchesEngine(t *testing.T) {
+	s := newTestServerForPipelines(t)
+	halted := make(chan struct{}, 1)
+	s.OnHalt = func() { halted <- struct{}{} }
+	events, cancel := s.App.Bus.Subscribe()
+	defer cancel()
+
+	if rec := doPipelineReq(t, s, "POST", "/api/v1/pipelines", s.token, `{"name":"art"}`); rec.Code != 200 {
+		t.Fatalf("add: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	<-halted // consume the add's relaunch
+	for len(events) > 0 {
+		<-events // drain the add's events
+	}
+
+	if rec := doPipelineReq(t, s, "DELETE", "/api/v1/pipelines/art", s.token, ""); rec.Code != 200 {
+		t.Fatalf("delete: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	found := false
+	for len(events) > 0 {
+		ev := <-events
+		if ev.Type == "pipeline.needs_restart" {
+			found = true
+			if ev.Pipeline != "art" {
+				t.Fatalf("needs_restart pipeline = %q, want %q", ev.Pipeline, "art")
+			}
+			if action, _ := ev.Payload["action"].(string); action != "removed" {
+				t.Fatalf("needs_restart action = %q, want %q", action, "removed")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("a successful delete did not publish pipeline.needs_restart")
+	}
+	select {
+	case <-halted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a successful delete did not relaunch the engine (OnHalt never fired)")
+	}
+
+	// A rejected delete mutates nothing, so it must neither warn nor relaunch.
+	if rec := doPipelineReq(t, s, "DELETE", "/api/v1/pipelines/nope", s.token, ""); rec.Code != 400 {
+		t.Fatalf("delete unknown: got %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if drainHasEvent(events, "pipeline.needs_restart") {
+		t.Fatal("a rejected delete must not publish pipeline.needs_restart")
+	}
+	select {
+	case <-halted:
+		t.Fatal("a rejected delete must not relaunch the engine")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 func TestDeletePipelineRejectsMain(t *testing.T) {
 	s := newTestServerForPipelines(t)
 	rec := doPipelineReq(t, s, "DELETE", "/api/v1/pipelines/"+config.DefaultPipelineName, s.token, "")

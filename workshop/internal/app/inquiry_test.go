@@ -125,12 +125,83 @@ func TestAskInquiryLifecycle(t *testing.T) {
 	if done.ID != inq.ID || done.State != "done" || !strings.Contains(done.Answer, "fake pass complete") {
 		t.Fatalf("inquiry settled wrong: %+v", done)
 	}
+	// AskInquiry must return a snapshot, not the live record the background
+	// goroutine mutates under inqMu — the HTTP handler marshals it unlocked.
+	if inq.State != "running" {
+		t.Fatalf("caller's Inquiry mutated to %q after settle; ask must return a copy", inq.State)
+	}
 
 	// The slot frees up for the next question.
 	if _, err := a.AskInquiry(ctx, "and the duplicator levels?", domain.Bundle{}); err != nil {
 		t.Fatalf("ask after settle: %v", err)
 	}
 	settle()
+}
+
+// settleInquiry polls until the newest inquiry leaves the running state.
+func settleInquiry(t *testing.T, a *App) *Inquiry {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if list := a.Inquiries(); len(list) > 0 && list[0].State != "running" {
+			return list[0]
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("inquiry never settled")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// routeInquiryToFake points the inquiry at the scripted fake agent, emitting
+// the given stdout lines before its normal happy-pass output.
+func routeInquiryToFake(t *testing.T, a *App, print []string) {
+	t.Helper()
+	a.Res().Config.Types["inquiry"] = domain.Bundle{Agent: "fake"}
+	t.Setenv("WORKSHOP_FAKE_BIN", os.Args[0])
+	t.Setenv("WORKSHOP_PASS_STATE_DIR", t.TempDir())
+	t.Setenv("WORKSHOP_PASS_REPO_DIR", a.RepoDir)
+	if print != nil {
+		scenario := filepath.Join(t.TempDir(), "scenario.json")
+		if err := statedir.WriteJSON(scenario, map[string]any{"print": print}); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("WORKSHOP_FAKE_SCENARIO", scenario)
+	}
+}
+
+// TestInquiryLongLineUnderCap: a single stdout line over bufio.Scanner's
+// default 64K/1M limits used to stop the reader goroutine cold — the agent
+// then blocked forever on a full pipe and the inquiry only "ended" at the
+// 15-minute timeout. With the raised cap it must just work.
+func TestInquiryLongLineUnderCap(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	routeInquiryToFake(t, a, []string{"long:" + strings.Repeat("x", 2<<20)}) // 2 MiB line
+
+	if _, err := a.AskInquiry(context.Background(), "emit a long line", domain.Bundle{}); err != nil {
+		t.Fatal(err)
+	}
+	done := settleInquiry(t, a)
+	if done.State != "done" || !strings.Contains(done.Answer, "long:xxxx") {
+		t.Fatalf("long-line inquiry settled wrong: state=%q err=%q answer len=%d",
+			done.State, done.Error, len(done.Answer))
+	}
+}
+
+// TestInquiryOverlongLineFailsFast: a line beyond even the raised cap must
+// fail the inquiry promptly with the scanner's real error (and the child must
+// be drained so it can exit), not wedge until the 15-minute timeout.
+func TestInquiryOverlongLineFailsFast(t *testing.T) {
+	a := newTestApp(t, initRepo(t))
+	routeInquiryToFake(t, a, []string{strings.Repeat("y", 5<<20)}) // 5 MiB > 4 MiB cap
+
+	if _, err := a.AskInquiry(context.Background(), "emit an overlong line", domain.Bundle{}); err != nil {
+		t.Fatal(err)
+	}
+	done := settleInquiry(t, a) // the 15s settle deadline IS the fail-fast assertion
+	if done.State != "failed" || !strings.Contains(done.Error, "reading agent output") {
+		t.Fatalf("overlong line: state=%q err=%q, want failed with the scanner error", done.State, done.Error)
+	}
 }
 
 // TestAutoInquiryOnBreakerTripped proves the engine fires the self-evaluator

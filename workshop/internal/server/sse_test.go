@@ -124,6 +124,69 @@ func TestSSEResumesFromSince(t *testing.T) {
 	}
 }
 
+// A FRESH connection (no Last-Event-ID, no ?since=) must not replay the whole
+// persisted log — only the most recent initialReplayEvents tail. Without this,
+// every dashboard load machine-guns weeks of history (chimes, stale alert
+// banners) into the UI.
+func TestSSEFreshConnectionReplaysOnlyRecentTail(t *testing.T) {
+	s, a := newTestServer(t)
+	ctx := context.Background()
+
+	const n = initialReplayEvents + 50
+	for i := 0; i < n; i++ {
+		a.Bus.Publish(ctx, domain.Event{Type: "test.tick", Pipeline: "main"})
+	}
+
+	base := startServer(t, s)
+	resp := openSSE(t, base, s.token, "")
+	defer resp.Body.Close()
+
+	seqs := collectSSE(t, resp, initialReplayEvents, 10*time.Second)
+	if len(seqs) != initialReplayEvents {
+		t.Fatalf("fresh connection replayed %d events, want %d", len(seqs), initialReplayEvents)
+	}
+	if seqs[0] != n-initialReplayEvents+1 {
+		t.Fatalf("fresh replay starts at seq %d, want %d (the recent tail, not the whole log)", seqs[0], n-initialReplayEvents+1)
+	}
+	if last := seqs[len(seqs)-1]; last != n {
+		t.Fatalf("fresh replay ends at seq %d, want %d", last, n)
+	}
+}
+
+// A RECONNECTING client (Last-Event-ID set) keeps the exact gap replay — the
+// fresh-connection tail cap must not open holes in a resumed stream.
+func TestSSELastEventIDStillReplaysFullGap(t *testing.T) {
+	s, a := newTestServer(t)
+	ctx := context.Background()
+
+	const n = initialReplayEvents + 50 // gap wider than the fresh-connection tail
+	for i := 0; i < n; i++ {
+		a.Bus.Publish(ctx, domain.Event{Type: "test.tick", Pipeline: "main"})
+	}
+
+	base := startServer(t, s)
+	req, err := http.NewRequest("GET", base+"/api/v1/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Workshop-Token", s.token)
+	req.Header.Set("Last-Event-ID", "5")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("SSE status = %d, want 200", resp.StatusCode)
+	}
+
+	seqs := collectSSE(t, resp, n-5, 10*time.Second)
+	if len(seqs) != n-5 || seqs[0] != 6 || seqs[len(seqs)-1] != int64(n) {
+		t.Fatalf("resume from Last-Event-ID=5 delivered %d events (first=%v), want the full 6..%d gap",
+			len(seqs), seqs, n)
+	}
+}
+
 // Shutdown must not stall on an open SSE stream: the closing channel unblocks
 // the handler, so Shutdown returns well under its deadline (pins W-11).
 func TestSSEShutdownReturnsQuickly(t *testing.T) {

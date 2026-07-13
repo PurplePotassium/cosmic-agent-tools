@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -28,11 +29,24 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // versa, so reads and renames retry briefly on exactly those errors. Other
 // errors (like fs.ErrNotExist) surface immediately.
 func retrySharing[T any](fn func() (T, error)) (T, error) {
+	return retryTransient(isSharingViolation, fn)
+}
+
+// retryRename is retrySharing plus ERROR_ACCESS_DENIED (5), which only the
+// rename path needs: MoveFileEx over a destination a reader holds open
+// without FILE_SHARE_DELETE fails with ACCESS_DENIED rather than a sharing
+// violation — CRT/.NET/PowerShell readers open files exactly that way.
+// Reads must NOT retry errno 5: there it means a real permission problem.
+func retryRename[T any](fn func() (T, error)) (T, error) {
+	return retryTransient(isRenameRetryable, fn)
+}
+
+func retryTransient[T any](retryable func(error) bool, fn func() (T, error)) (T, error) {
 	var out T
 	var err error
 	for attempt := 0; attempt < 50; attempt++ {
 		out, err = fn()
-		if err == nil || !isSharingViolation(err) {
+		if err == nil || !retryable(err) {
 			return out, err
 		}
 		time.Sleep(4 * time.Millisecond)
@@ -48,6 +62,18 @@ func isSharingViolation(err error) bool {
 	// Only meaningful on Windows; these errno values don't occur for file
 	// open/rename elsewhere, so the check is harmless cross-platform.
 	return errno == 32 || errno == 33
+}
+
+func isRenameRetryable(err error) bool {
+	if isSharingViolation(err) {
+		return true
+	}
+	if runtime.GOOS != "windows" {
+		// EACCES on a Unix rename is a real permission error, never transient.
+		return false
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == 5 // ERROR_ACCESS_DENIED
 }
 
 // WriteJSON marshals v with two-space indentation and atomically replaces
@@ -91,7 +117,7 @@ func WriteFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("statedir: close %s: %w", tmpName, err)
 	}
-	if _, err := retrySharing(func() (struct{}, error) {
+	if _, err := retryRename(func() (struct{}, error) {
 		return struct{}{}, os.Rename(tmpName, path)
 	}); err != nil {
 		return fmt.Errorf("statedir: rename to %s: %w", path, err)

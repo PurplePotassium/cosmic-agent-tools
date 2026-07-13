@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -161,7 +162,11 @@ func (a *App) ask(ctx context.Context, question string, override domain.Bundle, 
 				"id": inq.ID, "ok": runErr == nil, "question": clip(question, 200),
 			}})
 	}()
-	return inq, nil
+	// Return a snapshot, not the live record: the goroutine above mutates inq
+	// under inqMu, and callers (the HTTP handler) marshal the result unlocked.
+	// Same copying pattern as Inquiries(). Taken while inqMu is still held.
+	cp := *inq
+	return &cp, nil
 }
 
 // runInquiry materializes evidence, composes the forensics prompt, and drives
@@ -233,11 +238,15 @@ func (a *App) runInquiry(ctx context.Context, id int64, question string, drv dri
 	proc.Configure(cmd, plan.Mode)
 
 	var answer strings.Builder
+	var scanErr error
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
 		sc := bufio.NewScanner(pr)
-		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		// 4 MiB line cap: agents paste whole files into answers, and a line
+		// over the cap makes Scan return false — which, unhandled, would stop
+		// this reader and wedge the child on a full pipe until the timeout.
+		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
 			fmt.Fprintln(logFile, line)
@@ -250,6 +259,15 @@ func (a *App) runInquiry(ctx context.Context, id int64, question string, drv dri
 				Payload: map[string]any{"id": id, "line": line},
 			})
 		}
+		if err := sc.Err(); err != nil {
+			// Scan gave up (e.g. a line beyond even the raised cap). Keep
+			// draining the pipe so the child can finish writing and exit,
+			// and record why so the operator sees the real cause instead of
+			// a 15-minute timeout.
+			scanErr = err
+			fmt.Fprintf(logFile, "[workshop] reading agent output failed: %v (draining remainder)\n", err)
+			_, _ = io.Copy(io.Discard, pr)
+		}
 	}()
 
 	if err := cmd.Start(); err != nil {
@@ -261,8 +279,10 @@ func (a *App) runInquiry(ctx context.Context, id int64, question string, drv dri
 	defer proc.Finished(cmd.Process.Pid)
 	pw.Close() // parent's write end; child holds its own dup
 	waitErr := cmd.Wait()
+	var readErr error
 	select {
 	case <-drained:
+		readErr = scanErr // safe: the goroutine is done (close happens-before)
 	case <-time.After(5 * time.Second):
 	}
 	pr.Close()
@@ -280,6 +300,9 @@ func (a *App) runInquiry(ctx context.Context, id int64, question string, drv dri
 	}
 	if exit := cmd.ProcessState.ExitCode(); waitErr != nil || exit != 0 {
 		return "", fmt.Errorf("agent exited %d — see %s", exit, logPath)
+	}
+	if readErr != nil {
+		return "", fmt.Errorf("reading agent output: %v — partial output in %s", readErr, logPath)
 	}
 	got := strings.TrimSpace(answer.String())
 	if got == "" {

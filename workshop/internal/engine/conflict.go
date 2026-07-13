@@ -155,6 +155,17 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 		verifyDir = filepath.Join(resolveDir, w.cfg.VerifyDir)
 	}
 	if green, out := runGate(ctx, verifyDir, w.cfg.Verify, w.cfg.Pipeline.PassTimeout); !green {
+		if ctx.Err() != nil {
+			// Shutdown mid-gate, not a red gate: the verify process was
+			// killed by cancellation, so the verdict means nothing. Release
+			// the task untouched — penalizing it here burned an attempt (and
+			// a retry-budget cycle, and a breaker count) on every Ctrl-C
+			// that landed during a resolution verify.
+			_ = w.st.ReleaseTask(ctx, task.ID)
+			cleanup(true)
+			w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailSetup, exitCode, "")
+			return PassRan, ctx.Err()
+		}
 		w.event(ctx, "gate.red", name, pass.ID, map[string]any{"where": "resolution", "tail": tailLines(out, 20)})
 		return fail(domain.FailExit, "gate red on resolution")
 	}

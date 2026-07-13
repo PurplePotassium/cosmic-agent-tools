@@ -2,6 +2,26 @@ package domain
 
 import "testing"
 
+func TestNormalizeType(t *testing.T) {
+	cases := map[string]string{
+		"code":           "code",
+		"Code":           "code",
+		"  AUDIO  ":      "audio",
+		"merge-conflict": "merge-conflict",
+		"level_design":   "level_design",
+		"":               "",
+		"c o d e":        "",
+		"../../etc":      "",
+		"types\\..\\x":   "",
+		"art.md":         "",
+	}
+	for in, want := range cases {
+		if got := NormalizeType(in); got != want {
+			t.Errorf("NormalizeType(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestPipelineMode(t *testing.T) {
 	cases := []struct {
 		name            string

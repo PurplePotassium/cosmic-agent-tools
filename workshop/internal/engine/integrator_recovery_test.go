@@ -190,6 +190,67 @@ func TestReconcileStripsUnvettedCrashMerges(t *testing.T) {
 	}
 }
 
+// Same crash-recovery as above, but the operator ALSO has an uncommitted
+// .workshop/ edit when the recovery round runs. RunRound commits that intent
+// edit before reconciling, so the intent commit sits on top of the crash
+// merges — the reconcile walk must step over it and replay it, not treat it
+// as a stop commit (which buried the unvetted merges forever: they never
+// re-landed through the gate, and a broken one poisoned GreenRef).
+func TestReconcileSurvivesPendingIntentEdit(t *testing.T) {
+	r := newQueueRig(t, []string{"one", "two"}, "", false)
+	ctx := context.Background()
+
+	r.laneCommit(0, "one.txt", "a", "one work")
+	r.laneCommit(1, "two.txt", "b", "two work")
+	if landed, err := r.ig.RunRound(ctx); err != nil || landed != 2 {
+		t.Fatalf("baseline round: landed=%d err=%v", landed, err)
+	}
+	green := r.git(r.repo, "rev-parse", GreenRef)
+
+	// The crash: lane work merged onto trunk by hand, never gated.
+	r.laneCommit(0, "one2.txt", "aa", "one more work")
+	r.laneCommit(1, "two2.txt", "bb", "two more work")
+	oneTip := r.git(r.lanes[0].Dir, "rev-parse", "HEAD")
+	r.git(r.repo, "merge", "--no-ff", "-m", "Merge branch 'workshop/one'", "workshop/one")
+	r.git(r.repo, "merge", "--no-ff", "-m", "Merge branch 'workshop/two'", "workshop/two")
+	li, _ := r.st.GetIntegration(ctx, "one")
+	li.LastSeenTip = oneTip
+	if err := r.st.PutIntegration(ctx, li); err != nil {
+		t.Fatal(err)
+	}
+
+	// The operator's pending goal edit.
+	if err := os.MkdirAll(filepath.Join(r.repo, ".workshop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.repo, ".workshop", "GOAL.md"), []byte("new goal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	landed, err := r.ig.RunRound(ctx)
+	if err != nil || landed != 2 {
+		t.Fatalf("recovery round: landed=%d err=%v", landed, err)
+	}
+	// Crash merges stripped, both lanes re-landed exactly once via the gate.
+	log := r.git(r.repo, "log", "--format=%s", green+"..main")
+	for _, branch := range []string{"workshop/one", "workshop/two"} {
+		if got := strings.Count(log, "Merge branch '"+branch+"'"); got != 1 {
+			t.Fatalf("%s merged %d times since green (want 1):\n%s", branch, got, log)
+		}
+	}
+	// The intent commit survived the reconcile: the goal edit is on trunk.
+	if !strings.Contains(log, intentCommitSubject) {
+		t.Fatalf("intent commit missing after reconcile:\n%s", log)
+	}
+	if got := r.git(r.repo, "show", "main:.workshop/GOAL.md"); got != "new goal" {
+		t.Fatalf("goal content on trunk = %q, want %q", got, "new goal")
+	}
+	// And the gate blessed the re-landed result.
+	if r.git(r.repo, "rev-parse", GreenRef) != r.git(r.repo, "rev-parse", "HEAD") {
+		t.Fatal("green ref not advanced over the re-landed work")
+	}
+}
+
 // Intent/human commits below crash merges must survive reconciliation.
 func TestReconcileStopsAtForeignCommits(t *testing.T) {
 	r := newQueueRig(t, []string{"one"}, "", false)

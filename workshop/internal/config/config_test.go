@@ -289,6 +289,54 @@ func TestValidateBlocksUnsafeConfig(t *testing.T) {
 	}
 }
 
+// normalizeWorktrees maps every unrecognized string to "auto", so validating
+// its OUTPUT could never fail: a typo like "of" silently turned worktrees ON
+// for a multi-pipeline repo whose operator was disabling them. The raw string
+// must be validated instead.
+func TestValidateWorktreesTypoBlocks(t *testing.T) {
+	for _, bad := range []string{"of", "none", "disabled"} {
+		dir := t.TempDir()
+		repo := writeFile(t, dir, "repo.toml", "[git]\nworktrees = \""+bad+"\"")
+		if _, err := Load("", repo, "", noEnv); err == nil {
+			t.Errorf("worktrees = %q must block startup", bad)
+		}
+	}
+	for _, ok := range []string{"auto", "ON", "off", "true", "0", ""} {
+		dir := t.TempDir()
+		repo := writeFile(t, dir, "repo.toml", "[git]\nworktrees = \""+ok+"\"")
+		if _, err := Load("", repo, "", noEnv); err != nil {
+			t.Errorf("worktrees = %q must be accepted: %v", ok, err)
+		}
+	}
+}
+
+// A NEGATIVE per-pipeline wedge override slipped past the ==0 inherit check
+// and instant-killed every pass of that lane; invalid pipeline types silently
+// claimed nothing (case-sensitive SQL filter).
+func TestValidatePipelineWedgeAndTypes(t *testing.T) {
+	for name, body := range map[string]string{
+		"negative pipeline wedge": "[[pipelines]]\nname = \"code\"\nwedge_minutes = -1",
+		"invalid pipeline type":   "[[pipelines]]\nname = \"code\"\ntypes = [\"c o d e\"]",
+	} {
+		dir := t.TempDir()
+		repo := writeFile(t, dir, "repo.toml", body)
+		if _, err := Load("", repo, "", noEnv); err == nil {
+			t.Errorf("%s: must block startup", name)
+		}
+	}
+}
+
+// Pipeline type filters feed a case-sensitive SQL IN(...) — resolve them
+// lowercased so `types = ["Code"]` claims "code" tasks.
+func TestResolvedPipelinesNormalizeTypes(t *testing.T) {
+	c := Default()
+	c.Pipelines = []PipelineConfig{{Name: "code", Types: []string{"Code", "  TESTS "}}}
+	got := c.ResolvedPipelines()[0].TaskTypes
+	if len(got) != 2 || got[0] != "code" || got[1] != "tests" {
+		t.Fatalf("TaskTypes = %v, want [code tests]", got)
+	}
+}
+
 func TestValidateModelFamilies(t *testing.T) {
 	dir := t.TempDir()
 	repo := writeFile(t, dir, "repo.toml", `

@@ -29,11 +29,19 @@ func (a *App) StartAutoInquiry(ctx context.Context) (stop func()) {
 				if !ok {
 					return
 				}
+				// Dispatch off the drain loop: ask can run for minutes (it
+				// execs an agent), and blocking here would overflow the
+				// subscriber's bounded bus buffer on pass.log traffic and
+				// silently drop later critical events. Concurrency is still
+				// bounded — ask itself returns ErrInquiryBusy while one runs —
+				// and the goroutine exits promptly on shutdown because ask
+				// respects ctx (probe, publish) before handing off to the
+				// self-cancelling run.
 				switch ev.Type {
 				case "breaker.tripped":
-					a.autoInquire(ctx, breakerQuestion(ev))
+					go a.autoInquire(ctx, breakerQuestion(ev))
 				case "auth.halt", "auth.suspected":
-					a.autoInquire(ctx, authQuestion(ev))
+					go a.autoInquire(ctx, authQuestion(ev))
 				}
 			}
 		}
@@ -46,6 +54,9 @@ func (a *App) StartAutoInquiry(ctx context.Context) (stop func()) {
 // already asking something) or a missing/unprobeable agent just means no
 // auto-diagnosis this time — the banner is surfaced on its own regardless.
 func (a *App) autoInquire(ctx context.Context, question string) {
+	if ctx.Err() != nil {
+		return // shutting down — don't start a new diagnosis
+	}
 	_, _ = a.ask(ctx, question, domain.Bundle{}, true)
 }
 

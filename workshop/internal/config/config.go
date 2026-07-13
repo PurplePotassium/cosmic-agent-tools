@@ -211,10 +211,19 @@ func (c *Config) ResolvedPipelines() []domain.Pipeline {
 			agent = "claude"
 		}
 		invent, acceptProposals := resolveMode(pc)
+		// Normalize type filters: the SQL claim filter compares types
+		// case-sensitively (BINARY collation), so `types = ["Code"]` would
+		// silently claim nothing from the shared backlog.
+		types := make([]string, 0, len(pc.Types))
+		for _, ty := range pc.Types {
+			if n := domain.NormalizeType(ty); n != "" {
+				types = append(types, n)
+			}
+		}
 		out = append(out, domain.Pipeline{
 			Name:            pc.Name,
 			Bundle:          domain.Bundle{Agent: agent, Model: pc.Model, Effort: pc.Effort},
-			TaskTypes:       pc.Types,
+			TaskTypes:       types,
 			DrainMain:       boolOr(pc.DrainMain, true),
 			ScopeHint:       pc.ScopeHint,
 			Invent:          invent,
@@ -379,6 +388,17 @@ func (c *Config) Validate() (errs, warns []error) {
 		if err := c.checkPersonality("pipelines."+p.Name, p.Personality); err != nil {
 			errs = append(errs, err)
 		}
+		for _, ty := range p.Types {
+			if domain.NormalizeType(ty) == "" {
+				errs = append(errs, fmt.Errorf("pipelines.%s: type %q is not a valid task type (lowercase letters, digits, - and _)", p.Name, ty))
+			}
+		}
+		// The safety-level knob is checked below; a NEGATIVE per-pipeline
+		// override slips past the ==0 inherit check and instant-kills every
+		// pass of that lane (then trips the breaker).
+		if p.WedgeMinutes < 0 {
+			errs = append(errs, fmt.Errorf("pipelines.%s: wedge_minutes %d is negative — every pass would be killed at start", p.Name, p.WedgeMinutes))
+		}
 	}
 	for t, b := range c.Types {
 		if !domain.ValidEffort(b.Effort) {
@@ -400,8 +420,12 @@ func (c *Config) Validate() (errs, warns []error) {
 			warns = append(warns, err)
 		}
 	}
-	switch normalizeWorktrees(c.Git.Worktrees) {
-	case "on", "off", "auto":
+	// Validate the RAW string: normalizeWorktrees maps anything it doesn't
+	// recognize to "auto", so checking its output can never fail — a typo
+	// like "of" would silently turn worktrees ON for a multi-pipeline repo
+	// whose operator was disabling them.
+	switch strings.ToLower(strings.TrimSpace(c.Git.Worktrees)) {
+	case "", "auto", "on", "off", "true", "false", "yes", "no", "0", "1":
 	default:
 		errs = append(errs, fmt.Errorf("git.worktrees: %q is not auto/on/off", c.Git.Worktrees))
 	}

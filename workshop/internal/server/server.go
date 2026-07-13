@@ -509,6 +509,7 @@ func (s *Server) postPipeline(w http.ResponseWriter, r *http.Request) {
 	s.App.Bus.Publish(r.Context(), domain.Event{
 		Type:     "pipeline.needs_restart",
 		Pipeline: strings.ToLower(strings.TrimSpace(*body.Name)),
+		Payload:  map[string]any{"action": "added"},
 	})
 	if s.OnHalt != nil {
 		go s.OnHalt()
@@ -520,6 +521,20 @@ func (s *Server) deletePipeline(w http.ResponseWriter, r *http.Request) {
 	if err := s.App.DeletePipeline(r.PathValue("name")); err != nil {
 		httpErr(w, err, http.StatusBadRequest)
 		return
+	}
+	// DeletePipeline only edits config — the running engine's worker for this
+	// lane was built at startup and keeps running (uncontrollably: its card is
+	// gone from the dashboard) until the engine relaunches. Mirror postPipeline:
+	// announce why the engine blinks, then trigger the same cancel+relaunch the
+	// halt button uses so RunHeadless rebuilds workers from the now-current
+	// config and the removed lane's worker actually stops.
+	s.App.Bus.Publish(r.Context(), domain.Event{
+		Type:     "pipeline.needs_restart",
+		Pipeline: strings.ToLower(strings.TrimSpace(r.PathValue("name"))),
+		Payload:  map[string]any{"action": "removed"},
+	})
+	if s.OnHalt != nil {
+		go s.OnHalt()
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }

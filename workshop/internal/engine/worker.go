@@ -368,6 +368,9 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 	}
 	if task != nil {
 		w.patchPass(ctx, pass.ID, store.PassPatch{TaskID: &task.ID})
+		// The claim ran before StartPass minted the pass id — back-fill it
+		// so the row records which pass holds the claim.
+		_ = w.st.SetTaskClaimPass(ctx, task.ID, pass.ID)
 		w.event(ctx, "task.claimed", name, pass.ID, map[string]any{"task": task.ID, "title": task.Title})
 	}
 
@@ -458,7 +461,11 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 		if task.IsExpand() {
 			taskBlock = prompt.ExpandBlock(task)
 		}
-		if task.Type != "" {
+		// Only a normalized type may become a path segment: task types are
+		// agent/operator data, and a value like "../../notes" would read a
+		// file OUTSIDE prompts/ into the prompt as trusted guidance. Ingest
+		// normalizes new tasks; this guards rows that predate it.
+		if task.Type != "" && task.Type == domain.NormalizeType(task.Type) {
 			typeFragment = w.fragment(filepath.Join("types", task.Type+".md"))
 		}
 	} else {
@@ -707,11 +714,13 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 	if progress.Decisions != "" && logFile != nil {
 		fmt.Fprintf(logFile, "\n--- decisions ---\n%s\n", progress.Decisions)
 	}
-	// Proposals are read before the phase bookkeeping: an EXPAND task's
-	// proposals are its actual deliverable, so whether "done" really is done
-	// depends on them. Expand proposals are operator-ordered work, not
-	// freeform ideas — they are ingested even when the pipeline's mode
-	// refuses proposals, and exempt from the freeform cap.
+	// Proposals are read AND ingested before the phase bookkeeping: an
+	// EXPAND task's proposals are its actual deliverable, so completion must
+	// not be recorded until they are safely in the backlog — completing
+	// first left a window (ingest error, crash between the calls) where the
+	// task read done with zero items enqueued. Expand proposals are
+	// operator-ordered work, not freeform ideas — they are ingested even
+	// when the pipeline's mode refuses proposals, and get the higher cap.
 	expand := task.IsExpand()
 	_, acceptProposals := w.modeFlags(ctx)
 	var props []domain.Proposal
@@ -722,6 +731,36 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 			// A malformed proposals.json must not fail the pass, but silence
 			// would hide the broken agent contract forever — surface it.
 			w.event(ctx, "proposals.invalid", name, pass.ID, map[string]any{"error": perr.Error()})
+		}
+	}
+	var dropped []domain.Proposal
+	var ingestErr error
+	if (acceptProposals || expand) && len(props) > 0 {
+		maxAccept := proposalCap
+		if expand {
+			maxAccept = expandProposalCap
+		}
+		var added []*domain.Task
+		added, dropped, ingestErr = w.bl.Ingest(ctx, name, props, w.cfg.KnownPipelines, maxAccept)
+		if ingestErr != nil {
+			// Losing proposals silently strands work — for an expand task,
+			// the entire deliverable. The phase switch below turns this into
+			// a retry for expand tasks.
+			w.event(ctx, "proposals.ingest_failed", name, pass.ID, map[string]any{
+				"error": ingestErr.Error(), "count": len(props),
+			})
+		}
+		for _, t := range added {
+			w.event(ctx, "task.created", name, pass.ID, map[string]any{"task": t.ID, "title": t.Title, "origin": "agent"})
+		}
+		if len(dropped) > 0 {
+			titles := make([]string, len(dropped))
+			for i, p := range dropped {
+				titles[i] = p.Title
+			}
+			w.event(ctx, "proposals.dropped", name, pass.ID, map[string]any{
+				"count": len(dropped), "cap": maxAccept, "titles": titles,
+			})
 		}
 	}
 
@@ -737,6 +776,23 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 			w.failTask(ctx, task)
 			w.event(ctx, "task.failed", name, pass.ID, map[string]any{
 				"task": passTaskTitle(task), "phase": progress.Phase, "note": "expand task produced no proposals",
+			})
+		case expand && ingestErr != nil:
+			// The enumeration exists but never reached the backlog: retry.
+			outcome = domain.OutcomeNoChange
+			w.failTask(ctx, task)
+			w.event(ctx, "task.failed", name, pass.ID, map[string]any{
+				"task": passTaskTitle(task), "phase": progress.Phase, "note": "proposal ingest failed — task retried",
+			})
+		case expand && len(dropped) > 0:
+			// Items beyond the per-pass cap would be stranded if the task
+			// completed now. Retry instead: the accepted items dedupe on the
+			// next pass, so each retry drains up to another cap's worth.
+			outcome = domain.OutcomeNoChange
+			w.failTask(ctx, task)
+			w.event(ctx, "task.failed", name, pass.ID, map[string]any{
+				"task": passTaskTitle(task), "phase": progress.Phase,
+				"note": fmt.Sprintf("%d items beyond the %d-per-pass cap — task retried to enqueue the remainder", len(dropped), expandProposalCap),
 			})
 		case task != nil:
 			if err := w.st.CompleteTask(ctx, task.ID, name, progress.Result); err == nil {
@@ -764,27 +820,6 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 		w.event(ctx, "task.failed", name, pass.ID, map[string]any{
 			"task": passTaskTitle(task), "phase": progress.Phase, "note": "no final self-report",
 		})
-	}
-
-	if acceptProposals || expand {
-		maxAccept := proposalCap
-		if expand {
-			maxAccept = expandProposalCap
-		}
-		if added, dropped, err := w.bl.Ingest(ctx, name, props, w.cfg.KnownPipelines, maxAccept); err == nil {
-			for _, t := range added {
-				w.event(ctx, "task.created", name, pass.ID, map[string]any{"task": t.ID, "title": t.Title, "origin": "agent"})
-			}
-			if len(dropped) > 0 {
-				titles := make([]string, len(dropped))
-				for i, p := range dropped {
-					titles[i] = p.Title
-				}
-				w.event(ctx, "proposals.dropped", name, pass.ID, map[string]any{
-					"count": len(dropped), "cap": maxAccept, "titles": titles,
-				})
-			}
-		}
 	}
 
 	sha := w.commitIfDirty(ctx, pass, task, res)
