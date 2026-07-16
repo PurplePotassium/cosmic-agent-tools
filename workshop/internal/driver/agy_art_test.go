@@ -83,6 +83,20 @@ func escapeJSON(s string) string {
 	return out
 }
 
+func TestAgyTranscriptPath(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("WORKSHOP_AGY_STATE_DIR", stateDir)
+	got, err := AgyTranscriptPath("5ac58547-42c1-4859-a180-8d0283fc14cf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(stateDir, "brain", "5ac58547-42c1-4859-a180-8d0283fc14cf",
+		".system_generated", "logs", "transcript.jsonl")
+	if got != want {
+		t.Fatalf("transcript path = %q, want %q", got, want)
+	}
+}
+
 func TestAgyPlanConversationFlag(t *testing.T) {
 	a := &Agy{exe: "agy", probed: true, caps: Capabilities{
 		PromptVia: PromptArg, Capture: CaptureNone, NeedsConsole: true, ModelSelect: true,

@@ -17,6 +17,7 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/engine"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/export"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/proc"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/prompt"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/statedir"
@@ -290,6 +291,11 @@ func (a *App) runInquiry(ctx context.Context, id int64, question string, drv dri
 	// Archive the evaluator's own transcript beside its log, like any pass.
 	if plan.TranscriptPath != "" {
 		_ = statedir.CopyFile(plan.TranscriptPath, engine.TranscriptArchivePath(logPath))
+	}
+	// And mirror the evidence into the [export] folder, like any pass.
+	// Best-effort: an unexportable inquiry is still a valid inquiry.
+	if base, berr := a.ExportBase(); berr == nil && base != "" {
+		_ = export.Pass(filepath.Join(base, "inquiry"), a.Res().Config.Export.HumanReadable, logPath)
 	}
 
 	if ctx.Err() == context.DeadlineExceeded {

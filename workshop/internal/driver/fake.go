@@ -44,17 +44,23 @@ func (f *Fake) Probe(context.Context) (Capabilities, error) {
 	if os.Getenv("WORKSHOP_FAKE_BLIND") == "1" {
 		// Simulate a blind driver (agy-shaped) for engine tests.
 		return Capabilities{
-			PromptVia:   PromptArg,
-			Capture:     CaptureNone,
-			ModelSelect: true,
+			PromptVia:              PromptArg,
+			Capture:                CaptureNone,
+			ModelSelect:            true,
+			ConversationTranscript: true,
 		}, nil
 	}
+	// ConversationTranscript in the capturable shape too: the art tests seed
+	// the fake into the "agy" driver slot non-blind (so the fake agent can
+	// read the prompt), and the fake agent mimics agy's conversation
+	// bookkeeping + brain transcript whenever WORKSHOP_AGY_STATE_DIR is set.
 	return Capabilities{
-		PromptVia:   PromptStdin,
-		Capture:     CaptureStreaming,
-		ModelSelect: true,
-		Effort:      true,
-		AuthProbe:   true,
+		PromptVia:              PromptStdin,
+		Capture:                CaptureStreaming,
+		ModelSelect:            true,
+		Effort:                 true,
+		AuthProbe:              true,
+		ConversationTranscript: true,
 	}, nil
 }
 

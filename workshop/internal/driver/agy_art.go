@@ -74,6 +74,21 @@ func AgyLastConversation(workDir string) (string, error) {
 	return "", nil
 }
 
+// AgyTranscriptPath returns where agy leaves the full transcript of one
+// conversation (verified 2026-07-16): JSONL steps carrying the USER_INPUT
+// content exactly as the model saw it, the MODEL response `content` AND its
+// `thinking` reasoning summary, plus SYSTEM checkpoint/reminder steps.
+// Written unconditionally per conversation — no flag involved (`--log-file`
+// is only the operational log). Callers stat before trusting it: agy owns
+// the directory and may prune old conversations.
+func AgyTranscriptPath(conversationID string) (string, error) {
+	stateDir, err := agyStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(stateDir, "brain", conversationID, ".system_generated", "logs", "transcript.jsonl"), nil
+}
+
 // modelProbeLabel is deliberately never a real model: the probe RELIES on agy
 // rejecting it (exit 1 + the "Available models:" dump in the op log).
 const modelProbeLabel = "workshop-model-probe"

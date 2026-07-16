@@ -171,6 +171,21 @@ remover = "builtin"          # builtin (pure-Go color keyer, default)
                              # keyer) — applies to the next art pass.
 # corridorkey_dir = 'C:\GameDev\CorridorKey'   # WORKSHOP_CORRIDORKEY env also works
 
+[export]                     # audit trail: mirror pass evidence to a folder you choose
+dir = 'C:\audits\space-game' # default "" = off. Gets one subfolder per pipeline (plus
+                             # "inquiry"): each finished pass's log, driver op log, and
+                             # the agent runtime's own FULL transcript (prompt as sent,
+                             # thinking, response, tool calls) land there as
+                             # iter-NNNNNN.* — for claude via --session-id, for agy via
+                             # its per-conversation brain transcript. Must be OUTSIDE
+                             # the repo/worktrees (passes commit anything dirty, so
+                             # exported evidence inside would land in project history —
+                             # the engine refuses to start). Relative = repo-root-relative
+                             # (and therefore refused); pick an absolute path elsewhere.
+human_readable = false       # true also renders each transcript as markdown
+                             # (iter-NNNNNN.transcript.md): prompts/thinking/responses
+                             # in full, tool payloads truncated (the .jsonl keeps all).
+
 # model is validated against a curated family list per agent — claude:
 # sonnet/fable/opus/haiku, agy: gemini — and just WARNS (never blocks) on a
 # mismatch. Off-list on purpose (a proxy alias, a brand-new id)? Whitelist it:

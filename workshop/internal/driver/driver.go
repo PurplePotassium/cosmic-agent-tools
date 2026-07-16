@@ -45,6 +45,12 @@ type Capabilities struct {
 	// recoverable full transcript (tool calls, reasoning) keyed by it. When
 	// set, Plan honors InvokeSpec.SessionID and reports ExecPlan.TranscriptPath.
 	Sessions bool
+	// ConversationTranscript: the runtime keeps a full transcript (prompt as
+	// sent, reasoning, response) keyed by its own RUNTIME-MINTED conversation
+	// id, so — unlike Sessions — the location is only discoverable AFTER a
+	// run (AgyLastConversation + AgyTranscriptPath). The engine archives it
+	// post-run when ExecPlan.TranscriptPath is empty.
+	ConversationTranscript bool
 }
 
 // SpawnMode maps capabilities onto the proc spawn mode.

@@ -24,6 +24,7 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/bus"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/export"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/proc"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/prompt"
@@ -143,6 +144,14 @@ type WorkerConfig struct {
 	// checkout dir for the corridorkey backend.
 	ArtRemover     string
 	CorridorkeyDir string
+
+	// Export settings ([export] config, resolved per pipeline by the app
+	// layer — see app.ExportBase): every finished pass's evidence files
+	// (pass log, driver op log, archived transcript) are mirrored into
+	// ExportDir ("" = no export); ExportHumanReadable additionally renders
+	// the transcript as markdown.
+	ExportDir           string
+	ExportHumanReadable bool
 }
 
 func (c *WorkerConfig) fillDefaults() {
@@ -439,6 +448,9 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 	if err != nil {
 		return w.failSetup(ctx, pass, task, err)
 	}
+	// Registered before Close's defer so the export runs AFTER the log is
+	// closed — however the pass ends, the evidence mirrored is complete.
+	defer w.exportPass(ctx, pass, logPath)
 	defer logFile.Close()
 
 	// RUN.
@@ -596,6 +608,16 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fu
 		return -1, nil, false, err
 	}
 
+	// Conversation-transcript runtimes (agy) key their transcript by a
+	// runtime-minted id that is only discoverable AFTER the run, via the
+	// per-workdir last_conversations.json record. Pre-read that record so the
+	// post-run read can tell whether OUR run minted a new entry (an unchanged
+	// one means the run died before creating a conversation).
+	prevConv := ""
+	if plan.TranscriptPath == "" && res.caps.ConversationTranscript && conversationID == "" {
+		prevConv, _ = driver.AgyLastConversation(dir)
+	}
+
 	passCtx := ctx
 	var cancel context.CancelFunc
 	if t := w.cfg.Pipeline.PassTimeout; t > 0 {
@@ -695,14 +717,57 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fu
 	// a crash before the runtime flushed simply leaves no file to copy.
 	if plan.TranscriptPath != "" {
 		_ = statedir.CopyFile(plan.TranscriptPath, TranscriptArchivePath(logPath))
+	} else if res.caps.ConversationTranscript {
+		archiveConversationTranscript(dir, conversationID, prevConv, logPath)
 	}
 	return exitCode, tail, timedOut, nil
+}
+
+// archiveConversationTranscript archives a conversation-transcript runtime's
+// (agy's) transcript next to the pass log, mirroring the TranscriptPath copy
+// session-capable runtimes get. A resumed run (conversationID != "") knows
+// its id up front; a fresh run discovers it from the per-workdir
+// last_conversations.json record, and only a NEW entry counts — an unchanged
+// one means the run died before creating a conversation. Best-effort twice
+// over: the record is rewritten WHOLE per agy run, so a concurrently running
+// agy pass (read-lock holders may overlap) can clobber our entry, and agy may
+// prune its own brain dir.
+func archiveConversationTranscript(workDir, conversationID, prevConv, logPath string) {
+	conv := conversationID
+	if conv == "" {
+		cur, err := driver.AgyLastConversation(workDir)
+		if err != nil || cur == "" || cur == prevConv {
+			return
+		}
+		conv = cur
+	}
+	src, err := driver.AgyTranscriptPath(conv)
+	if err != nil {
+		return
+	}
+	_ = statedir.CopyFile(src, TranscriptArchivePath(logPath))
 }
 
 // TranscriptArchivePath is where a pass's agent transcript is archived,
 // derived from its pass-log path (iter-000042.log -> iter-000042.transcript.jsonl).
 func TranscriptArchivePath(logPath string) string {
 	return strings.TrimSuffix(logPath, ".log") + ".transcript.jsonl"
+}
+
+// exportPass mirrors the pass's evidence files (pass log, driver op log,
+// archived transcript, art intermediates) into the operator's [export]
+// folder. Deferred until the pass fully settles — log closed, transcript
+// archived. Best-effort: a failed export must never fail the pass, but it is
+// surfaced as an event rather than swallowed.
+func (w *Worker) exportPass(ctx context.Context, pass *domain.Pass, logPath string) {
+	if w.cfg.ExportDir == "" {
+		return
+	}
+	if err := export.Pass(w.cfg.ExportDir, w.cfg.ExportHumanReadable, logPath); err != nil {
+		w.event(ctx, "export.failed", w.cfg.Pipeline.Name, pass.ID, map[string]any{
+			"error": err.Error(), "dir": w.cfg.ExportDir,
+		})
+	}
 }
 
 // settlePass classifies the finished pass, reconciles state, and commits.

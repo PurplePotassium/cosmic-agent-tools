@@ -154,6 +154,28 @@ func TestBoundedRunCommits(t *testing.T) {
 	}
 }
 
+// With [export] configured, every finished pass mirrors its evidence files
+// into the export folder — including failed passes, which are the ones an
+// audit cares about most.
+func TestPassExportsEvidence(t *testing.T) {
+	exportDir := filepath.Join(t.TempDir(), "audit", "main")
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy"}, func(cfg *WorkerConfig) {
+		cfg.ExportDir = exportDir
+	})
+	ctx := context.Background()
+	r.addTask("exported task")
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(exportDir, "iter-000001.log"))
+	if err != nil {
+		t.Fatalf("pass log not exported: %v", err)
+	}
+	if !strings.Contains(string(data), "=== ws(main) iter 1 ===") {
+		t.Fatalf("exported log is not the pass log:\n%s", data)
+	}
+}
+
 func TestProposalsIngestedWithDedupe(t *testing.T) {
 	r := newRig(t, fakeagent.Scenario{Behavior: "happy", Proposals: []domain.Proposal{
 		{Title: "existing task"},                          // dup of an open task

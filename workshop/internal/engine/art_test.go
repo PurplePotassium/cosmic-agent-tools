@@ -6,6 +6,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -57,10 +58,13 @@ func TestScreenPath(t *testing.T) {
 // pre-seeded with the fake driver (the real one would spawn agy.exe), and
 // WORKSHOP_AGY_STATE_DIR points at a scratch dir the fake agent's
 // conversation bookkeeping writes into.
-func artRig(t *testing.T, sc fakeagent.Scenario) *testRig {
+func artRig(t *testing.T, sc fakeagent.Scenario, tweaks ...func(cfg *WorkerConfig)) *testRig {
 	t.Helper()
 	r := newRig(t, sc, func(cfg *WorkerConfig) {
 		cfg.AgyMu = &sync.RWMutex{}
+		for _, tweak := range tweaks {
+			tweak(cfg)
+		}
 	})
 	t.Setenv("WORKSHOP_AGY_STATE_DIR", t.TempDir())
 	r.worker.drivers["agy"] = driver.NewFake()
@@ -124,6 +128,48 @@ func TestArtGenTransPass(t *testing.T) {
 		t.Fatal("AgyMu still held after the pass")
 	}
 	r.cfg.AgyMu.Unlock()
+}
+
+// An agy-shaped pass has no ExecPlan.TranscriptPath (the conversation id is
+// runtime-minted): the engine must recover the id post-run and archive the
+// runtime's brain transcript beside the pass log — and, with [export]
+// configured, mirror the evidence (plus the rendered markdown) into the
+// export folder.
+func TestArtPassArchivesAndExportsTranscript(t *testing.T) {
+	exportDir := filepath.Join(t.TempDir(), "audit", "art")
+	r := artRig(t, fakeagent.Scenario{Behavior: "art"}, func(cfg *WorkerConfig) {
+		cfg.ExportDir = exportDir
+		cfg.ExportHumanReadable = true
+	})
+	ctx := context.Background()
+	if _, err := r.st.AddTask(ctx, &domain.Task{Title: "audited hero", Type: domain.ArtGenType}, false); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := r.worker.RunPass(ctx); err != nil || res != PassRan {
+		t.Fatalf("RunPass = %v, %v; want PassRan, nil", res, err)
+	}
+
+	archive, err := os.ReadFile(filepath.Join(r.cfg.LogDir, "iter-000001.transcript.jsonl"))
+	if err != nil {
+		t.Fatalf("agy transcript not archived beside the pass log: %v", err)
+	}
+	if !strings.Contains(string(archive), "fake thinking") {
+		t.Fatalf("archived transcript lacks the runtime's content:\n%s", archive)
+	}
+	for _, name := range []string{
+		"iter-000001.log", "iter-000001.transcript.jsonl", "iter-000001.transcript.md",
+	} {
+		if _, err := os.Stat(filepath.Join(exportDir, name)); err != nil {
+			t.Errorf("%s not exported: %v", name, err)
+		}
+	}
+	md, err := os.ReadFile(filepath.Join(exportDir, "iter-000001.transcript.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(md), "> fake thinking") {
+		t.Fatalf("rendered transcript lacks the thinking blockquote:\n%s", md)
+	}
 }
 
 // The image model sometimes writes JPEG (or WebP…) bytes under the requested

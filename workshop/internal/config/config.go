@@ -23,6 +23,7 @@ type Config struct {
 	Personality PersonalityConfig        `toml:"personality"`
 	Classifier  ClassifierConfig         `toml:"classifier"`
 	Art         ArtConfig                `toml:"art"`
+	Export      ExportConfig             `toml:"export"`
 	Types       map[string]domain.Bundle `toml:"types"` // task-type routing table
 	Pipelines   []PipelineConfig         `toml:"pipelines"`
 	Server      ServerConfig             `toml:"server"`
@@ -41,6 +42,23 @@ type ArtConfig struct {
 	// CorridorkeyDir is the CorridorKey checkout used by the corridorkey
 	// remover (WORKSHOP_CORRIDORKEY env overrides).
 	CorridorkeyDir string `toml:"corridorkey_dir"`
+}
+
+// ExportConfig mirrors each finished pass's evidence files (pass log, driver
+// operational log, archived agent transcript) into an operator-chosen folder
+// for auditing.
+type ExportConfig struct {
+	// Dir is the export destination ("" — the default — disables export).
+	// It receives one subfolder per pipeline (plus "inquiry" for the
+	// self-evaluator). A relative path resolves against the repository
+	// root, but the folder itself must lie OUTSIDE the repository and its
+	// worktrees: passes commit anything dirty in the working tree, so
+	// exported evidence inside it would be swept into project history
+	// (app.ExportBase enforces this at engine start).
+	Dir string `toml:"dir"`
+	// HumanReadable additionally renders each exported transcript as
+	// markdown (<pass>.transcript.md) beside the raw JSONL. Default off.
+	HumanReadable bool `toml:"human_readable"`
 }
 
 type ProjectConfig struct {
@@ -179,7 +197,7 @@ func Default() Config {
 			domain.ArtGenType:      {Agent: "agy"},
 			domain.ArtGenTransType: {Agent: "agy"},
 		},
-		Art: ArtConfig{Remover: "builtin"},
+		Art:    ArtConfig{Remover: "builtin"},
 		Server: ServerConfig{Port: 4455, OpenBrowser: true, StartStopped: true},
 		Agents: map[string]AgentConfig{},
 	}
@@ -461,6 +479,9 @@ func (c *Config) Validate() (errs, warns []error) {
 	}
 	if !chroma.ValidRemover(c.Art.Remover) {
 		errs = append(errs, fmt.Errorf("art.remover: %q is not one of %v", c.Art.Remover, chroma.Removers))
+	}
+	if c.Export.HumanReadable && c.Export.Dir == "" {
+		warns = append(warns, fmt.Errorf("export.human_readable is set but export.dir is empty — nothing is exported until a destination folder is configured"))
 	}
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		errs = append(errs, fmt.Errorf("server.port: %d out of range", c.Server.Port))

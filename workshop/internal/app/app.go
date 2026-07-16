@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -167,41 +168,84 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engi
 		known[pl.Name] = true
 	}
 
+	exportBase, err := a.ExportBase()
+	if err != nil {
+		return nil, err
+	}
+	exportDir := ""
+	if exportBase != "" {
+		exportDir = filepath.Join(exportBase, p.Name)
+	}
+
 	workDir := opts.Dir
 	if workDir == "" {
 		workDir = a.RepoDir
 	}
 	wc := engine.WorkerConfig{
-		Pipeline:           p,
-		Multi:              multi,
-		RepoDir:            workDir,
-		StateDir:           statedir.PipelineDir(a.StateDir, p.Name),
-		LogDir:             filepath.Join(a.StateDir, "logs", p.Name),
-		GoalPath:           config.GoalFile(a.RepoDir),
-		PromptsDir:         config.PromptsDir(a.RepoDir),
-		Verify:             cfg.Project.Verify,
-		VerifyDir:          cfg.Project.VerifyDir,
-		SkipPermissions:    cfg.Safety.SkipPermissions,
-		ExtraArgs:          p.ExtraArgs,
-		KnownPipelines:     known,
-		BreakerLimit:       cfg.Safety.BreakerFailures,
-		SleepBetween:       time.Duration(cfg.Safety.SleepSeconds) * time.Second,
-		Types:              cfg.Types,
-		ClassifierMode:     cfg.Classifier.Mode,
-		Vocabulary:         route.Vocabulary(cfg.Types, cfg.ResolvedPipelines()),
-		SpiceEnabled:       cfg.Spice.Enabled,
-		Personas:           personas,
-		Nouns:              nouns,
-		PersonalityEnabled: cfg.Personality.Enabled,
-		Personalities:      cfg.Personality.List,
-		SyncTrunk:          opts.SyncTrunk,
-		TreeMu:             opts.TreeMu,
-		Sem:                opts.Sem,
-		AgyMu:              opts.AgyMu,
-		ArtRemover:         cfg.Art.Remover,
-		CorridorkeyDir:     chroma.DiscoverCorridorKey(cfg.Art.CorridorkeyDir),
+		Pipeline:            p,
+		Multi:               multi,
+		RepoDir:             workDir,
+		StateDir:            statedir.PipelineDir(a.StateDir, p.Name),
+		LogDir:              filepath.Join(a.StateDir, "logs", p.Name),
+		GoalPath:            config.GoalFile(a.RepoDir),
+		PromptsDir:          config.PromptsDir(a.RepoDir),
+		Verify:              cfg.Project.Verify,
+		VerifyDir:           cfg.Project.VerifyDir,
+		SkipPermissions:     cfg.Safety.SkipPermissions,
+		ExtraArgs:           p.ExtraArgs,
+		KnownPipelines:      known,
+		BreakerLimit:        cfg.Safety.BreakerFailures,
+		SleepBetween:        time.Duration(cfg.Safety.SleepSeconds) * time.Second,
+		Types:               cfg.Types,
+		ClassifierMode:      cfg.Classifier.Mode,
+		Vocabulary:          route.Vocabulary(cfg.Types, cfg.ResolvedPipelines()),
+		SpiceEnabled:        cfg.Spice.Enabled,
+		Personas:            personas,
+		Nouns:               nouns,
+		PersonalityEnabled:  cfg.Personality.Enabled,
+		Personalities:       cfg.Personality.List,
+		SyncTrunk:           opts.SyncTrunk,
+		TreeMu:              opts.TreeMu,
+		Sem:                 opts.Sem,
+		AgyMu:               opts.AgyMu,
+		ArtRemover:          cfg.Art.Remover,
+		CorridorkeyDir:      chroma.DiscoverCorridorKey(cfg.Art.CorridorkeyDir),
+		ExportDir:           exportDir,
+		ExportHumanReadable: cfg.Export.HumanReadable,
 	}
 	return engine.NewWorker(wc, a.Store, a.Bus), nil
+}
+
+// ExportBase resolves the [export] destination root for this project ("" =
+// export off). A relative configured dir resolves against the repository
+// root, but the destination must lie OUTSIDE the repository and its
+// worktrees: passes commit anything dirty in the working tree, so exported
+// evidence inside it would be swept into project history by the next pass.
+// Refusing here (engine start) keeps read-only commands like `status` usable
+// with a misconfigured dir.
+func (a *App) ExportBase() (string, error) {
+	dir := a.Res().Config.Export.Dir
+	if dir == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(a.RepoDir, dir)
+	}
+	dir = filepath.Clean(dir)
+	norm := func(p string) string {
+		p = filepath.Clean(p)
+		if runtime.GOOS == "windows" {
+			p = strings.ToLower(p)
+		}
+		return p
+	}
+	rel, err := filepath.Rel(norm(a.RepoDir), norm(dir))
+	inside := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	// Worktrees are siblings named <repo>-wt-<pipeline> — same sweep hazard.
+	if inside || strings.HasPrefix(norm(dir), norm(a.RepoDir)+"-wt-") {
+		return "", fmt.Errorf("export.dir %s is inside the repository (or a pipeline worktree) — passes commit anything dirty there, so exported evidence would land in project history; choose a folder outside %s", dir, a.RepoDir)
+	}
+	return dir, nil
 }
 
 // EngineLockPath returns the engine singleton lock file for a state dir.

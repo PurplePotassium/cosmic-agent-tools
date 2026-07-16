@@ -232,6 +232,44 @@ mode = "drain"
 	}
 }
 
+func TestExportConfig(t *testing.T) {
+	dir := t.TempDir()
+	repo := writeFile(t, dir, "repo.toml", `
+[export]
+dir = 'C:\audits\space-game'
+human_readable = true
+`)
+	res, err := Load("", repo, "", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Config.Export.Dir != `C:\audits\space-game` || !res.Config.Export.HumanReadable {
+		t.Fatalf("export config lost: %+v", res.Config.Export)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("warnings: %v", res.Warnings)
+	}
+	if def := Default().Export; def.Dir != "" || def.HumanReadable {
+		t.Fatalf("export must default OFF: %+v", def)
+	}
+
+	// human_readable without a destination exports nothing — warn, don't block.
+	repo = writeFile(t, dir, "repo2.toml", "[export]\nhuman_readable = true\n")
+	res, err = Load("", repo, "", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "export.human_readable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no export.human_readable warning in %v", res.Warnings)
+	}
+}
+
 func TestValidateCatchesProblems(t *testing.T) {
 	dir := t.TempDir()
 	repo := writeFile(t, dir, "repo.toml", `

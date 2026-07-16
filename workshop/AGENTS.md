@@ -51,6 +51,16 @@ PowerShell era:
   models` itself needs a real TTY and hangs on pipes). Labels are display
   strings and must match EXACTLY (case-insensitive): `Gemini 3.1 Pro
   (High)` works, `gemini 3 pro` is rejected.
+- **A full transcript exists despite the blindness** (verified 2026-07-16):
+  agy unconditionally writes
+  `<state>/brain/<conversation-id>/.system_generated/logs/transcript.jsonl`
+  — JSONL steps holding the USER_INPUT prompt exactly as the model saw it,
+  the MODEL response `content` AND its `thinking` reasoning summary, and
+  SYSTEM checkpoint/reminder steps. No flag involved (`--log-file` stays
+  operational-only). The id is runtime-minted, so the engine recovers it
+  post-run from `last_conversations.json` (Capability
+  `ConversationTranscript`; `driver.AgyTranscriptPath`) and archives the
+  file beside the pass log like a claude `--session-id` transcript.
 - **Conversation resume is native**: `--conversation <id>` (also `-c` /
   `--continue` for most-recent). The id of the conversation a `-p` run just
   used is recoverable headless from

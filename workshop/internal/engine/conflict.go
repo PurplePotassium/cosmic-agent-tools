@@ -104,6 +104,9 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 		cleanup(true)
 		return w.failSetup(ctx, pass, task, err)
 	}
+	// Registered before Close's defer so the export runs AFTER the log is
+	// closed — however the pass ends, the evidence mirrored is complete.
+	defer w.exportPass(ctx, pass, logPath)
 	defer logFile.Close()
 
 	w.setState(ctx, pass, domain.PassRunning)

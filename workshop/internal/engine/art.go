@@ -89,6 +89,9 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 	if err != nil {
 		return w.failSetup(ctx, pass, task, err)
 	}
+	// Registered before Close's defer so the export runs AFTER the log is
+	// closed (and after the screen-png archive) — the mirror is complete.
+	defer w.exportPass(ctx, pass, logPath)
 	defer logFile.Close()
 
 	w.setState(ctx, pass, domain.PassRunning)
@@ -369,8 +372,14 @@ func (w *Worker) artRemover(ctx context.Context) (remover, corridorkeyDir string
 // (ffmpeg) or mislabels the asset (PNG bytes in a .jpg file).
 func artTargetPath(task *domain.Task) (string, error) {
 	if len(task.Files) > 0 && strings.TrimSpace(task.Files[0]) != "" {
-		p := filepath.ToSlash(strings.TrimSpace(task.Files[0]))
-		if !filepath.IsLocal(filepath.FromSlash(p)) {
+		// Backslashes are separators on EVERY platform: the engine (Windows)
+		// and CI (Linux) must agree on what gets refused, and Linux's
+		// filepath treats `C:\evil.png` as one harmless local file name.
+		p := strings.ReplaceAll(strings.TrimSpace(task.Files[0]), `\`, "/")
+		// Colons cover drive letters and NTFS alternate data streams; a
+		// leading slash covers rooted and (post-replacement) UNC paths.
+		if strings.ContainsRune(p, ':') || strings.HasPrefix(p, "/") ||
+			!filepath.IsLocal(filepath.FromSlash(p)) {
 			return "", fmt.Errorf("engine: art target %q escapes the repository", task.Files[0])
 		}
 		p = path.Clean(p)

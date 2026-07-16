@@ -55,6 +55,9 @@ func (a *Agy) Probe(ctx context.Context) (Capabilities, error) {
 		ModelSelect:  true,
 		// Effort: no reasoning-effort flag exists.
 		// AuthProbe: false — failures are invisible headless.
+		// The full transcript lands under agy's own brain dir, keyed by the
+		// runtime-minted conversation id (see AgyTranscriptPath).
+		ConversationTranscript: true,
 	}
 	a.probed = true
 	return a.caps, nil

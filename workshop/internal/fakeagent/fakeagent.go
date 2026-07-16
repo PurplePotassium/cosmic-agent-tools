@@ -128,9 +128,11 @@ func writeTestImage(path string, bg color.NRGBA, encode string) error {
 	}
 }
 
-// recordConversation mimics agy's cache/last_conversations.json bookkeeping:
-// the workdir's entry is replaced with a fresh id. Skipped unless the test
-// harness points WORKSHOP_AGY_STATE_DIR somewhere.
+// recordConversation mimics agy's cache/last_conversations.json bookkeeping
+// (the workdir's entry is replaced with a fresh id) plus the brain transcript
+// agy writes per conversation — the file the engine archives after a blind
+// pass. Skipped unless the test harness points WORKSHOP_AGY_STATE_DIR
+// somewhere.
 func recordConversation(repoDir string) error {
 	stateDir := os.Getenv("WORKSHOP_AGY_STATE_DIR")
 	if stateDir == "" {
@@ -141,7 +143,8 @@ func recordConversation(repoDir string) error {
 	if raw, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(raw, &m)
 	}
-	m[repoDir] = fmt.Sprintf("conv-%d", time.Now().UnixNano())
+	id := fmt.Sprintf("conv-%d", time.Now().UnixNano())
+	m[repoDir] = id
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -149,7 +152,18 @@ func recordConversation(repoDir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, raw, 0o644)
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		return err
+	}
+	// The transcript shape mirrors real agy steps (see driver.AgyTranscriptPath).
+	tr := filepath.Join(stateDir, "brain", id, ".system_generated", "logs", "transcript.jsonl")
+	if err := os.MkdirAll(filepath.Dir(tr), 0o755); err != nil {
+		return err
+	}
+	lines := `{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","content":"fake prompt"}
+{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"fake response","thinking":"fake thinking"}
+`
+	return os.WriteFile(tr, []byte(lines), 0o644)
 }
 
 // resolveConflicts rewrites files containing conflict markers with both
