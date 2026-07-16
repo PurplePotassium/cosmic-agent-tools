@@ -30,9 +30,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	_ "image/gif"  // decoder registration: the image model may emit any of these
 	_ "image/jpeg" // despite being asked for PNG
+
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/proc"
 )
 
 // Key is the screen color being removed.
@@ -356,11 +359,10 @@ func RemoveCorridorKey(ctx context.Context, dir, inPath, outPath string, key Key
 	// 2+ hours (2026-07). Better to fail fast with corridorkey's own error
 	// and have the operator provision CUDA (uv sync --extra cuda) or switch
 	// remover than to wedge an art pass all afternoon.
-	cmd := exec.CommandContext(ctx, exe, "--device", "cuda", "clean", absIn,
+	out, err := runKeyer(ctx, exe, "--device", "cuda", "clean", absIn,
 		"--output", absOut, "--screen-color", key.String(), "--json")
-	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("chroma: corridorkey clean failed: %v: %s", err, tail(string(out), 800))
+		return fmt.Errorf("chroma: corridorkey clean failed: %v: %s", err, tail(out, 800))
 	}
 	if _, err := os.Stat(absOut); err != nil {
 		return fmt.Errorf("chroma: corridorkey reported success but wrote no %s", absOut)
@@ -394,16 +396,45 @@ func RemoveFFmpeg(ctx context.Context, inPath, outPath string, key Key) error {
 	}
 	filter := fmt.Sprintf("colorkey=0x%02X%02X%02X:0.28:0.08,despill=type=%s",
 		screen[0], screen[1], screen[2], key)
-	cmd := exec.CommandContext(ctx, exe, "-y", "-i", inPath,
+	out, err := runKeyer(ctx, exe, "-y", "-i", inPath,
 		"-vf", filter, "-frames:v", "1", "-update", "1", outPath)
-	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("chroma: ffmpeg colorkey failed: %v: %s", err, tail(string(out), 800))
+		return fmt.Errorf("chroma: ffmpeg colorkey failed: %v: %s", err, tail(out, 800))
 	}
 	if _, err := os.Stat(outPath); err != nil {
 		return fmt.Errorf("chroma: ffmpeg reported success but wrote no %s", outPath)
 	}
 	return nil
+}
+
+// runKeyer runs an external keyer with the engine's full process hygiene.
+// A plain CommandContext kill reaches only the direct child, but the
+// corridorkey CLI is a venv console-script launcher whose OWN child (python)
+// does the actual work — on timeout or engine shutdown the launcher would
+// die while the inference process kept grinding the GPU (hours on a CPU
+// install), stacked up against the next retry's keyer, and could still write
+// the output file into a tree the engine had moved on from. KillTree +
+// Job-Object adoption take the whole tree down, exactly like agent spawns.
+func runKeyer(ctx context.Context, exe string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, exe, args...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	proc.Configure(cmd, proc.Piped)
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			return proc.KillTree(cmd.Process.Pid)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 15 * time.Second
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	proc.Adopt(cmd.Process.Pid)
+	defer proc.Finished(cmd.Process.Pid)
+	err := cmd.Wait()
+	return out.String(), err
 }
 
 func tail(s string, n int) string {

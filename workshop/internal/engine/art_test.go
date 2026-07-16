@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"image"
 	"os"
 	"path/filepath"
@@ -29,6 +30,8 @@ func TestArtTargetPath(t *testing.T) {
 		{"empty title", domain.Task{}, "assets/art/asset.png", false},
 		{"escape rejected", domain.Task{Files: []string{"../outside.png"}}, "", true},
 		{"absolute rejected", domain.Task{Files: []string{`C:\evil.png`}}, "", true},
+		{"dot-git rejected", domain.Task{Files: []string{".git/hooks/x.png"}}, "", true},
+		{"nested dot-git rejected", domain.Task{Files: []string{"a/.GIT/x.png"}}, "", true},
 	}
 	for _, c := range cases {
 		got, err := artTargetPath(&c.task)
@@ -177,6 +180,49 @@ func TestArtGenTransPassNormalizesMislabeledBytes(t *testing.T) {
 	}
 	if err := chroma.VerifyTransparency(filepath.Join(r.repo, "assets", "hero.png")); err != nil {
 		t.Fatalf("final asset is not transparent: %v", err)
+	}
+}
+
+// An engine shutdown while the keyer runs must conclude like a shutdown
+// during either agy stage — pass over, claim back — NOT like a keying
+// failure: cancellation must never burn a task attempt or count toward the
+// breaker (a breaker trip persists as a halt across restarts).
+func TestArtGenTransShutdownDuringKeying(t *testing.T) {
+	r := artRig(t, fakeagent.Scenario{Behavior: "art"})
+	ctx := context.Background()
+	task, err := r.st.AddTask(ctx, &domain.Task{
+		Title: "hero cutout", Type: domain.ArtGenTransType, Files: []string{"assets/hero.png"},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	orig := chromaRemove
+	chromaRemove = func(kctx context.Context, remover, ckDir, in, out string, key chroma.Key) error {
+		cancel()      // the operator stops the engine mid-keying…
+		<-kctx.Done() // …which kills the keyer through its context
+		return kctx.Err()
+	}
+	t.Cleanup(func() { chromaRemove = orig })
+
+	res, err := r.worker.RunPass(runCtx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunPass err = %v; want context.Canceled", err)
+	}
+	if res != PassRan {
+		t.Fatalf("RunPass res = %v; want PassRan", res)
+	}
+	if r.worker.consecFails != 0 {
+		t.Fatalf("shutdown counted toward the breaker (consecFails=%d)", r.worker.consecFails)
+	}
+	got, err := r.st.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Attempts != 0 || got.Status == domain.TaskStuck {
+		t.Fatalf("shutdown burned a task attempt (attempts=%d status=%s)", got.Attempts, got.Status)
 	}
 }
 

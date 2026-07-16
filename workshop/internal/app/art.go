@@ -77,12 +77,12 @@ var artVerifyOnce sync.Once
 // VerifyArtModelsAsync launches the agy art-model verification in the
 // background — once per process, and never in test harnesses (the fake-agent
 // env) where spawning a real agy would hit the network and pollute agy's
-// history.
-func (a *App) VerifyArtModelsAsync(ctx context.Context) {
+// history. agyMu is the engine's agy serialization lock (nil = unlocked).
+func (a *App) VerifyArtModelsAsync(ctx context.Context, agyMu *sync.RWMutex) {
 	if os.Getenv("WORKSHOP_FAKE_BIN") != "" || truthy(os.Getenv("WORKSHOP_SKIP_AGY_VERIFY")) {
 		return
 	}
-	artVerifyOnce.Do(func() { go a.VerifyArtModels(ctx) })
+	artVerifyOnce.Do(func() { go a.VerifyArtModels(ctx, agyMu) })
 }
 
 // VerifyArtModels probes agy for its model list (quota-free — see
@@ -91,7 +91,18 @@ func (a *App) VerifyArtModelsAsync(ctx context.Context) {
 // in the kv store and on the event bus; per the project's warn-not-block
 // model policy this never fails engine start — with no verified label, art
 // passes assume the preferred default and fail visibly if agy rejects it.
-func (a *App) VerifyArtModels(ctx context.Context) {
+func (a *App) VerifyArtModels(ctx context.Context, agyMu *sync.RWMutex) {
+	// The probe is itself an `agy -p` run, and agy rewrites its shared
+	// last_conversations.json whole on every run — the record an in-flight
+	// art pass depends on to resume its conversation. Take the ordinary-run
+	// (read) slot of the engine's agy lock so the probe never overlaps an
+	// art pass, same discipline as every agy spawn the engine launches.
+	// (Cross-process runs — `workshop doctor`, the user's own agy — are
+	// outside any lock; this covers what this process launches.)
+	if agyMu != nil {
+		agyMu.RLock()
+		defer agyMu.RUnlock()
+	}
 	agy := driver.NewAgy()
 	models, err := agy.ListModels(ctx)
 	if err != nil {

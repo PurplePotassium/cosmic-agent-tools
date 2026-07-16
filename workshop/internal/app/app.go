@@ -368,11 +368,6 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 		}
 	}
 
-	// Verify agy's art models in the background: art passes read the
-	// verified label from the kv store per pass, so the result applies the
-	// moment the probe lands — no need to hold up engine start on it.
-	a.VerifyArtModelsAsync(ctx)
-
 	multi := len(pipelines) > 1
 	maxConc := cfg.Safety.MaxConcurrent
 	if maxConc < 1 {
@@ -383,6 +378,12 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 	// (their conversation-resume record is a shared file every agy run
 	// rewrites), ordinary agy passes share it, claude passes ignore it.
 	agyMu := &sync.RWMutex{}
+
+	// Verify agy's art models in the background: art passes read the
+	// verified label from the kv store per pass, so the result applies the
+	// moment the probe lands — no need to hold up engine start on it. The
+	// probe shares agyMu (it is an agy run like any other).
+	a.VerifyArtModelsAsync(ctx, agyMu)
 
 	var workers []*engine.Worker
 	var lanes []domain.Pipeline

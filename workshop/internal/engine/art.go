@@ -45,6 +45,11 @@ const greenSubjectThreshold = 0.25
 // which is why the backend refuses to run there at all.
 const chromaTimeout = 15 * time.Minute
 
+// chromaRemove is the keying entry point, a seam so tests can hold the pass
+// inside stage 3 (e.g. to cancel the engine mid-keying) without a real
+// backend.
+var chromaRemove = chroma.Remove
+
 // runArtPass executes an art-generation task: agy (Gemini image model)
 // generates the asset. For art-gen that is the whole pass; art-gen-trans
 // continues strictly linearly — resume the SAME agy conversation to repaint
@@ -212,8 +217,17 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 		remover, ckDir := w.artRemover(ctx)
 		fmt.Fprintf(logFile, "art stage 3: remove %s screen via %s\n", key, remover)
 		kctx, cancel := context.WithTimeout(ctx, chromaTimeout)
-		kerr := chroma.Remove(kctx, remover, ckDir, screenAbs, targetAbs, key)
+		kerr := chromaRemove(kctx, remover, ckDir, screenAbs, targetAbs, key)
 		cancel()
+		if ctx.Err() != nil {
+			// Engine shutdown mid-keying, not a keying failure: conclude the
+			// same way as a cancellation during either agy stage — no task
+			// attempt burned, nothing counted toward the breaker. (A
+			// chromaTimeout expiry leaves ctx alive and stays a real failure.)
+			_ = w.st.ReleaseTask(ctx, task.ID)
+			w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailSetup, exitCode, "")
+			return PassRan, ctx.Err()
+		}
 		if kerr != nil {
 			return fail(domain.FailExit, kerr.Error())
 		}
@@ -360,6 +374,13 @@ func artTargetPath(task *domain.Task) (string, error) {
 			return "", fmt.Errorf("engine: art target %q escapes the repository", task.Files[0])
 		}
 		p = path.Clean(p)
+		// Task files are operator/agent data: an asset has no business under
+		// .git (same guard family as the July path-traversal hardening).
+		for _, seg := range strings.Split(p, "/") {
+			if strings.EqualFold(seg, ".git") {
+				return "", fmt.Errorf("engine: art target %q is inside .git", task.Files[0])
+			}
+		}
 		if ext := path.Ext(p); !strings.EqualFold(ext, ".png") {
 			p = strings.TrimSuffix(p, ext) + ".png"
 		}
