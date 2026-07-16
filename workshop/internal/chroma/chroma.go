@@ -351,7 +351,12 @@ func RemoveCorridorKey(ctx context.Context, dir, inPath, outPath string, key Key
 	if err := os.MkdirAll(filepath.Dir(absOut), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, exe, "clean", absIn,
+	// --device cuda is deliberate and NOT auto: on a CPU-only torch install
+	// "auto" silently falls back to CPU inference, where one image measured
+	// 2+ hours (2026-07). Better to fail fast with corridorkey's own error
+	// and have the operator provision CUDA (uv sync --extra cuda) or switch
+	// remover than to wedge an art pass all afternoon.
+	cmd := exec.CommandContext(ctx, exe, "--device", "cuda", "clean", absIn,
 		"--output", absOut, "--screen-color", key.String(), "--json")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

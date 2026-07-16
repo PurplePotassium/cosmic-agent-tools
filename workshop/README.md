@@ -157,7 +157,10 @@ effort = "high"
 [art]                        # art-gen-trans green/blue-screen removal
 remover = "builtin"          # builtin (pure-Go color keyer, default)
                              # | corridorkey (neural keyer — the CorridorKey
-                             #   checkout at corridorkey_dir; slow on CPU)
+                             #   checkout at corridorkey_dir; invoked with
+                             #   --device cuda, NEVER CPU: a CPU-only torch
+                             #   venv measured 2+ hours per image, so provision
+                             #   it with `uv sync --extra cuda`)
                              # | ffmpeg (colorkey+despill; needs ffmpeg on PATH)
                              # Switchable LIVE from the dashboard topbar (🎨
                              # keyer) — applies to the next art pass.

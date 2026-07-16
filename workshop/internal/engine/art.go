@@ -38,12 +38,12 @@ const (
 const greenSubjectThreshold = 0.25
 
 // chromaTimeout bounds the keying step. The builtin/ffmpeg backends take
-// milliseconds; CorridorKey on a CPU-only torch install loads two ~400MB
-// models per call and then infers on CPU — measured at 30+ minutes for a
-// single image on real hardware (2026-07), so the budget is generous. The
-// exclusive agy slot is already released by this point, so a slow keying
-// blocks only its own pipeline.
-const chromaTimeout = 45 * time.Minute
+// milliseconds; CorridorKey (always --device cuda — see RemoveCorridorKey)
+// loads two ~400MB models per call and measured ~1 minute per image on real
+// hardware (2026-07), so this is a generous ceiling for big assets and cold
+// caches, not an expected duration. On CPU it measured 2+ HOURS per image,
+// which is why the backend refuses to run there at all.
+const chromaTimeout = 15 * time.Minute
 
 // runArtPass executes an art-generation task: agy (Gemini image model)
 // generates the asset. For art-gen that is the whole pass; art-gen-trans
