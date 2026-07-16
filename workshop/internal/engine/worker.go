@@ -125,9 +125,24 @@ type WorkerConfig struct {
 	//     shared working tree (never concurrent on one tree).
 	//   Sem — global cap on simultaneously RUNNING agents; held only
 	//     around the agent-execution window.
+	//   AgyMu — engine-wide agy serialization. Art passes hold the WRITE
+	//     lock across their whole multi-invocation sequence: agy records
+	//     "last conversation per workdir" in a shared JSON it rewrites
+	//     whole, and the art flow's session-resume step depends on that
+	//     record — ANY concurrently running agy -p instance races it.
+	//     Ordinary agy passes take the READ lock (they may overlap each
+	//     other, and claude passes are unaffected). Lock ORDER is AgyMu
+	//     before Sem, always — see spawn.
 	SyncTrunk string
 	TreeMu    *sync.Mutex
 	Sem       *semaphore.Weighted
+	AgyMu     *sync.RWMutex
+
+	// Art-pass settings ([art] config): the default green/blue-screen
+	// remover (kv "art.remover" overrides it live) and the CorridorKey
+	// checkout dir for the corridorkey backend.
+	ArtRemover     string
+	CorridorkeyDir string
 }
 
 func (c *WorkerConfig) fillDefaults() {
@@ -191,6 +206,10 @@ type resolved struct {
 	bundle domain.Bundle
 	drv    driver.Driver
 	caps   driver.Capabilities
+	// agyLockHeld: the caller already holds the exclusive agy slot (art
+	// passes), so spawn must not take the shared slot — RWMutex locks
+	// don't nest.
+	agyLockHeld bool
 }
 
 func (w *Worker) resolve(ctx context.Context, task *domain.Task) (*resolved, error) {
@@ -396,6 +415,13 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		return w.runConflictPass(ctx, pass, task, res, sessionID)
 	}
 
+	// Art-generation tasks run the dedicated image flow (agy image model;
+	// -trans adds a session-resumed rescreen plus chroma keying) — never
+	// the coding contract.
+	if task != nil && domain.IsArtType(task.Type) {
+		return w.runArtPass(ctx, pass, task, res, sessionID)
+	}
+
 	full, spice, personality, err := w.preparePass(ctx, task)
 	if err != nil {
 		return w.failSetup(ctx, pass, task, err)
@@ -421,7 +447,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		"n": pass.N, "task": passTaskTitle(task), "spice": spice.Mode,
 		"agent": res.bundle.Agent, "model": res.bundle.Model, "effort": res.bundle.Effort,
 	})
-	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, w.cfg.RepoDir, logPath, logFile, sessionID)
+	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, w.cfg.RepoDir, logPath, logFile, sessionID, "")
 	if ctx.Err() != nil {
 		// Hard stop: release the claim untouched; the kill already happened.
 		if task != nil {
@@ -527,7 +553,21 @@ func (w *Worker) resolvePersonality(ctx context.Context) string {
 }
 
 // spawn runs the agent process in dir and streams/captures its output.
-func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fullPrompt, dir, logPath string, logFile *os.File, sessionID string) (exitCode int, tail []string, timedOut bool, err error) {
+// conversationID resumes a previous runtime conversation (agy art flow, "" =
+// fresh conversation).
+func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fullPrompt, dir, logPath string, logFile *os.File, sessionID, conversationID string) (exitCode int, tail []string, timedOut bool, err error) {
+	// The shared agy slot comes BEFORE the concurrency semaphore. An art
+	// pass acquires in the same order (exclusive agy slot, then Sem inside
+	// this call) — taking Sem first here would let ordinary agy passes
+	// occupy every Sem slot while blocked on the agy slot the art pass
+	// holds, while the art pass waits for a Sem slot: deadlock.
+	if w.cfg.AgyMu != nil && !res.agyLockHeld && res.drv.Name() == "agy" {
+		unlock, lerr := lockCtx(ctx, w.cfg.AgyMu.RLocker())
+		if lerr != nil {
+			return -1, nil, false, lerr
+		}
+		defer unlock()
+	}
 	// The concurrency cap applies only to the agent-execution window, so N
 	// pipelines can exist with M running agents.
 	if w.cfg.Sem != nil {
@@ -550,6 +590,7 @@ func (w *Worker) spawn(ctx context.Context, pass *domain.Pass, res *resolved, fu
 		OpLogPath:       logPath + ".op.log",
 		SessionID:       sessionID,
 		WorkDir:         dir,
+		ConversationID:  conversationID,
 	})
 	if err != nil {
 		return -1, nil, false, err
@@ -1051,6 +1092,27 @@ func readTrim(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(strings.TrimPrefix(string(data), "\uFEFF"))
+}
+
+// lockCtx acquires l honoring ctx cancellation. On success it returns the
+// unlock func; on cancellation the stray acquisition (sync locks can't be
+// interrupted) is released by a reaper goroutine once it lands.
+func lockCtx(ctx context.Context, l sync.Locker) (func(), error) {
+	done := make(chan struct{})
+	go func() {
+		l.Lock()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return l.Unlock, nil
+	case <-ctx.Done():
+		go func() {
+			<-done
+			l.Unlock()
+		}()
+		return nil, ctx.Err()
+	}
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

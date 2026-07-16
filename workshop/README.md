@@ -122,6 +122,24 @@ open_browser  = true         # open the dashboard on launch (default true)
 # bundle. The types code/tests/docs/art/audio/merge-conflict are built in with
 # EMPTY bundles — the classifier types tasks out of the box and agent-resolved
 # merge conflicts are enabled by default; entries here override per type.
+#
+# Two more built-ins are pre-routed to agy and generate IMAGE ASSETS instead
+# of editing code (the classifier assigns them to "generate/create/draw an
+# image/sprite/icon/…" tasks):
+#   art-gen        one agy (Gemini) image-model pass; the asset lands at the
+#                  task's first `files` entry, or assets/art/<task-slug>.png
+#   art-gen-trans  art-gen for assets needing a TRANSPARENT background
+#                  (classifier: same phrasing + "transparent"/"no background"
+#                  wording): generation, then — strictly linear, holding the
+#                  engine-wide exclusive agy slot — the SAME agy conversation
+#                  is resumed to repaint the background as a flat green
+#                  screen (blue when the subject itself is green-heavy), and
+#                  the screen is keyed away ([art] below), leaving a
+#                  transparent PNG at the target path.
+# Both ONLY run on agy, preferring the model "Gemini 3.1 Pro (High)" and
+# falling back to "Gemini 3.5 Flash (High)" — engine launch verifies which
+# of those agy actually offers (quota-free probe) and art passes use the
+# verified label. agy labels must be EXACT: "gemini 3 pro" is rejected.
 [types.code]
 agent  = "claude"
 model  = "claude-opus-4-8"
@@ -129,12 +147,21 @@ effort = "high"              # low|medium|high|xhigh|max — ignored if the agen
 
 [types.art]
 agent = "agy"                # blind headless: self-report only (see AGENTS.md)
-model = "gemini-3-flash"     # agy model ids fail SILENTLY when wrong — don't guess
+model = "gemini-3-flash"     # agy model ids fail blind when wrong — don't guess
 
 [types.merge-conflict]       # built-in route; override to pick a stronger resolver
 agent  = "claude"
 model  = "claude-opus-4-8"
 effort = "high"
+
+[art]                        # art-gen-trans green/blue-screen removal
+remover = "builtin"          # builtin (pure-Go color keyer, default)
+                             # | corridorkey (neural keyer — the CorridorKey
+                             #   checkout at corridorkey_dir; slow on CPU)
+                             # | ffmpeg (colorkey+despill; needs ffmpeg on PATH)
+                             # Switchable LIVE from the dashboard topbar (🎨
+                             # keyer) — applies to the next art pass.
+# corridorkey_dir = 'C:\GameDev\CorridorKey'   # WORKSHOP_CORRIDORKEY env also works
 
 # model is validated against a curated family list per agent — claude:
 # sonnet/fable/opus/haiku, agy: gemini — and just WARNS (never blocks) on a

@@ -12,6 +12,7 @@ import (
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/app"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/server"
 )
@@ -85,6 +86,31 @@ func cmdDoctor(args []string) int {
 			detail += "; BLIND headless (self-report only, auth failures invisible)"
 		}
 		add("agent:"+name, "PASS", detail, "")
+	}
+
+	// agy art models: art-gen / art-gen-trans passes run on agy with one of
+	// the allowed Gemini labels — verify agy actually offers one (quota-free
+	// probe; see driver.(*Agy).ListModels). Skipped in fake-agent harnesses.
+	if os.Getenv("WORKSHOP_FAKE_BIN") == "" && os.Getenv("WORKSHOP_SKIP_AGY_VERIFY") == "" {
+		agyDrv := driver.NewAgy()
+		if _, err := agyDrv.Probe(ctx); err != nil {
+			add("art models", "WARN", "agy not installed — art-gen/art-gen-trans tasks will fail", "install the Antigravity CLI (agy), or don't queue art tasks")
+		} else if models, err := agyDrv.ListModels(ctx); err != nil {
+			add("art models", "WARN", err.Error(), "run `agy` interactively once (login), then re-run workshop doctor")
+		} else {
+			pick := ""
+			for _, want := range domain.ArtAgyModels {
+				if driver.AgyHasModel(models, want) {
+					pick = want
+					break
+				}
+			}
+			if pick != "" {
+				add("art models", "PASS", fmt.Sprintf("agy offers %s (art passes will use it)", pick), "")
+			} else {
+				add("art models", "FAIL", fmt.Sprintf("agy offers none of %v — saw %v", domain.ArtAgyModels, models), "update agy (`agy update`) or refresh its login, then re-run workshop doctor")
+			}
+		}
 	}
 
 	// State dir writable.

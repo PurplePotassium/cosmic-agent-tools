@@ -59,6 +59,11 @@ func Vocabulary(types map[string]domain.Bundle, pipelines []domain.Pipeline) map
 	return vocab
 }
 
+// artGenSignature spots "produce an image asset" phrasing: a generation verb
+// within reach of an image-asset noun. Plain art-flavored CODE work ("fix the
+// sprite flicker", "tweak the palette") must NOT match — no generation verb.
+const artGenSignature = `\b(generate|create|draw|make|produce|design|render)\b[^.!?]{0,80}\b(sprite|pixel[- ]art|image|artwork|illustration|icon|texture|portrait|logo|banner|splash|concept art|art asset|sticker|emoji|tileset|spritesheet)`
+
 // classRule maps a built-in type to its keyword signature. Ordered: the
 // first matching rule whose type is in the vocabulary wins; specific
 // categories come before the generic "code" fallback.
@@ -68,6 +73,13 @@ var classRules = []struct {
 }{
 	{"merge-conflict", regexp.MustCompile(`(?i)merge[- ]conflict|resolve.*\bconflict\b|\bconflicted\b`)},
 	{"audio", regexp.MustCompile(`(?i)\baudio\b|\bsound(s|track)?\b|\bsfx\b|\bmusic\b|\bvolume\b|\bmute\b|\bfoley\b`)},
+	// Asset GENERATION (an image file is the deliverable) routes to the agy
+	// image-model flow, not the code-flavored "art" type below. The -trans
+	// variant is checked first: same generation signature plus any wording
+	// that implies the asset needs a transparent background.
+	{domain.ArtGenTransType, regexp.MustCompile(`(?i)` + artGenSignature + `(?s).*(transparen|no +background|without +(a +)?background|remove +the +background|background-?less|alpha +channel|cut-?out)`)},
+	{domain.ArtGenTransType, regexp.MustCompile(`(?i)(transparen|no +background|without +(a +)?background|remove +the +background|background-?less|alpha +channel|cut-?out)(?s).*` + artGenSignature)},
+	{domain.ArtGenType, regexp.MustCompile(`(?i)` + artGenSignature)},
 	{"art", regexp.MustCompile(`(?i)\bart\b|sprite|palette|colou?r|\bvisual\b|\bicon\b|texture|\banimation\b|\bvfx\b|particle|\bjuice\b|screenshake|cosmetic|\bskin\b`)},
 	{"tests", regexp.MustCompile(`(?i)\btests?\b|\btesting\b|coverage|\bflaky\b|regression test`)},
 	{"docs", regexp.MustCompile(`(?i)\bdocs?\b|\breadme\b|documentation|changelog|\btutorial\b|\bguide\b`)},

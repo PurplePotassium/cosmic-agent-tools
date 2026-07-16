@@ -168,6 +168,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/inquiries", guardRead(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.App.Inquiries())
 	}))
+	mux.HandleFunc("GET /api/v1/art", guardRead(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, s.App.ArtStatus(r.Context()))
+	}))
 
 	// --- mutating routes (token-gated) ---
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -196,6 +199,23 @@ func (s *Server) handler() http.Handler {
 	// The self-evaluator: ask why the workshop did something; a read-only
 	// forensics agent answers from pass logs, transcripts, and git history.
 	mux.HandleFunc("POST /api/v1/inquiries", guard(s.postInquiry))
+	// The live green/blue-screen remover switch for art-gen-trans passes:
+	// stored as a kv override, re-read by the engine every art pass, so it
+	// takes effect immediately with no restart. "" clears back to config.
+	mux.HandleFunc("PUT /api/v1/art/remover", guard(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Remover string `json:"remover"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := s.App.SetArtRemover(r.Context(), body.Remover); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, s.App.ArtStatus(r.Context()))
+	}))
 	mux.HandleFunc("POST /api/v1/inquiries/stop", guard(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]bool{"stopped": s.App.StopInquiry()})
 	}))

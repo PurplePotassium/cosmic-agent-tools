@@ -65,6 +65,11 @@ type InvokeSpec struct {
 	OpLogPath       string // where the driver's own operational log goes ("" = driver default)
 	SessionID       string // caller-minted session id; ignored if !Capabilities.Sessions
 	WorkDir         string // the cwd the process will run in (some transcript paths derive from it)
+	// ConversationID resumes a previous conversation of the agent's own
+	// runtime (agy `--conversation`). Unlike SessionID it is runtime-minted:
+	// the caller discovers it AFTER a prior pass (driver.AgyLastConversation)
+	// and passes it back to continue that session with full context.
+	ConversationID string
 }
 
 // ExecPlan is the concrete process invocation derived from an InvokeSpec.

@@ -43,6 +43,8 @@ button.pausing { border-color: var(--amber); color: var(--amber); }
 button.sound { padding: 4px 8px; }
 button.sound.active { border-color: var(--accent); }
 .conn.stopped { color: var(--amber); }
+.art-remover { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--dim); }
+.art-remover select { padding: 3px 6px; font-size: 0.82rem; cursor: pointer; }
 input, select, textarea {
   background: var(--bg);
   color: var(--text);

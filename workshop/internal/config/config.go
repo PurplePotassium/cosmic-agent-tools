@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/chroma"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 )
 
@@ -21,10 +22,25 @@ type Config struct {
 	Spice       SpiceConfig              `toml:"spice"`
 	Personality PersonalityConfig        `toml:"personality"`
 	Classifier  ClassifierConfig         `toml:"classifier"`
+	Art         ArtConfig                `toml:"art"`
 	Types       map[string]domain.Bundle `toml:"types"` // task-type routing table
 	Pipelines   []PipelineConfig         `toml:"pipelines"`
 	Server      ServerConfig             `toml:"server"`
 	Agents      map[string]AgentConfig   `toml:"agents"`
+}
+
+// ArtConfig governs the art-gen / art-gen-trans task types (agy image-model
+// passes plus, for -trans, green/blue-screen removal).
+type ArtConfig struct {
+	// Remover names the green/blue-screen removal backend for art-gen-trans:
+	// "builtin" (pure-Go color keyer, the default), "corridorkey" (the
+	// neural keyer at CorridorkeyDir), or "ffmpeg" (colorkey+despill,
+	// needs ffmpeg on PATH). The dashboard can override it live (kv
+	// "art.remover") without a restart, mirroring the pipeline overrides.
+	Remover string `toml:"remover"`
+	// CorridorkeyDir is the CorridorKey checkout used by the corridorkey
+	// remover (WORKSHOP_CORRIDORKEY env overrides).
+	CorridorkeyDir string `toml:"corridorkey_dir"`
 }
 
 type ProjectConfig struct {
@@ -152,9 +168,18 @@ func Default() Config {
 		// typed out of the box) and provides the merge-conflict route the
 		// integrator's conflict-task machinery keys on. Operators override
 		// per-type bundles ([types.art] agent = "agy" ...) to route work.
+		//
+		// The two art-generation types are the exception: they are agy-only
+		// by definition (the pass calls a Gemini image model), so they ship
+		// pre-routed to agy. The MODEL is deliberately not pinned here — the
+		// engine picks the launch-verified label (prefer Gemini 3.1 Pro
+		// (High), else Gemini 3.5 Flash (High)) at pass time.
 		Types: map[string]domain.Bundle{
 			"code": {}, "tests": {}, "docs": {}, "art": {}, "audio": {}, "merge-conflict": {},
+			domain.ArtGenType:      {Agent: "agy"},
+			domain.ArtGenTransType: {Agent: "agy"},
 		},
+		Art: ArtConfig{Remover: "builtin"},
 		Server: ServerConfig{Port: 4455, OpenBrowser: true, StartStopped: true},
 		Agents: map[string]AgentConfig{},
 	}
@@ -433,6 +458,9 @@ func (c *Config) Validate() (errs, warns []error) {
 	case "", "off", "heuristic", "agent":
 	default:
 		errs = append(errs, fmt.Errorf("classifier.mode: %q is not off/heuristic/agent", c.Classifier.Mode))
+	}
+	if !chroma.ValidRemover(c.Art.Remover) {
+		errs = append(errs, fmt.Errorf("art.remover: %q is not one of %v", c.Art.Remover, chroma.Removers))
 	}
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		errs = append(errs, fmt.Errorf("server.port: %d out of range", c.Server.Port))

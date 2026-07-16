@@ -91,3 +91,29 @@ func TestClassify(t *testing.T) {
 		t.Fatalf("empty vocab: got %q", got)
 	}
 }
+
+// Art GENERATION (an image file is the deliverable) routes to the agy
+// art-gen types; art-flavored code work stays plain "art".
+func TestClassifyArtGeneration(t *testing.T) {
+	vocab := map[string]bool{
+		"art": true, "code": true,
+		domain.ArtGenType: true, domain.ArtGenTransType: true,
+	}
+	cases := []struct{ title, detail, want string }{
+		{"Generate a pixel art sprite of the space explorer", "", "art-gen"},
+		{"Create a title-screen banner image", "1920x480, nebula theme", "art-gen"},
+		{"draw concept art for the boss", "", "art-gen"},
+		{"Generate a sprite of the merchant", "must have a transparent background", "art-gen-trans"},
+		{"Create the hero icon with no background", "", "art-gen-trans"},
+		{"transparent cursor needed — please generate the image", "", "art-gen-trans"},
+		{"fix the sprite flicker on jump", "", "art"},           // no generation verb
+		{"repaint the player sprite palette", "", "art"},        // code-side art work
+		{"make the loading screen faster", "", ""},              // generation verb but no image-asset noun
+		{"add transparency support to the renderer", "", "code"}, // transparency alone isn't art-gen
+	}
+	for _, c := range cases {
+		if got := Classify(c.title, c.detail, vocab); got != c.want {
+			t.Errorf("%q / %q: got %q want %q", c.title, c.detail, got, c.want)
+		}
+	}
+}

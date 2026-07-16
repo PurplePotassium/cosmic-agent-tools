@@ -43,8 +43,22 @@ PowerShell era:
   heuristic: N consecutive failures with **no progress start-write** raises
   an `auth.suspected` alert telling the operator to run `agy` interactively
   once. The circuit breaker remains the backstop.
-- **A wrong `--model` id fails silently and blind.** Never guess ids; get
-  the exact id from `agy models` in a real interactive terminal.
+- **A wrong `--model` label exits 1 BEFORE the prompt is sent** (verified
+  2026-07), still with no stdout — but the `--log-file` operational log then
+  contains `invalid --model` **plus the full "Available models:" list**.
+  `driver.(*Agy).ListModels` exploits this: probing with a deliberately
+  bogus label enumerates the valid labels headless and quota-free (`agy
+  models` itself needs a real TTY and hangs on pipes). Labels are display
+  strings and must match EXACTLY (case-insensitive): `Gemini 3.1 Pro
+  (High)` works, `gemini 3 pro` is rejected.
+- **Conversation resume is native**: `--conversation <id>` (also `-c` /
+  `--continue` for most-recent). The id of the conversation a `-p` run just
+  used is recoverable headless from
+  `~/.gemini/antigravity-cli/cache/last_conversations.json` — a
+  `{"<abs workdir>": "<uuid>"}` map agy rewrites WHOLE on every run. That
+  whole-file rewrite is why art passes hold the engine's exclusive agy lock:
+  any concurrently running agy instance races the record the art-gen-trans
+  flow depends on. (`WORKSHOP_AGY_STATE_DIR` overrides the state dir root.)
 - Binary discovery: `WORKSHOP_AGY_BIN` → PATH → known install dirs
   (`%LOCALAPPDATA%\agy\bin\agy.exe`, `~/.local/bin/agy`, ...) — installers
   update the registry PATH, which already-open shells don't see.

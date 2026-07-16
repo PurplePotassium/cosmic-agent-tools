@@ -82,6 +82,11 @@ export const api = {
   // pauseAfter stops every pipeline from claiming new work, letting whatever
   // they're currently running finish untouched.
   pauseAfter: () => req("POST", "/api/v1/server/pause-after", {}),
+  // Art-generation settings: the live green/blue-screen remover used by
+  // art-gen-trans passes plus the verified agy art model. setArtRemover("")
+  // clears the override back to the configured default.
+  art: () => req("GET", "/api/v1/art"),
+  setArtRemover: (remover) => req("PUT", "/api/v1/art/remover", { remover }),
 };
 
 // attachmentURL builds the token-carrying URL for an attachment thumbnail. An
@@ -112,6 +117,9 @@ export function subscribe(handlers) {
     "pipeline.needs_restart", "pipeline.mode", "pipeline.personality",
     "integration.error", "proposals.dropped", "proposals.ingest_failed",
     "inquiry.log", "inquiry.asked", "inquiry.answered",
+    "art.generated", "art.rescreened", "art.keyed", "art.attempt_failed",
+    "art.route_forced", "art.remover", "art.model_verified",
+    "art.models_missing", "art.models_unverified",
   ];
   for (const t of types) {
     es.addEventListener(t, (msg) => {

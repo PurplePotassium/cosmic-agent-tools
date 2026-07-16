@@ -111,7 +111,7 @@ func (w *Worker) runConflictPass(ctx context.Context, pass *domain.Pass, task *d
 		"n": pass.N, "task": task.Title, "conflict": true, "lane": laneBranch,
 		"agent": res.bundle.Agent, "model": res.bundle.Model,
 	})
-	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, resolveDir, logPath, logFile, sessionID)
+	exitCode, tail, timedOut, runErr := w.spawn(ctx, pass, res, full, resolveDir, logPath, logFile, sessionID, "")
 	if ctx.Err() != nil {
 		_ = w.st.ReleaseTask(ctx, task.ID)
 		cleanup(true)

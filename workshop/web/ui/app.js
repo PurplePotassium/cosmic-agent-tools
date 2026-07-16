@@ -39,9 +39,9 @@ function ago(iso) {
 }
 
 function eventTone(type) {
-  if (/done|landed|resolved|commit$|classified/.test(type)) return "good";
-  if (/failed|halt|breaker|wedge|dropped|red|abandoned|error/.test(type)) return "bad";
-  if (/conflict|suspected|skipped|ignored|stuck|incomplete|unknown/.test(type)) return "warn";
+  if (/done|landed|resolved|commit$|classified|verified|keyed/.test(type)) return "good";
+  if (/failed|halt|breaker|wedge|dropped|red|abandoned|error|missing/.test(type)) return "bad";
+  if (/conflict|suspected|skipped|ignored|stuck|incomplete|unknown|unverified|forced/.test(type)) return "warn";
   return "";
 }
 
@@ -87,6 +87,15 @@ function describeEvent(ev) {
     case "integration.merge_failed": return `merge failed (will retry): ${p.error || ""}`.slice(0, 140);
     case "inquiry.asked": return `asked: ${p.question || ""}`;
     case "inquiry.answered": return p.ok ? "inquiry answered" : "inquiry FAILED";
+    case "art.generated": return `art generated: ${p.target}`;
+    case "art.rescreened": return `art rescreened on a ${p.key} screen: ${p.screen}`;
+    case "art.keyed": return `art background keyed out (${p.remover}): ${p.target}`;
+    case "art.attempt_failed": return `art pass failed: ${p.why}`;
+    case "art.route_forced": return `art task rerouted to agy (was ${p.routedAgent || "unset"})`;
+    case "art.remover": return p.cleared ? "greenscreen remover override cleared" : `greenscreen remover → ${p.remover}`;
+    case "art.model_verified": return `agy art model verified: ${p.model}`;
+    case "art.models_missing": return `agy offers none of the allowed art models (wanted ${(p.wanted || []).join(" or ")})`;
+    case "art.models_unverified": return `could not verify agy art models: ${p.error || ""}`.slice(0, 140);
     default: return JSON.stringify(p).slice(0, 120);
   }
 }
@@ -123,7 +132,7 @@ function playChime() {
 
 // ---------- components ----------
 
-function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn, onHalt, onPauseAfter, onToggleSound }) {
+function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn, art, onArtRemover, onHalt, onPauseAfter, onToggleSound }) {
   // "live - stopped" once every pipeline has actually parked (stop pressed, or
   // a pause-after that has finished draining) — the server's up but no models
   // are running. Otherwise "live - N agents active", the live count of
@@ -135,6 +144,12 @@ function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn
     <h1>Workshop</h1>
     <span class="muted mono">${status?.repo || ""}</span>
     <span class="spacer"></span>
+    ${art && html`<label class="art-remover" title="Green/blue-screen remover used by art-gen-trans passes — applies to the NEXT art pass immediately, no restart. builtin: pure-Go color keyer; corridorkey: CorridorKey neural keyer; ffmpeg: colorkey+despill.">
+      🎨 keyer
+      <select value=${art.remover} onChange=${(e) => onArtRemover(e.target.value)}>
+        ${(art.removers || []).map((r) => html`<option value=${r}>${r}</option>`)}
+      </select>
+    </label>`}
     <span class=${"conn" + (stopped ? " stopped" : "")}><span class=${"dot " + (connected ? "on" : "off")}></span>${liveText}</span>
     <button class=${"sound" + (soundOn ? " active" : "")} onClick=${onToggleSound}
       title=${soundOn
@@ -756,6 +771,9 @@ function App() {
   const [logs, setLogs] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [inquiries, setInquiries] = useState([]);
+  // art: the art-generation settings view (greenscreen remover + verified
+  // agy model); the topbar's keyer select edits it live.
+  const [art, setArt] = useState(null);
   // extraModels: per-agent [agents.<agent>] extra_models from the config, so
   // the model dropdowns list the user's own additions next to the curated ids.
   const [extraModels, setExtraModels] = useState({});
@@ -776,11 +794,12 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [st, ts, q, inqs] = await Promise.all([api.status(), api.tasks(), api.queue(), api.inquiries()]);
+      const [st, ts, q, inqs, artSt] = await Promise.all([api.status(), api.tasks(), api.queue(), api.inquiries(), api.art()]);
       setStatus(st);
       setTasks(ts);
       setQueue(q || []);
       setInquiries(inqs || []);
+      setArt(artSt || null);
     } catch { /* server briefly away */ }
   }, []);
 
@@ -928,7 +947,8 @@ function App() {
 
   return html`<div>
     <${TopBar} status=${status} connected=${connected} active=${activeCount} pauseAfterPending=${pauseAfterPending} stopped=${allStopped}
-      soundOn=${soundOn}
+      soundOn=${soundOn} art=${art}
+      onArtRemover=${(remover) => act(async () => setArt(await api.setArtRemover(remover)))}
       onHalt=${() => act(() => api.haltServer())}
       onPauseAfter=${() => act(() => api.pauseAfter())}
       onToggleSound=${toggleSound} />

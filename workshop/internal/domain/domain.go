@@ -78,9 +78,40 @@ var ClaudeModels = []string{"claude-sonnet", "claude-fable", "claude-opus", "cla
 
 // AgyModels are the curated model-id prefixes for the agy driver. agy
 // (Antigravity CLI) is wired up here purely for Gemini routing — a wrong
-// `--model` id fails silently (see AGENTS.md), so this only ever produces a
-// warning, never blocks.
+// `--model` id fails the pass blind (see AGENTS.md), so this only ever
+// produces a warning, never blocks.
 var AgyModels = []string{"gemini"}
+
+// Art-generation task types. Both are executed by the agy driver (Gemini) —
+// they are the only task types whose passes call an image-generation model
+// instead of editing code. art-gen-trans additionally rescreens the asset in
+// the SAME agy conversation and chroma-keys the background away, producing a
+// transparent PNG.
+const (
+	ArtGenType      = "art-gen"
+	ArtGenTransType = "art-gen-trans"
+)
+
+// IsArtType reports whether t names one of the art-generation task types.
+func IsArtType(t string) bool { return t == ArtGenType || t == ArtGenTransType }
+
+// ArtAgyModels is the ordered preference list of agy model labels allowed to
+// run art passes. These are agy's EXACT `--model` labels (verified against
+// `agy models` / the invalid-model probe — see AGENTS.md): shorthand like
+// "gemini 3 pro" is rejected by agy with exit 1. Earlier entries are
+// preferred; launch verification picks the first one agy actually offers.
+var ArtAgyModels = []string{"Gemini 3.1 Pro (High)", "Gemini 3.5 Flash (High)"}
+
+// AllowedArtModel reports whether model is one of the labels art passes may
+// run (case-insensitive; agy labels are display strings).
+func AllowedArtModel(model string) bool {
+	for _, m := range ArtAgyModels {
+		if strings.EqualFold(m, model) {
+			return true
+		}
+	}
+	return false
+}
 
 // ModelFamilies returns the curated model-id prefixes recognized for agent,
 // or nil if agent names no built-in driver (nothing curated to check against).
@@ -96,7 +127,9 @@ func ModelFamilies(agent string) []string {
 }
 
 // KnownModel reports whether model is empty, agent has no curated family list,
-// or model matches one of agent's curated prefixes.
+// or model matches one of agent's curated prefixes. The prefix match is
+// case-insensitive: agy model ids are display labels ("Gemini 3.1 Pro (High)")
+// while the curated families are lowercase.
 func KnownModel(agent, model string) bool {
 	if model == "" {
 		return true
@@ -105,8 +138,9 @@ func KnownModel(agent, model string) bool {
 	if families == nil {
 		return true
 	}
+	lower := strings.ToLower(model)
 	for _, fam := range families {
-		if strings.HasPrefix(model, fam) {
+		if strings.HasPrefix(lower, fam) {
 			return true
 		}
 	}

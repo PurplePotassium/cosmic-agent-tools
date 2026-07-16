@@ -75,6 +75,9 @@ func (a *Agy) Plan(spec InvokeSpec) (ExecPlan, error) {
 	if spec.Model != "" {
 		args = append(args, "--model", spec.Model)
 	}
+	if spec.ConversationID != "" {
+		args = append(args, "--conversation", spec.ConversationID)
+	}
 	if spec.OpLogPath != "" {
 		args = append(args, "--log-file", spec.OpLogPath)
 	}

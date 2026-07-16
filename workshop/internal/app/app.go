@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/bus"
+	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/chroma"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/driver"
@@ -139,6 +140,7 @@ type WorkerOpts struct {
 	SyncTrunk string // worktree mode: trunk merged into the lane at pass start
 	TreeMu    *sync.Mutex
 	Sem       *semaphore.Weighted
+	AgyMu     *sync.RWMutex // engine-wide agy serialization (art passes hold it exclusively)
 }
 
 // BuildWorker wires one pipeline's worker.
@@ -195,6 +197,9 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engi
 		SyncTrunk:          opts.SyncTrunk,
 		TreeMu:             opts.TreeMu,
 		Sem:                opts.Sem,
+		AgyMu:              opts.AgyMu,
+		ArtRemover:         cfg.Art.Remover,
+		CorridorkeyDir:     chroma.DiscoverCorridorKey(cfg.Art.CorridorkeyDir),
 	}
 	return engine.NewWorker(wc, a.Store, a.Bus), nil
 }
@@ -363,12 +368,21 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 		}
 	}
 
+	// Verify agy's art models in the background: art passes read the
+	// verified label from the kv store per pass, so the result applies the
+	// moment the probe lands — no need to hold up engine start on it.
+	a.VerifyArtModelsAsync(ctx)
+
 	multi := len(pipelines) > 1
 	maxConc := cfg.Safety.MaxConcurrent
 	if maxConc < 1 {
 		maxConc = 1
 	}
 	sem := semaphore.NewWeighted(int64(maxConc))
+	// One agy serialization lock per engine: art passes take it exclusively
+	// (their conversation-resume record is a shared file every agy run
+	// rewrites), ordinary agy passes share it, claude passes ignore it.
+	agyMu := &sync.RWMutex{}
 
 	var workers []*engine.Worker
 	var lanes []domain.Pipeline
@@ -397,7 +411,7 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 			}
 			// Lanes sync from the gate-proven green ref, never live trunk
 			// (mid-round trunk holds unvetted merges that may be reset away).
-			w, err := a.BuildWorker(*p, multi, WorkerOpts{Dir: p.Dir, SyncTrunk: engine.GreenRef, Sem: sem})
+			w, err := a.BuildWorker(*p, multi, WorkerOpts{Dir: p.Dir, SyncTrunk: engine.GreenRef, Sem: sem, AgyMu: agyMu})
 			if err != nil {
 				return err
 			}
@@ -420,7 +434,7 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 			p := &pipelines[i]
 			p.Branch = trunk
 			p.Dir = a.RepoDir
-			w, err := a.BuildWorker(*p, multi, WorkerOpts{TreeMu: treeMu, Sem: sem})
+			w, err := a.BuildWorker(*p, multi, WorkerOpts{TreeMu: treeMu, Sem: sem, AgyMu: agyMu})
 			if err != nil {
 				return err
 			}

@@ -15,7 +15,11 @@ package fakeagent
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"io/fs"
 	"os"
@@ -44,6 +48,94 @@ type Scenario struct {
 	// RawProposals, when set, is written to proposals.json VERBATIM instead
 	// of Proposals — for tests that need a syntactically corrupt file.
 	RawProposals string `json:"rawProposals"`
+}
+
+// Prompt markers the art scenario keys on — they mirror the exact one-line
+// path statements the engine's art prompts contain.
+const (
+	artTargetMarker = "TARGET PATH for the asset (relative to the repository root): "
+	artScreenMarker = "SCREEN PATH — save the result as a PNG at EXACTLY this path (relative to the repository root): "
+)
+
+// artStage performs the stage the prompt asks for: write the asset (stage 1,
+// neutral background) or the flat-green rescreen (stage 2), then record a
+// fresh conversation id the way agy does.
+func artStage(promptText, repoDir string) error {
+	if p := promptLineAfter(promptText, artScreenMarker); p != "" {
+		if err := writeTestPNG(filepath.Join(repoDir, p), color.NRGBA{G: 255, A: 255}); err != nil {
+			return err
+		}
+		return recordConversation(repoDir)
+	}
+	p := promptLineAfter(promptText, artTargetMarker)
+	if p == "" {
+		return fmt.Errorf("art scenario: prompt names no target path")
+	}
+	if err := writeTestPNG(filepath.Join(repoDir, p), color.NRGBA{R: 90, G: 90, B: 90, A: 255}); err != nil {
+		return err
+	}
+	return recordConversation(repoDir)
+}
+
+// promptLineAfter returns the rest of the line following marker ("" if absent).
+func promptLineAfter(text, marker string) string {
+	i := strings.Index(text, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := text[i+len(marker):]
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(strings.TrimRight(rest, "\r"))
+}
+
+// writeTestPNG writes a 64x64 image: bg fill with a centered red square (the
+// "subject" the chroma keyer must preserve).
+func writeTestPNG(path string, bg color.NRGBA) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			if x >= 20 && x < 44 && y >= 20 && y < 44 {
+				img.SetNRGBA(x, y, color.NRGBA{R: 200, A: 255})
+			} else {
+				img.SetNRGBA(x, y, bg)
+			}
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return png.Encode(f, img)
+}
+
+// recordConversation mimics agy's cache/last_conversations.json bookkeeping:
+// the workdir's entry is replaced with a fresh id. Skipped unless the test
+// harness points WORKSHOP_AGY_STATE_DIR somewhere.
+func recordConversation(repoDir string) error {
+	stateDir := os.Getenv("WORKSHOP_AGY_STATE_DIR")
+	if stateDir == "" {
+		return nil
+	}
+	path := filepath.Join(stateDir, "cache", "last_conversations.json")
+	m := map[string]string{}
+	if raw, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(raw, &m)
+	}
+	m[repoDir] = fmt.Sprintf("conv-%d", time.Now().UnixNano())
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o644)
 }
 
 // resolveConflicts rewrites files containing conflict markers with both
@@ -89,8 +181,12 @@ func Main() int {
 	// A real agent consumes the prompt; drain stdin so the parent's write
 	// never blocks — but only when stdin is actually a pipe. In blind
 	// (own-console) mode stdin is the console and reading it would hang.
+	// The art scenario parses the drained prompt for its target paths.
+	var promptText string
 	if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice == 0 {
-		_, _ = io.Copy(io.Discard, os.Stdin)
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, os.Stdin)
+		promptText = buf.String()
 	}
 
 	stateDir := os.Getenv("WORKSHOP_PASS_STATE_DIR")
@@ -159,6 +255,18 @@ func Main() int {
 			return 1
 		}
 		writeProgress(domain.Progress{Phase: "done", Task: title, Result: "combined both sides mechanically"})
+		return 0
+	case "art":
+		// Art pass stand-in: honor whichever art-flow stage the prompt is —
+		// stage 1 writes the generated asset at the TARGET PATH, stage 2 the
+		// flat-green rescreen at the SCREEN PATH. Both record a fresh agy-style
+		// conversation id (under WORKSHOP_AGY_STATE_DIR) like the real agy.
+		writeProgress(domain.Progress{Phase: "working", Task: title, Plan: "generating art"})
+		if err := artStage(promptText, repoDir); err != nil {
+			fmt.Fprintln(os.Stderr, "fakeagent:", err)
+			return 1
+		}
+		writeProgress(domain.Progress{Phase: "done", Task: title, Result: "art step complete"})
 		return 0
 	}
 
