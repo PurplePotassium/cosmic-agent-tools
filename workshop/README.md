@@ -136,6 +136,11 @@ open_browser  = true         # open the dashboard on launch (default true)
 #                  screen (blue when the subject itself is green-heavy), and
 #                  the screen is keyed away ([art] below), leaving a
 #                  transparent PNG at the target path.
+# Every image agy writes (the asset, and -trans's screened intermediate) is
+# byte-verified before anything downstream trusts it: the extension is never
+# assumed — a file whose bytes are actually JPEG/WebP/GIF/BMP/TIFF is
+# re-encoded as a real PNG in place (event "art.normalized"); undecodable
+# bytes fail the pass.
 # Both ONLY run on agy, preferring the model "Gemini 3.1 Pro (High)" and
 # falling back to "Gemini 3.5 Flash (High)" — engine launch verifies which
 # of those agy actually offers (quota-free probe) and art passes use the

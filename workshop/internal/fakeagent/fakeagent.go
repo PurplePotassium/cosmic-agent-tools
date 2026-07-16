@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"io/fs"
@@ -48,6 +49,10 @@ type Scenario struct {
 	// RawProposals, when set, is written to proposals.json VERBATIM instead
 	// of Proposals — for tests that need a syntactically corrupt file.
 	RawProposals string `json:"rawProposals"`
+	// ArtEncode is the actual byte format the art scenario writes at the
+	// asset paths ("" = png): "jpeg" simulates the image model mislabeling
+	// its output (JPEG bytes under a .png name).
+	ArtEncode string `json:"artEncode"`
 }
 
 // Prompt markers the art scenario keys on — they mirror the exact one-line
@@ -60,9 +65,9 @@ const (
 // artStage performs the stage the prompt asks for: write the asset (stage 1,
 // neutral background) or the flat-green rescreen (stage 2), then record a
 // fresh conversation id the way agy does.
-func artStage(promptText, repoDir string) error {
+func artStage(promptText, repoDir, encode string) error {
 	if p := promptLineAfter(promptText, artScreenMarker); p != "" {
-		if err := writeTestPNG(filepath.Join(repoDir, p), color.NRGBA{G: 255, A: 255}); err != nil {
+		if err := writeTestImage(filepath.Join(repoDir, p), color.NRGBA{G: 255, A: 255}, encode); err != nil {
 			return err
 		}
 		return recordConversation(repoDir)
@@ -71,7 +76,7 @@ func artStage(promptText, repoDir string) error {
 	if p == "" {
 		return fmt.Errorf("art scenario: prompt names no target path")
 	}
-	if err := writeTestPNG(filepath.Join(repoDir, p), color.NRGBA{R: 90, G: 90, B: 90, A: 255}); err != nil {
+	if err := writeTestImage(filepath.Join(repoDir, p), color.NRGBA{R: 90, G: 90, B: 90, A: 255}, encode); err != nil {
 		return err
 	}
 	return recordConversation(repoDir)
@@ -90,9 +95,11 @@ func promptLineAfter(text, marker string) string {
 	return strings.TrimSpace(strings.TrimRight(rest, "\r"))
 }
 
-// writeTestPNG writes a 64x64 image: bg fill with a centered red square (the
-// "subject" the chroma keyer must preserve).
-func writeTestPNG(path string, bg color.NRGBA) error {
+// writeTestImage writes a 64x64 image: bg fill with a centered red square
+// (the "subject" the chroma keyer must preserve). encode picks the actual
+// byte format ("" = png) regardless of the path's extension — how tests
+// simulate a mislabeled asset.
+func writeTestImage(path string, bg color.NRGBA, encode string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -111,7 +118,14 @@ func writeTestPNG(path string, bg color.NRGBA) error {
 		return err
 	}
 	defer f.Close()
-	return png.Encode(f, img)
+	switch encode {
+	case "", "png":
+		return png.Encode(f, img)
+	case "jpeg":
+		return jpeg.Encode(f, img, nil)
+	default:
+		return fmt.Errorf("art scenario: unknown artEncode %q", encode)
+	}
 }
 
 // recordConversation mimics agy's cache/last_conversations.json bookkeeping:
@@ -262,7 +276,7 @@ func Main() int {
 		// flat-green rescreen at the SCREEN PATH. Both record a fresh agy-style
 		// conversation id (under WORKSHOP_AGY_STATE_DIR) like the real agy.
 		writeProgress(domain.Progress{Phase: "working", Task: title, Plan: "generating art"})
-		if err := artStage(promptText, repoDir); err != nil {
+		if err := artStage(promptText, repoDir, sc.ArtEncode); err != nil {
 			fmt.Fprintln(os.Stderr, "fakeagent:", err)
 			return 1
 		}

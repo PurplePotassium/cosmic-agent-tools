@@ -49,7 +49,9 @@ const chromaTimeout = 15 * time.Minute
 // generates the asset. For art-gen that is the whole pass; art-gen-trans
 // continues strictly linearly — resume the SAME agy conversation to repaint
 // the background as a flat green/blue screen, then key that screen away with
-// the selected remover, leaving a transparent PNG at the target path.
+// the selected remover, leaving a transparent PNG at the target path. Every
+// image agy writes is byte-verified (and re-encoded when mislabeled) before
+// downstream steps trust it — see artNormalize.
 //
 // The whole agy portion holds the EXCLUSIVE agy slot (WorkerConfig.AgyMu):
 // the conversation id is recovered from agy's per-workdir
@@ -155,6 +157,9 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 	if _, err := os.Stat(targetAbs); err != nil {
 		return fail(domain.FailExit, fmt.Sprintf("agent reported done but %s does not exist", target))
 	}
+	if res2, err2, handled := w.artNormalize(ctx, pass, fail, logFile, targetAbs, target); handled {
+		return res2, err2
+	}
 	w.event(ctx, "art.generated", name, pass.ID, map[string]any{"target": target})
 
 	result := "generated " + target
@@ -197,7 +202,10 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 		if _, err := os.Stat(screenAbs); err != nil {
 			return fail(domain.FailExit, fmt.Sprintf("agent reported done but %s does not exist", screen))
 		}
-		unlockAgy() // agy work is over; keying is local
+		unlockAgy() // agy work is over; verification and keying are local
+		if res2, err2, handled := w.artNormalize(ctx, pass, fail, logFile, screenAbs, screen); handled {
+			return res2, err2
+		}
 		w.event(ctx, "art.rescreened", name, pass.ID, map[string]any{"screen": screen, "key": key.String()})
 
 		// Stage 3: key the screen away — transparent PNG lands at target.
@@ -260,6 +268,27 @@ func (w *Worker) artRunFailure(ctx context.Context, pass *domain.Pass, res *reso
 		}
 		r, e := fail(domain.FailExit, fmt.Sprintf("agent exit %d", exitCode))
 		return r, e, true
+	}
+	return PassRan, nil, false
+}
+
+// artNormalize verifies that the image agy just wrote genuinely contains PNG
+// bytes (the extension proves nothing — image models have emitted JPEG/WebP
+// bytes under a .png name) and re-encodes it as a PNG in place when it does
+// not. An undecodable file fails the pass; handled is false when the asset is
+// fine (verbatim or after conversion). rel is the repo-relative path for
+// logs/events, abs the on-disk location.
+func (w *Worker) artNormalize(ctx context.Context, pass *domain.Pass, fail func(domain.FailKind, string) (PassResult, error), logFile *os.File, abs, rel string) (PassResult, error, bool) {
+	format, converted, err := chroma.EnsurePNG(abs)
+	if err != nil {
+		r, e := fail(domain.FailExit, err.Error())
+		return r, e, true
+	}
+	if converted {
+		fmt.Fprintf(logFile, "art verify: %s held %s bytes — re-encoded as PNG\n", rel, format)
+		w.event(ctx, "art.normalized", w.cfg.Pipeline.Name, pass.ID, map[string]any{
+			"path": rel, "from": format,
+		})
 	}
 	return PassRan, nil, false
 }

@@ -6,6 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/pelletier/go-toml/v2 v2.4.2
+	golang.org/x/image v0.44.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.44.0
 	modernc.org/sqlite v1.53.0

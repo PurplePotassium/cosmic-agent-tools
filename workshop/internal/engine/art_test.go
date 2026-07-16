@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"image"
 	"os"
 	"path/filepath"
 	"sync"
@@ -53,9 +54,9 @@ func TestScreenPath(t *testing.T) {
 // pre-seeded with the fake driver (the real one would spawn agy.exe), and
 // WORKSHOP_AGY_STATE_DIR points at a scratch dir the fake agent's
 // conversation bookkeeping writes into.
-func artRig(t *testing.T) *testRig {
+func artRig(t *testing.T, sc fakeagent.Scenario) *testRig {
 	t.Helper()
-	r := newRig(t, fakeagent.Scenario{Behavior: "art"}, func(cfg *WorkerConfig) {
+	r := newRig(t, sc, func(cfg *WorkerConfig) {
 		cfg.AgyMu = &sync.RWMutex{}
 	})
 	t.Setenv("WORKSHOP_AGY_STATE_DIR", t.TempDir())
@@ -64,7 +65,7 @@ func artRig(t *testing.T) *testRig {
 }
 
 func TestArtGenPass(t *testing.T) {
-	r := artRig(t)
+	r := artRig(t, fakeagent.Scenario{Behavior: "art"})
 	ctx := context.Background()
 	task, err := r.st.AddTask(ctx, &domain.Task{Title: "Draw a cosmic hero", Type: domain.ArtGenType}, false)
 	if err != nil {
@@ -90,7 +91,7 @@ func TestArtGenPass(t *testing.T) {
 }
 
 func TestArtGenTransPass(t *testing.T) {
-	r := artRig(t)
+	r := artRig(t, fakeagent.Scenario{Behavior: "art"})
 	ctx := context.Background()
 	task, err := r.st.AddTask(ctx, &domain.Task{
 		Title: "hero cutout", Type: domain.ArtGenTransType, Files: []string{"assets/hero.png"},
@@ -120,6 +121,63 @@ func TestArtGenTransPass(t *testing.T) {
 		t.Fatal("AgyMu still held after the pass")
 	}
 	r.cfg.AgyMu.Unlock()
+}
+
+// The image model sometimes writes JPEG (or WebP…) bytes under the requested
+// .png name. The pass must detect the real format and re-encode, so the
+// committed asset is a genuine PNG.
+func TestArtGenPassNormalizesMislabeledBytes(t *testing.T) {
+	r := artRig(t, fakeagent.Scenario{Behavior: "art", ArtEncode: "jpeg"})
+	ctx := context.Background()
+	task, err := r.st.AddTask(ctx, &domain.Task{Title: "mislabeled hero", Type: domain.ArtGenType}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := r.worker.RunPass(ctx)
+	if err != nil || res != PassRan {
+		t.Fatalf("RunPass = %v, %v; want PassRan, nil", res, err)
+	}
+	got, err := r.st.GetTask(ctx, task.ID)
+	if err != nil || got.Status != domain.TaskDone {
+		t.Fatalf("task status = %v, %v; want done", got.Status, err)
+	}
+
+	target := filepath.Join(r.repo, "assets", "art", "mislabeled-hero.png")
+	f, err := os.Open(target)
+	if err != nil {
+		t.Fatalf("generated asset missing: %v", err)
+	}
+	defer f.Close()
+	_, format, err := image.Decode(f)
+	if err != nil || format != "png" {
+		t.Fatalf("asset decodes as %q, %v; want png", format, err)
+	}
+}
+
+// Same for -trans: the mislabeled screen image must be normalized before
+// keying, and the final keyed asset must still verify as transparent.
+func TestArtGenTransPassNormalizesMislabeledBytes(t *testing.T) {
+	r := artRig(t, fakeagent.Scenario{Behavior: "art", ArtEncode: "jpeg"})
+	ctx := context.Background()
+	task, err := r.st.AddTask(ctx, &domain.Task{
+		Title: "hero cutout", Type: domain.ArtGenTransType, Files: []string{"assets/hero.png"},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := r.worker.RunPass(ctx)
+	if err != nil || res != PassRan {
+		t.Fatalf("RunPass = %v, %v; want PassRan, nil", res, err)
+	}
+	got, err := r.st.GetTask(ctx, task.ID)
+	if err != nil || got.Status != domain.TaskDone {
+		t.Fatalf("task status = %v, %v; want done", got.Status, err)
+	}
+	if err := chroma.VerifyTransparency(filepath.Join(r.repo, "assets", "hero.png")); err != nil {
+		t.Fatalf("final asset is not transparent: %v", err)
+	}
 }
 
 // Without a fresh conversation record the -trans flow cannot resume the agy
