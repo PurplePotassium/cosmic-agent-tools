@@ -64,26 +64,37 @@ func Vocabulary(types map[string]domain.Bundle, pipelines []domain.Pipeline) map
 // sprite flicker", "tweak the palette") must NOT match — no generation verb.
 const artGenSignature = `\b(generate|create|draw|make|produce|design|render)\b[^.!?]{0,80}\b(sprite|pixel[- ]art|image|artwork|illustration|icon|texture|portrait|logo|banner|splash|concept art|art asset|sticker|emoji|tileset|spritesheet)`
 
+// artCodeSignal vetoes the art-gen rules: these words say the image noun is
+// part of code machinery ("make the image LOADER faster", "create a sprite
+// atlas PARSER"), not a deliverable asset — without the veto such tasks would
+// be forced onto the agy image model, which would paint a PNG and mark them
+// done. A vetoed title still classifies through the later rules ("art",
+// "code"); the rare false veto ("draw a bug sprite") degrades to plain "art",
+// never to a wrong completion.
+var artCodeSignal = regexp.MustCompile(`(?i)\bloaders?\b|\bparsers?\b|\bcach(e|es|ing)\b|\brefactor|\boptimi[sz]|\bfaster\b|\bperformance\b|\blatency\b|\bthroughput\b|\bframe ?rates?\b|\bfps\b|\bleaks?\b|\bcrash|\bbugs?\b|\bdebug|\bapi\b|\bendpoints?\b|\bcompil|\bserializ|\bdecod|\bencod|\bcompress`)
+
 // classRule maps a built-in type to its keyword signature. Ordered: the
 // first matching rule whose type is in the vocabulary wins; specific
-// categories come before the generic "code" fallback.
+// categories come before the generic "code" fallback. A rule with Not is
+// vetoed when Not also matches — the scan then falls through to later rules.
 var classRules = []struct {
 	Type string
 	Re   *regexp.Regexp
+	Not  *regexp.Regexp
 }{
-	{"merge-conflict", regexp.MustCompile(`(?i)merge[- ]conflict|resolve.*\bconflict\b|\bconflicted\b`)},
-	{"audio", regexp.MustCompile(`(?i)\baudio\b|\bsound(s|track)?\b|\bsfx\b|\bmusic\b|\bvolume\b|\bmute\b|\bfoley\b`)},
+	{Type: "merge-conflict", Re: regexp.MustCompile(`(?i)merge[- ]conflict|resolve.*\bconflict\b|\bconflicted\b`)},
+	{Type: "audio", Re: regexp.MustCompile(`(?i)\baudio\b|\bsound(s|track)?\b|\bsfx\b|\bmusic\b|\bvolume\b|\bmute\b|\bfoley\b`)},
 	// Asset GENERATION (an image file is the deliverable) routes to the agy
 	// image-model flow, not the code-flavored "art" type below. The -trans
 	// variant is checked first: same generation signature plus any wording
 	// that implies the asset needs a transparent background.
-	{domain.ArtGenTransType, regexp.MustCompile(`(?i)` + artGenSignature + `(?s).*(transparen|no +background|without +(a +)?background|remove +the +background|background-?less|alpha +channel|cut-?out)`)},
-	{domain.ArtGenTransType, regexp.MustCompile(`(?i)(transparen|no +background|without +(a +)?background|remove +the +background|background-?less|alpha +channel|cut-?out)(?s).*` + artGenSignature)},
-	{domain.ArtGenType, regexp.MustCompile(`(?i)` + artGenSignature)},
-	{"art", regexp.MustCompile(`(?i)\bart\b|sprite|palette|colou?r|\bvisual\b|\bicon\b|texture|\banimation\b|\bvfx\b|particle|\bjuice\b|screenshake|cosmetic|\bskin\b`)},
-	{"tests", regexp.MustCompile(`(?i)\btests?\b|\btesting\b|coverage|\bflaky\b|regression test`)},
-	{"docs", regexp.MustCompile(`(?i)\bdocs?\b|\breadme\b|documentation|changelog|\btutorial\b|\bguide\b`)},
-	{"code", regexp.MustCompile(`(?i)refactor|\bbug\b|\bfix\b|implement|\bfeature\b|\bcrash\b|optimi[sz]e|\bapi\b|\berror\b|\badd\b|\bwire\b|\bbuild\b`)},
+	{Type: domain.ArtGenTransType, Re: regexp.MustCompile(`(?i)` + artGenSignature + `(?s).*(transparen|no +background|without +(a +)?background|remove +the +background|background-?less|alpha +channel|cut-?out)`), Not: artCodeSignal},
+	{Type: domain.ArtGenTransType, Re: regexp.MustCompile(`(?i)(transparen|no +background|without +(a +)?background|remove +the +background|background-?less|alpha +channel|cut-?out)(?s).*` + artGenSignature), Not: artCodeSignal},
+	{Type: domain.ArtGenType, Re: regexp.MustCompile(`(?i)` + artGenSignature), Not: artCodeSignal},
+	{Type: "art", Re: regexp.MustCompile(`(?i)\bart\b|sprite|palette|colou?r|\bvisual\b|\bicon\b|texture|\banimation\b|\bvfx\b|particle|\bjuice\b|screenshake|cosmetic|\bskin\b`)},
+	{Type: "tests", Re: regexp.MustCompile(`(?i)\btests?\b|\btesting\b|coverage|\bflaky\b|regression test`)},
+	{Type: "docs", Re: regexp.MustCompile(`(?i)\bdocs?\b|\breadme\b|documentation|changelog|\btutorial\b|\bguide\b`)},
+	{Type: "code", Re: regexp.MustCompile(`(?i)refactor|\bbug\b|\bfix\b|implement|\bfeature\b|\bcrash\b|optimi[sz]e|\bapi\b|\berror\b|\badd\b|\bwire\b|\bbuild\b`)},
 }
 
 // Classify assigns a type to free text, restricted to the project's
@@ -95,6 +106,9 @@ func Classify(title, detail string, vocab map[string]bool) string {
 	}
 	text := strings.ToLower(title + " " + detail)
 	for _, rule := range classRules {
+		if rule.Not != nil && rule.Not.MatchString(text) {
+			continue
+		}
 		if vocab[rule.Type] && rule.Re.MatchString(text) {
 			return rule.Type
 		}

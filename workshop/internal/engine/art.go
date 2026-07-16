@@ -318,7 +318,12 @@ func (w *Worker) artRemover(ctx context.Context) (remover, corridorkeyDir string
 
 // artTargetPath derives the repo-relative asset path: the task's first files
 // entry when given, else assets/art/<slug>.png. Task files are operator/agent
-// data — anything non-local is refused, never resolved.
+// data — anything non-local is refused, never resolved. The extension is
+// always .png: the flow only ever produces PNGs (the generation prompt says
+// PNG, ffmpeg picks its encoder by extension, and JPEG cannot hold the alpha
+// channel -trans exists for), so files: ["hero.jpg"] yields hero.png — a
+// foreign extension honored verbatim either fails every keying verification
+// (ffmpeg) or mislabels the asset (PNG bytes in a .jpg file).
 func artTargetPath(task *domain.Task) (string, error) {
 	if len(task.Files) > 0 && strings.TrimSpace(task.Files[0]) != "" {
 		p := filepath.ToSlash(strings.TrimSpace(task.Files[0]))
@@ -326,8 +331,8 @@ func artTargetPath(task *domain.Task) (string, error) {
 			return "", fmt.Errorf("engine: art target %q escapes the repository", task.Files[0])
 		}
 		p = path.Clean(p)
-		if path.Ext(p) == "" {
-			p += ".png"
+		if ext := path.Ext(p); !strings.EqualFold(ext, ".png") {
+			p = strings.TrimSuffix(p, ext) + ".png"
 		}
 		return p, nil
 	}

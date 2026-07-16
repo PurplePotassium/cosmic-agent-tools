@@ -22,6 +22,8 @@ func TestArtTargetPath(t *testing.T) {
 	}{
 		{"files entry", domain.Task{Files: []string{"art/hero.png"}}, "art/hero.png", false},
 		{"extension added", domain.Task{Files: []string{"art/hero"}}, "art/hero.png", false},
+		{"foreign extension replaced", domain.Task{Files: []string{"art/hero.jpg"}}, "art/hero.png", false},
+		{"uppercase png kept", domain.Task{Files: []string{"art/HERO.PNG"}}, "art/HERO.PNG", false},
 		{"title slug", domain.Task{Title: "Draw the Hero Sprite!"}, "assets/art/draw-the-hero-sprite.png", false},
 		{"empty title", domain.Task{}, "assets/art/asset.png", false},
 		{"escape rejected", domain.Task{Files: []string{"../outside.png"}}, "", true},

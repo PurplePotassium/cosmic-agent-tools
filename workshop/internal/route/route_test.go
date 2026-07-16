@@ -110,6 +110,13 @@ func TestClassifyArtGeneration(t *testing.T) {
 		{"repaint the player sprite palette", "", "art"},        // code-side art work
 		{"make the loading screen faster", "", ""},              // generation verb but no image-asset noun
 		{"add transparency support to the renderer", "", "code"}, // transparency alone isn't art-gen
+		// Code work about images/sprites must NOT reach the image-generation
+		// flow: a misroute here makes the engine paint a PNG and mark the
+		// task done instead of touching the code.
+		{"Make the image loader faster", "", ""},
+		{"Create a sprite atlas parser", "", "art"},
+		{"optimize how we generate image previews", "", "code"},
+		{"Render the texture atlas debug overlay", "", "art"},
 	}
 	for _, c := range cases {
 		if got := Classify(c.title, c.detail, vocab); got != c.want {
