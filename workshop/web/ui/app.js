@@ -39,7 +39,7 @@ function ago(iso) {
 }
 
 function eventTone(type) {
-  if (/done|landed|resolved|commit$|classified|verified|keyed/.test(type)) return "good";
+  if (/done|landed|resolved|commit$|classified|verified|keyed|compare$|normalized/.test(type)) return "good";
   if (/failed|halt|breaker|wedge|dropped|red|abandoned|error|missing/.test(type)) return "bad";
   if (/conflict|suspected|skipped|ignored|stuck|incomplete|unknown|unverified|forced/.test(type)) return "warn";
   return "";
@@ -92,7 +92,13 @@ function describeEvent(ev) {
     case "art.keyed": return `art background keyed out (${p.remover}): ${p.target}`;
     case "art.attempt_failed": return `art pass failed: ${p.why}`;
     case "art.route_forced": return `art task rerouted to agy (was ${p.routedAgent || "unset"})`;
-    case "art.remover": return p.cleared ? "greenscreen remover override cleared" : `greenscreen remover → ${p.remover}`;
+    case "art.remover": return p.cleared ? "keyer override cleared" : `keyers → ${(p.keyers || [p.remover]).filter(Boolean).join(", ")}`;
+    case "art.normalized": return `art verified: ${p.path} held ${p.from} bytes — re-encoded as PNG`;
+    case "art.keyer_compare": {
+      const runs = (p.keyers || []).map((k) => `${k.keyer}${k.ok ? "" : " ✗"}${k.primary ? " (primary)" : ""}`);
+      return `keyer comparison archived for ${p.target}: ${runs.join(", ")}`;
+    }
+    case "art.keyer_compare_failed": return `comparison keyer ${p.keyer} failed: ${p.error || ""}`.slice(0, 140);
     case "art.model_verified": return `agy art model verified: ${p.model}`;
     case "art.models_missing": return `agy offers none of the allowed art models (wanted ${(p.wanted || []).join(" or ")})`;
     case "art.models_unverified": return `could not verify agy art models: ${p.error || ""}`.slice(0, 140);
@@ -132,7 +138,7 @@ function playChime() {
 
 // ---------- components ----------
 
-function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn, art, onArtRemover, onHalt, onPauseAfter, onToggleSound }) {
+function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn, onSettings, onHalt, onPauseAfter, onToggleSound }) {
   // "live - stopped" once every pipeline has actually parked (stop pressed, or
   // a pause-after that has finished draining) — the server's up but no models
   // are running. Otherwise "live - N agents active", the live count of
@@ -144,13 +150,9 @@ function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn
     <h1>Workshop</h1>
     <span class="muted mono">${status?.repo || ""}</span>
     <span class="spacer"></span>
-    ${art && html`<label class="art-remover" title="Green/blue-screen remover used by art-gen-trans passes — applies to the NEXT art pass immediately, no restart. builtin: pure-Go color keyer; corridorkey: CorridorKey neural keyer; ffmpeg: colorkey+despill.">
-      🎨 keyer
-      <select value=${art.remover} onChange=${(e) => onArtRemover(e.target.value)}>
-        ${(art.removers || []).map((r) => html`<option value=${r}>${r}</option>`)}
-      </select>
-    </label>`}
     <span class=${"conn" + (stopped ? " stopped" : "")}><span class=${"dot " + (connected ? "on" : "off")}></span>${liveText}</span>
+    <button class="gear" onClick=${onSettings}
+      title="Settings — chroma keyers, installed tools and models, transcript export, paths">⚙ settings</button>
     <button class=${"sound" + (soundOn ? " active" : "")} onClick=${onToggleSound}
       title=${soundOn
         ? "Sound on — a chime plays whenever a task completes. Click to mute."
@@ -162,6 +164,238 @@ function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn
         ? "Pause after is armed — every pipeline stops claiming new work once its current pass finishes"
         : "Stop every pipeline from claiming new work; whatever's running now finishes"}>pause after</button>
     <button class="danger" onClick=${onHalt} title="Kill every in-flight pass now — no models running, server stays up">stop</button>
+  </div>`;
+}
+
+// ---------- the settings panel ----------
+
+// KEYER_BLURBS mirrors internal/chroma's backend docs for the keyer pickers.
+const KEYER_BLURBS = {
+  builtin: "Pure-Go color-distance keyer with edge despill. No dependencies, milliseconds per image — ideal for the flat machine-painted screens this flow produces.",
+  corridorkey: "CorridorKey neural keyer. ML-quality edges (hair, soft shadows); needs the CorridorKey checkout and CUDA — it refuses CPU (measured 2+ hours per image).",
+  ffmpeg: "ffmpeg colorkey+despill filter chain. Robust middle ground; needs ffmpeg on PATH.",
+};
+
+const SETTINGS_TABS = [
+  ["keyers", "keyers"],
+  ["tools", "tools & models"],
+  ["export", "transcripts"],
+  ["general", "general"],
+];
+
+// SettingsModal is the ⚙ popup: art keyers, environment/tool status,
+// transcript export, and general info — the knobs and read-outs that used to
+// crowd (or never fit) the topbar.
+function SettingsModal({ art, extras, configView, soundOn, onToggleSound, onApplyKeyers, onVerifyModels, onClose }) {
+  const [tab, setTab] = useState("keyers");
+  const [env, setEnv] = useState(null);
+  const [envLoading, setEnvLoading] = useState(false);
+  const loadEnv = useCallback(async (fresh) => {
+    setEnvLoading(true);
+    try { setEnv(await api.env(fresh)); } catch { /* server briefly away */ }
+    setEnvLoading(false);
+  }, []);
+  useEffect(() => { loadEnv(false); }, []);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return html`<div class="modal-backdrop" onMouseDown=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class="modal settings">
+      <div class="modal-head">
+        <h2>Settings</h2>
+        <button class="dismiss" onClick=${onClose} title="close (Esc)">✕</button>
+      </div>
+      <div class="tabs">
+        ${SETTINGS_TABS.map(([id, label]) => html`<button key=${id}
+          class=${"tab" + (tab === id ? " active" : "")} onClick=${() => setTab(id)}>${label}</button>`)}
+      </div>
+      <div class="modal-body">
+        ${tab === "keyers" && html`<${KeyerSettings} art=${art} onApply=${onApplyKeyers} onVerify=${onVerifyModels} />`}
+        ${tab === "tools" && html`<${ToolsSettings} env=${env} extras=${extras} loading=${envLoading} onRefresh=${() => loadEnv(true)} />`}
+        ${tab === "export" && html`<${ExportSettings} env=${env} />`}
+        ${tab === "general" && html`<${GeneralSettings} env=${env} configView=${configView} soundOn=${soundOn} onToggleSound=${onToggleSound} />`}
+      </div>
+    </div>
+  </div>`;
+}
+
+// KeyerSettings edits the live green/blue-screen keyer set for art-gen-trans
+// passes. More than one keyer = a comparison run: every selected backend keys
+// the same screened intermediate; the PRIMARY's output becomes the committed
+// asset while the rest are archived beside the pass log (and mirrored by
+// [export]) as iter-NNNNNN.keyed-<keyer>.png, so a human can compare the
+// files and settle on the most effective backend.
+function KeyerSettings({ art, onApply, onVerify }) {
+  const [selected, setSelected] = useState(art ? [...art.keyers] : []);
+  const [dirty, setDirty] = useState(false);
+  // Track the server value until the operator starts editing (same dirty
+  // discipline as GoalCard).
+  useEffect(() => { if (!dirty && art) setSelected([...art.keyers]); }, [art && art.keyers.join(",")]);
+  if (!art) return html`<div class="muted">art settings unavailable</div>`;
+  const toggle = (k) => {
+    setDirty(true);
+    setSelected((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
+  };
+  const setPrimary = (k) => {
+    setDirty(true);
+    setSelected((prev) => [k, ...prev.filter((x) => x !== k)]);
+  };
+  const apply = async (list) => {
+    const ok = await onApply(list);
+    if (ok !== false) setDirty(false);
+  };
+  return html`<div>
+    <h3>Chroma keyers <span class="chip" title=${art.override ? "live override active — applies from the next art pass" : "using the [art] config value"}>
+      ${art.override ? "override ⚡" : "config"}</span></h3>
+    <div class="note">Backends that remove the green/blue screen from art-gen-trans assets.
+      Selecting more than one runs a <b>comparison</b>: each keyer processes the same screen,
+      the <b>primary</b>'s result becomes the committed asset, and every result is archived
+      beside the pass log (and mirrored to the export folder) as <code>iter-NNNNNN.keyed-«keyer».png</code> —
+      compare the files, then narrow back down to the keyer that worked best.
+      Changes apply from the NEXT art pass, no restart.</div>
+    ${(art.removers || []).map((k) => html`<label class=${"keyer-row" + (selected.includes(k) ? " on" : "")} key=${k}>
+      <input type="checkbox" checked=${selected.includes(k)} onChange=${() => toggle(k)} />
+      <span>
+        <b>${k}</b>${selected[0] === k && selected.length > 1 ? html` <span class="chip pin">primary</span>` : ""}
+        <div class="muted">${KEYER_BLURBS[k] || ""}</div>
+      </span>
+    </label>`)}
+    <div class="bundle-editor">
+      ${selected.length > 1 && html`<label class="muted">primary
+        <select value=${selected[0]} onChange=${(e) => setPrimary(e.target.value)}
+          title="the keyer whose output becomes the committed asset">
+          ${selected.map((k) => html`<option value=${k}>${k}</option>`)}
+        </select>
+      </label>`}
+      <button class="primary" disabled=${!dirty || selected.length === 0}
+        onClick=${() => apply(selected)}>apply</button>
+      ${art.override && html`<button onClick=${() => apply([])}
+        title="drop the live override, back to the [art] config value">clear override</button>`}
+      <span class="muted">config: ${(art.configured || []).join(", ")}</span>
+    </div>
+
+    <h3 style="margin-top:18px">agy art model</h3>
+    <div class="note">art-gen / art-gen-trans passes always run a frontier claude orchestrator
+      (fable, else opus) that invokes agy with a launch-verified Gemini label
+      (wanted, in order: ${(art.wanted || []).join(" → ")}).</div>
+    <div class="kv-row"><span class="k">verified model</span>
+      <span class="v">${art.verifying ? "verifying…" : (art.model || "not verified — passes assume the preferred default")}</span></div>
+    ${art.agyModels && art.agyModels.length > 0 && html`<div class="kv-row"><span class="k">agy offers</span>
+      <span class="v">${art.agyModels.join(", ")}</span></div>`}
+    <div style="margin-top:8px">
+      <button disabled=${art.verifying} onClick=${onVerify}
+        title="Probe agy's model list again (quota-free) — e.g. right after logging agy in">
+        ${art.verifying ? "verifying…" : "re-verify models"}</button>
+    </div>
+  </div>`;
+}
+
+// ToolsSettings reads out every external dependency: installed where, what
+// version answered, and the best headless login signal we have.
+function ToolsSettings({ env, extras, loading, onRefresh }) {
+  return html`<div>
+    <h3>Installed tools
+      <button style="margin-left:auto" disabled=${loading} onClick=${onRefresh}
+        title="Re-run the version/install probes (bypasses the 30s cache)">${loading ? "checking…" : "re-run checks"}</button>
+    </h3>
+    ${!env && html`<div class="muted">probing…</div>`}
+    ${env && env.tools.map((t) => html`<div class="tool-row" key=${t.name}>
+      <span class=${"dot " + (t.present ? "on" : "off")}></span>
+      <div style="flex:1; min-width:0">
+        <b>${t.name}</b> ${t.version && html`<span class="chip">${t.version}</span>`}
+        ${!t.present && html`<span class="chip stuck">not found</span>`}
+        ${t.path && html`<div class="muted mono" style="font-size:.72rem; overflow-wrap:anywhere">${t.path}</div>`}
+        ${t.detail && html`<div class="muted" style="font-size:.78rem">${t.detail}</div>`}
+        ${t.auth && html`<div style="font-size:.78rem" class=${/FAILURE/.test(t.auth) ? "bad-text" : "muted"}>login: ${t.auth}</div>`}
+        ${t.fix && !t.present && html`<div class="muted" style="font-size:.78rem">fix: ${t.fix}</div>`}
+      </div>
+    </div>`)}
+
+    <h3 style="margin-top:18px">Models</h3>
+    <div class="note">Curated families the dashboard offers per agent; extend them
+      with <code>[agents.«agent»] extra_models</code> in the config.</div>
+    ${Object.keys(MODEL_FAMILIES).map((agent) => html`<div class="kv-row" key=${agent}>
+      <span class="k">${agent}</span>
+      <span class="v">${modelsFor(agent, extras).join(", ")}</span>
+    </div>`)}
+  </div>`;
+}
+
+// ExportSettings shows where pass evidence (transcripts, logs, keyer
+// comparisons) is mirrored. The destination is versioned config, not a live
+// knob — the engine validates it at start — so this is a read-out with
+// instructions rather than an editor.
+function ExportSettings({ env }) {
+  if (!env) return html`<div class="muted">loading…</div>`;
+  const ex = env.export || {};
+  return html`<div>
+    <h3>Transcript export ${ex.enabled
+      ? html`<span class="chip" style="color:var(--green)">on</span>`
+      : html`<span class="chip">off</span>`}</h3>
+    ${ex.error && html`<div class="alert warn" style="margin:8px 0"><div>${ex.error}</div></div>`}
+    <div class="kv-row"><span class="k">configured dir</span>
+      <span class="v mono">${ex.configured || "(not set — export disabled)"}</span></div>
+    ${ex.resolved && html`<div class="kv-row"><span class="k">resolved destination</span>
+      <span class="v mono">${ex.resolved}</span></div>`}
+    <div class="kv-row"><span class="k">set by</span><span class="v">${ex.source} layer</span></div>
+    <div class="kv-row"><span class="k">human-readable transcripts</span>
+      <span class="v">${ex.humanReadable ? "on — a markdown rendering lands beside each .jsonl" : "off"}</span></div>
+    <div class="note" style="margin-top:10px">Every finished pass mirrors its evidence into one
+      subfolder per pipeline (plus <code>inquiry</code> for the self-evaluator):
+      the pass log, the driver's operational log, the agent runtime's FULL transcript
+      (<code>iter-NNNNNN.transcript.jsonl</code> — prompt as sent, thinking, response),
+      art-gen-trans's screened intermediate (<code>.screen.png</code>) and any keyer-comparison
+      images (<code>.keyed-«keyer».png</code>).
+      The destination is set in <code>.workshop/config.toml</code> under <code>[export]</code> —
+      it must be OUTSIDE the repository (passes commit anything dirty in the working tree) and a
+      change needs a workshop restart.</div>
+  </div>`;
+}
+
+// GeneralSettings: the sound preference, server/runtime info, safety knobs,
+// and every path an operator may need to find.
+function GeneralSettings({ env, configView, soundOn, onToggleSound }) {
+  const eff = configView?.effective;
+  const safety = eff?.Safety;
+  const started = env?.server?.started ? new Date(env.server.started) : null;
+  return html`<div>
+    <h3>Preferences</h3>
+    <label class="keyer-row" style="align-items:center">
+      <input type="checkbox" checked=${soundOn} onChange=${onToggleSound} />
+      <span>play a chime whenever a task completes</span>
+    </label>
+
+    <h3 style="margin-top:14px">Server</h3>
+    ${env?.server && html`<div>
+      <div class="kv-row"><span class="k">version</span><span class="v">workshop ${env.server.version} (${env.os}/${env.arch})</span></div>
+      <div class="kv-row"><span class="k">pid / port</span><span class="v">${env.server.pid} / 127.0.0.1:${env.server.port}</span></div>
+      ${started && html`<div class="kv-row"><span class="k">up since</span><span class="v">${started.toLocaleString()}</span></div>`}
+    </div>`}
+
+    ${safety && html`<div>
+      <h3 style="margin-top:14px">Effective safety knobs <span class="chip">config — .workshop/config.toml</span></h3>
+      <div class="kv-row"><span class="k">max concurrent passes</span><span class="v">${safety.MaxConcurrent}</span></div>
+      <div class="kv-row"><span class="k">wedge timeout</span><span class="v">${safety.WedgeMinutes} min</span></div>
+      <div class="kv-row"><span class="k">circuit breaker</span><span class="v">${safety.BreakerFailures} consecutive failures</span></div>
+      <div class="kv-row"><span class="k">sleep between passes</span><span class="v">${safety.SleepSeconds}s</span></div>
+      <div class="kv-row"><span class="k">worktrees</span><span class="v">${configView.worktreesEnabled ? "on" : "off"}</span></div>
+      <div class="kv-row"><span class="k">skip permissions</span><span class="v">${safety.SkipPermissions ? "yes" : "no"}</span></div>
+    </div>`}
+
+    ${env && html`<div>
+      <h3 style="margin-top:14px">Paths</h3>
+      ${[["repo", env.paths.repo], ["state dir", env.paths.stateDir], ["pass logs", env.paths.logs],
+         ["repo config", env.paths.repoConfig], ["user config", env.paths.userConfig],
+         ["runtime overrides", env.paths.overrides], ["goal", env.paths.goal], ["prompts", env.paths.prompts]]
+        .map(([k, v]) => html`<div class="kv-row" key=${k}><span class="k">${k}</span><span class="v mono">${v}</span></div>`)}
+    </div>`}
+
+    ${env && env.warnings && env.warnings.length > 0 && html`<div>
+      <h3 style="margin-top:14px">Config warnings</h3>
+      ${env.warnings.map((w, i) => html`<div class="alert warn" style="margin:6px 0" key=${i}><div>${w}</div></div>`)}
+    </div>`}
   </div>`;
 }
 
@@ -778,6 +1012,10 @@ function App() {
   // the model dropdowns list the user's own additions next to the curated ids.
   const [extraModels, setExtraModels] = useState({});
   const [personalityConfig, setPersonalityConfig] = useState({ enabled: false, list: [] });
+  // configView: the whole /api/v1/config payload (effective values +
+  // provenance) for the settings panel's read-outs.
+  const [configView, setConfigView] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [connected, setConnected] = useState(false);
   const [evaluatingGoal, setEvaluatingGoal] = useState(false);
   const [leftTab, setLeftTab] = useState("main");
@@ -818,6 +1056,7 @@ function App() {
     // Config is fetched once: extra_models only changes with a config edit,
     // which means a server restart anyway.
     api.config().then((c) => {
+      setConfigView(c || null);
       const agents = (c && c.effective && c.effective.Agents) || {};
       const extras = {};
       for (const [name, ac] of Object.entries(agents)) extras[name] = ac.ExtraModels || [];
@@ -947,11 +1186,16 @@ function App() {
 
   return html`<div>
     <${TopBar} status=${status} connected=${connected} active=${activeCount} pauseAfterPending=${pauseAfterPending} stopped=${allStopped}
-      soundOn=${soundOn} art=${art}
-      onArtRemover=${(remover) => act(async () => setArt(await api.setArtRemover(remover)))}
+      soundOn=${soundOn}
+      onSettings=${() => setShowSettings(true)}
       onHalt=${() => act(() => api.haltServer())}
       onPauseAfter=${() => act(() => api.pauseAfter())}
       onToggleSound=${toggleSound} />
+    ${showSettings && html`<${SettingsModal} art=${art} extras=${extraModels} configView=${configView}
+      soundOn=${soundOn} onToggleSound=${toggleSound}
+      onApplyKeyers=${(keyers) => act(async () => setArt(await api.setArtKeyers(keyers)))}
+      onVerifyModels=${() => act(async () => { await api.verifyArtModels(); setArt(await api.art()); })}
+      onClose=${() => setShowSettings(false)} />`}
     <div class="columns">
       <div>
         <${Alerts} alerts=${alerts} dismiss=${(id) => setAlerts((a) => a.filter((x) => x.id !== id))} />

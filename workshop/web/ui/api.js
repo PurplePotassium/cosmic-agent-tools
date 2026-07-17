@@ -82,11 +82,21 @@ export const api = {
   // pauseAfter stops every pipeline from claiming new work, letting whatever
   // they're currently running finish untouched.
   pauseAfter: () => req("POST", "/api/v1/server/pause-after", {}),
-  // Art-generation settings: the live green/blue-screen remover used by
-  // art-gen-trans passes plus the verified agy art model. setArtRemover("")
-  // clears the override back to the configured default.
+  // Art-generation settings: the live green/blue-screen keyer list used by
+  // art-gen-trans passes (ordered — the first keyer's output becomes the
+  // committed asset, the rest key archived comparison copies) plus the
+  // verified agy art model. setArtKeyers([]) clears the override back to the
+  // configured default.
   art: () => req("GET", "/api/v1/art"),
-  setArtRemover: (remover) => req("PUT", "/api/v1/art/remover", { remover }),
+  setArtKeyers: (keyers) => req("PUT", "/api/v1/art/keyers", { keyers }),
+  // Re-run the agy art-model verification (after logging agy in); progress
+  // shows as art.verifying, the result arrives as an art.model_verified /
+  // art.models_missing event.
+  verifyArtModels: () => req("POST", "/api/v1/art/verify-models", {}),
+  // Environment snapshot for the settings panel: tool installs/versions/
+  // login signals, resolved paths, transcript-export destination. fresh=true
+  // bypasses the server's probe cache.
+  env: (fresh) => req("GET", "/api/v1/env" + (fresh ? "?fresh=1" : "")),
 };
 
 // attachmentURL builds the token-carrying URL for an attachment thumbnail. An
@@ -119,7 +129,8 @@ export function subscribe(handlers) {
     "inquiry.log", "inquiry.asked", "inquiry.answered",
     "art.generated", "art.rescreened", "art.keyed", "art.attempt_failed",
     "art.route_forced", "art.remover", "art.model_verified",
-    "art.models_missing", "art.models_unverified",
+    "art.models_missing", "art.models_unverified", "art.normalized",
+    "art.keyer_compare", "art.keyer_compare_failed",
   ];
   for (const t of types) {
     es.addEventListener(t, (msg) => {

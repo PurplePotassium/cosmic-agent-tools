@@ -58,6 +58,8 @@ workshop task       add | list | tag | pin | mv | rm     (see below)
 workshop status     one-shot snapshot (--json)
 workshop stop       stop the running server gracefully (--force kills a hung engine's process tree)
 workshop doctor     environment health check (--json)
+workshop agy-run    run agy with the given args in a hidden console (agy drops output on
+                    pipes); how art passes' claude orchestrator invokes it — exits with agy's code
 workshop path       print resolved dirs and config files
 workshop migrate    import GOAL/PROMPT/backlog from the old PowerShell workshop (--from <dir>)
 workshop version
@@ -123,28 +125,35 @@ open_browser  = true         # open the dashboard on launch (default true)
 # EMPTY bundles — the classifier types tasks out of the box and agent-resolved
 # merge conflicts are enabled by default; entries here override per type.
 #
-# Two more built-ins are pre-routed to agy and generate IMAGE ASSETS instead
-# of editing code (the classifier assigns them to "generate/create/draw an
-# image/sprite/icon/…" tasks):
-#   art-gen        one agy (Gemini) image-model pass; the asset lands at the
-#                  task's first `files` entry, or assets/art/<task-slug>.png
+# Two more built-ins generate IMAGE ASSETS instead of editing code (the
+# classifier assigns them to "generate/create/draw an image/sprite/icon/…"
+# tasks). Both ALWAYS run on a frontier claude model — fable preferred, opus
+# allowed; routing/pins to anything weaker are overridden at pass time — and
+# that claude pass ORCHESTRATES: it invokes agy (the Gemini image model)
+# through `workshop agy-run` (agy drops output/hangs on piped stdio, so it
+# gets a hidden console), verifies what agy wrote, and may refine + retry:
+#   art-gen        claude directs one agy image generation; the asset lands
+#                  at the task's first `files` entry, or
+#                  assets/art/<task-slug>.png
 #   art-gen-trans  art-gen for assets needing a TRANSPARENT background
 #                  (classifier: same phrasing + "transparent"/"no background"
 #                  wording): generation, then — strictly linear, holding the
-#                  engine-wide exclusive agy slot — the SAME agy conversation
-#                  is resumed to repaint the background as a flat green
+#                  engine-wide exclusive agy slot — claude resumes the SAME
+#                  agy conversation to repaint the background as a flat green
 #                  screen (blue when the subject itself is green-heavy), and
-#                  the screen is keyed away ([art] below), leaving a
+#                  the engine keys the screen away ([art] below), leaving a
 #                  transparent PNG at the target path.
 # Every image agy writes (the asset, and -trans's screened intermediate) is
 # byte-verified before anything downstream trusts it: the extension is never
 # assumed — a file whose bytes are actually JPEG/WebP/GIF/BMP/TIFF is
 # re-encoded as a real PNG in place (event "art.normalized"); undecodable
-# bytes fail the pass.
-# Both ONLY run on agy, preferring the model "Gemini 3.1 Pro (High)" and
-# falling back to "Gemini 3.5 Flash (High)" — engine launch verifies which
-# of those agy actually offers (quota-free probe) and art passes use the
-# verified label. agy labels must be EXACT: "gemini 3 pro" is rejected.
+# bytes fail the pass. A pass that leaves no NEW agy conversation record
+# fails outright: the image must come from agy, never be fabricated by the
+# orchestrator.
+# The image model is agy's, preferring "Gemini 3.1 Pro (High)" and falling
+# back to "Gemini 3.5 Flash (High)" — engine launch verifies which of those
+# agy actually offers (quota-free probe) and the orchestrator is told to use
+# the verified label. agy labels must be EXACT: "gemini 3 pro" is rejected.
 [types.code]
 agent  = "claude"
 model  = "claude-opus-4-8"
@@ -167,8 +176,15 @@ remover = "builtin"          # builtin (pure-Go color keyer, default)
                              #   venv measured 2+ hours per image, so provision
                              #   it with `uv sync --extra cuda`)
                              # | ffmpeg (colorkey+despill; needs ffmpeg on PATH)
-                             # Switchable LIVE from the dashboard topbar (🎨
-                             # keyer) — applies to the next art pass.
+                             # Switchable LIVE from the dashboard settings
+                             # panel (⚙ → keyers) — applies to the next art pass.
+# removers = ["builtin", "ffmpeg"]  # multi-keyer comparison mode (beats `remover`):
+                             # every listed backend keys each screen; the FIRST
+                             # entry's output becomes the committed asset, the
+                             # rest are archived beside the pass log (and
+                             # mirrored by [export]) as iter-NNNNNN.keyed-<keyer>.png
+                             # so a human can compare files and settle on the
+                             # most effective keyer.
 # corridorkey_dir = 'C:\GameDev\CorridorKey'   # WORKSHOP_CORRIDORKEY env also works
 
 [export]                     # audit trail: mirror pass evidence to a folder you choose

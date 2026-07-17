@@ -129,20 +129,23 @@ type WorkerConfig struct {
 	//   AgyMu — engine-wide agy serialization. Art passes hold the WRITE
 	//     lock across their whole multi-invocation sequence: agy records
 	//     "last conversation per workdir" in a shared JSON it rewrites
-	//     whole, and the art flow's session-resume step depends on that
-	//     record — ANY concurrently running agy -p instance races it.
+	//     whole, and the art flow's conversation-resume step depends on
+	//     that record — ANY concurrently running agy -p instance races it
+	//     (art passes spawn claude, which runs agy underneath via
+	//     `workshop agy-run`; the lock covers those child runs too).
 	//     Ordinary agy passes take the READ lock (they may overlap each
-	//     other, and claude passes are unaffected). Lock ORDER is AgyMu
-	//     before Sem, always — see spawn.
+	//     other, and ordinary claude passes are unaffected). Lock ORDER is
+	//     AgyMu before Sem, always — see spawn.
 	SyncTrunk string
 	TreeMu    *sync.Mutex
 	Sem       *semaphore.Weighted
 	AgyMu     *sync.RWMutex
 
-	// Art-pass settings ([art] config): the default green/blue-screen
-	// remover (kv "art.remover" overrides it live) and the CorridorKey
+	// Art-pass settings ([art] config): the default green/blue-screen keyer
+	// list — ordered, primary first; extra entries key comparison copies (kv
+	// "art.removers"/"art.remover" overrides it live) — and the CorridorKey
 	// checkout dir for the corridorkey backend.
-	ArtRemover     string
+	ArtRemovers    []string
 	CorridorkeyDir string
 
 	// Export settings ([export] config, resolved per pipeline by the app
@@ -424,9 +427,10 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		return w.runConflictPass(ctx, pass, task, res, sessionID)
 	}
 
-	// Art-generation tasks run the dedicated image flow (agy image model;
-	// -trans adds a session-resumed rescreen plus chroma keying) — never
-	// the coding contract.
+	// Art-generation tasks run the dedicated image flow (a frontier claude
+	// orchestrator invokes the agy image model; -trans adds a
+	// conversation-resumed rescreen plus chroma keying) — never the coding
+	// contract.
 	if task != nil && domain.IsArtType(task.Type) {
 		return w.runArtPass(ctx, pass, task, res, sessionID)
 	}

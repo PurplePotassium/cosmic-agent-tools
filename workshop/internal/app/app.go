@@ -49,6 +49,22 @@ type App struct {
 	inqSeq    int64
 	inqList   []*Inquiry
 	inqCancel context.CancelFunc
+
+	// agyMu is the engine-wide agy serialization lock (see WorkerConfig.AgyMu).
+	// It lives on the App — not in RunHeadless — so on-demand agy probes (the
+	// settings panel's "re-verify models") share the same discipline as the
+	// engine's own spawns, across halt/relaunch cycles. Zero value ready.
+	agyMu sync.RWMutex
+	// artVerifying is set while an agy art-model verification is in flight
+	// (launch probe or dashboard re-verify), so the settings panel can show
+	// progress and re-clicks don't stack probes.
+	artVerifying atomic.Bool
+
+	// env.go's probe cache (tool versions are slow to spawn, the settings
+	// panel may poll).
+	envMu sync.Mutex
+	envAt time.Time
+	env   *EnvInfo
 }
 
 // Res returns the current resolved-config snapshot. Grab it ONCE per
@@ -208,7 +224,7 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engi
 		TreeMu:              opts.TreeMu,
 		Sem:                 opts.Sem,
 		AgyMu:               opts.AgyMu,
-		ArtRemover:          cfg.Art.Remover,
+		ArtRemovers:         cfg.ArtKeyers(),
 		CorridorkeyDir:      chroma.DiscoverCorridorKey(cfg.Art.CorridorkeyDir),
 		ExportDir:           exportDir,
 		ExportHumanReadable: cfg.Export.HumanReadable,
@@ -418,10 +434,12 @@ func (a *App) RunHeadless(ctx context.Context, iterations int, untilDrained, sta
 		maxConc = 1
 	}
 	sem := semaphore.NewWeighted(int64(maxConc))
-	// One agy serialization lock per engine: art passes take it exclusively
+	// One agy serialization lock per App: art passes take it exclusively
 	// (their conversation-resume record is a shared file every agy run
-	// rewrites), ordinary agy passes share it, claude passes ignore it.
-	agyMu := &sync.RWMutex{}
+	// rewrites), ordinary agy passes share it, claude passes ignore it. It
+	// also covers on-demand probes (settings panel re-verify) launched
+	// outside RunHeadless — see the App.agyMu field comment.
+	agyMu := &a.agyMu
 
 	// Verify agy's art models in the background: art passes read the
 	// verified label from the kv store per pass, so the result applies the

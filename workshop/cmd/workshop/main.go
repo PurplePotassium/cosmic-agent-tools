@@ -31,11 +31,23 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "_fake-agent" {
 		os.Exit(fakeagent.Main())
 	}
+	// agy passthrough: everything after "agy-run" goes to agy verbatim, no
+	// flag parsing here (the args belong to agy, not workshop).
+	if len(os.Args) > 1 && os.Args[1] == "agy-run" {
+		os.Exit(cmdAgyRun(os.Args[2:]))
+	}
 
 	cmd := "up"
 	args := os.Args[1:]
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		cmd, args = args[0], args[1:]
+	if len(args) > 0 {
+		switch {
+		case args[0] == "-h", args[0] == "-help", args[0] == "--help":
+			cmd = "help"
+		case args[0] == "-v", args[0] == "--version":
+			cmd = "version"
+		case !strings.HasPrefix(args[0], "-"):
+			cmd, args = args[0], args[1:]
+		}
 	}
 
 	var code int
@@ -75,6 +87,15 @@ func main() {
 func usage() {
 	fmt.Print(`workshop — autonomous coding-agent loops with a live dashboard
 
+Workshop runs coding agents (claude = Claude Code, agy = Gemini CLI)
+in unattended loops against the git repo it is invoked in. Each pass
+picks eligible work from the backlog (or the repo's GOAL.md), runs the
+agent, and commits the result — repeating until stopped, drained, or
+halted by a safety breaker. A local web dashboard lets you watch passes
+live, steer pipelines, and stop them. Configuration lives in
+.workshop/config.toml — created with the default settings on first
+launch (`+"`workshop init`"+` scaffolds it too, along with GOAL.md).
+
 usage: workshop [command] [flags]
 
   up       start the server + enabled pipelines in the foreground (default)
@@ -85,6 +106,8 @@ usage: workshop [command] [flags]
   stop     gracefully stop the running server (--force kills a hung engine)
   doctor   check the environment (git, agents, config, state dir)
   bug      write a self-contained bug report (env, git, config, status; --logs adds the last pass log)
+  agy-run  run agy with the given args in a hidden console (agy drops output
+           on pipes) — how art-pass orchestrators invoke it; exits with agy's code
   path     print resolved directories and config files
   migrate  import GOAL/PROMPT/backlog from the old PowerShell workshop
   version  print the version
@@ -124,6 +147,7 @@ func cmdRun(args []string) int {
 		defer tcancel()
 	}
 
+	ensureRepoConfig(ctx, *repo)
 	a, err := openApp(ctx, *repo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -159,6 +183,7 @@ func cmdUp(args []string) int {
 	ctx, cancel := interruptCtx()
 	defer cancel()
 
+	ensureRepoConfig(ctx, *repo)
 	a, err := openApp(ctx, *repo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -184,6 +209,7 @@ func cmdUp(args []string) int {
 		return a.RunHeadless(ctx, a.Res().Config.Safety.MaxIterations, false, startStopped)
 	})
 	srv := server.New(a, cancel, ctl.Halt)
+	srv.Version = Version
 	wantPort := a.Res().Config.Server.Port
 	if *port != 0 {
 		wantPort = *port

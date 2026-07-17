@@ -37,11 +37,45 @@ type ArtConfig struct {
 	// "builtin" (pure-Go color keyer, the default), "corridorkey" (the
 	// neural keyer at CorridorkeyDir), or "ffmpeg" (colorkey+despill,
 	// needs ffmpeg on PATH). The dashboard can override it live (kv
-	// "art.remover") without a restart, mirroring the pipeline overrides.
+	// "art.remover" / "art.removers") without a restart, mirroring the
+	// pipeline overrides. Ignored when Removers is set.
 	Remover string `toml:"remover"`
+	// Removers is the ordered multi-keyer form of Remover: every listed
+	// backend keys each art-gen-trans screen; the FIRST entry's output
+	// becomes the committed asset, the rest are archived beside the pass log
+	// (iter-NNNNNN.keyed-<keyer>.png, mirrored by [export]) so a human can
+	// compare backends side by side and settle on the most effective one.
+	// Non-empty, it takes precedence over Remover.
+	Removers []string `toml:"removers"`
 	// CorridorkeyDir is the CorridorKey checkout used by the corridorkey
 	// remover (WORKSHOP_CORRIDORKEY env overrides).
 	CorridorkeyDir string `toml:"corridorkey_dir"`
+}
+
+// ArtKeyers resolves the configured keyer list: [art].removers when set,
+// else [art].remover as a one-element list, else the chroma default. The
+// returned slice is always non-empty, deduped, primary first — a fresh copy
+// the caller may own.
+func (c *Config) ArtKeyers() []string {
+	src := c.Art.Removers
+	if len(src) == 0 {
+		if c.Art.Remover != "" {
+			return []string{c.Art.Remover}
+		}
+		return []string{chroma.Removers[0]}
+	}
+	out := make([]string, 0, len(src))
+	seen := map[string]bool{}
+	for _, r := range src {
+		if r != "" && !seen[r] {
+			seen[r] = true
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return []string{chroma.Removers[0]}
+	}
+	return out
 }
 
 // ExportConfig mirrors each finished pass's evidence files (pass log, driver
@@ -187,15 +221,17 @@ func Default() Config {
 		// integrator's conflict-task machinery keys on. Operators override
 		// per-type bundles ([types.art] agent = "agy" ...) to route work.
 		//
-		// The two art-generation types are the exception: they are agy-only
-		// by definition (the pass calls a Gemini image model), so they ship
-		// pre-routed to agy. The MODEL is deliberately not pinned here — the
-		// engine picks the launch-verified label (prefer Gemini 3.1 Pro
-		// (High), else Gemini 3.5 Flash (High)) at pass time.
+		// The two art-generation types are the exception: they are
+		// claude-orchestrated by definition — a frontier claude pass invokes
+		// the agy (Gemini) image model via `workshop agy-run` and verifies
+		// its output — so they ship pre-routed to claude. The MODEL is
+		// deliberately not pinned here: the engine forces a frontier family
+		// (fable, else opus) at pass time and hands agy the launch-verified
+		// Gemini label.
 		Types: map[string]domain.Bundle{
 			"code": {}, "tests": {}, "docs": {}, "art": {}, "audio": {}, "merge-conflict": {},
-			domain.ArtGenType:      {Agent: "agy"},
-			domain.ArtGenTransType: {Agent: "agy"},
+			domain.ArtGenType:      {Agent: "claude"},
+			domain.ArtGenTransType: {Agent: "claude"},
 		},
 		Art:    ArtConfig{Remover: "builtin"},
 		Server: ServerConfig{Port: 4455, OpenBrowser: true, StartStopped: true},
@@ -479,6 +515,16 @@ func (c *Config) Validate() (errs, warns []error) {
 	}
 	if !chroma.ValidRemover(c.Art.Remover) {
 		errs = append(errs, fmt.Errorf("art.remover: %q is not one of %v", c.Art.Remover, chroma.Removers))
+	}
+	seenRemovers := map[string]bool{}
+	for _, r := range c.Art.Removers {
+		switch {
+		case r == "" || !chroma.ValidRemover(r):
+			errs = append(errs, fmt.Errorf("art.removers: %q is not one of %v", r, chroma.Removers))
+		case seenRemovers[r]:
+			errs = append(errs, fmt.Errorf("art.removers: duplicate entry %q", r))
+		}
+		seenRemovers[r] = true
 	}
 	if c.Export.HumanReadable && c.Export.Dir == "" {
 		warns = append(warns, fmt.Errorf("export.human_readable is set but export.dir is empty — nothing is exported until a destination folder is configured"))

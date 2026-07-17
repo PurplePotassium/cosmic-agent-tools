@@ -82,11 +82,13 @@ var ClaudeModels = []string{"claude-sonnet", "claude-fable", "claude-opus", "cla
 // produces a warning, never blocks.
 var AgyModels = []string{"gemini"}
 
-// Art-generation task types. Both are executed by the agy driver (Gemini) —
-// they are the only task types whose passes call an image-generation model
-// instead of editing code. art-gen-trans additionally rescreens the asset in
-// the SAME agy conversation and chroma-keys the background away, producing a
-// transparent PNG.
+// Art-generation task types. Both run on the claude driver pinned to a
+// frontier model (see ArtClaudeModels): the claude pass ORCHESTRATES — it
+// invokes the Antigravity CLI (agy, the Gemini image model) to do the actual
+// image generation and verifies what agy wrote. They are the only task types
+// whose passes produce an image asset instead of editing code. art-gen-trans
+// additionally rescreens the asset in the SAME agy conversation and
+// chroma-keys the background away, producing a transparent PNG.
 const (
 	ArtGenType      = "art-gen"
 	ArtGenTransType = "art-gen-trans"
@@ -95,11 +97,36 @@ const (
 // IsArtType reports whether t names one of the art-generation task types.
 func IsArtType(t string) bool { return t == ArtGenType || t == ArtGenTransType }
 
+// ArtClaudeModels is the ordered preference list of claude model-id PREFIXES
+// allowed to orchestrate an art pass: only the frontier families — fable (the
+// Mythos-class tier above opus) first, then opus. Directing an image model
+// and judging its output is judgment-heavy work, so weaker families are
+// re-routed at pass time. Prefixes, not full ids, so a newer (better) version
+// of either family qualifies without a code change.
+var ArtClaudeModels = []string{"claude-fable", "claude-opus"}
+
+// ArtClaudeDefault is the claude model art passes run when routing/pinning
+// did not already pick an allowed frontier model.
+const ArtClaudeDefault = "claude-fable-5"
+
+// AllowedArtClaudeModel reports whether model belongs to one of the frontier
+// families allowed to orchestrate art passes (case-insensitive prefix match).
+func AllowedArtClaudeModel(model string) bool {
+	lower := strings.ToLower(model)
+	for _, fam := range ArtClaudeModels {
+		if strings.HasPrefix(lower, fam) {
+			return true
+		}
+	}
+	return false
+}
+
 // ArtAgyModels is the ordered preference list of agy model labels allowed to
-// run art passes. These are agy's EXACT `--model` labels (verified against
-// `agy models` / the invalid-model probe — see AGENTS.md): shorthand like
-// "gemini 3 pro" is rejected by agy with exit 1. Earlier entries are
-// preferred; launch verification picks the first one agy actually offers.
+// generate art-pass images — the label the claude orchestrator hands to agy's
+// --model flag. These are agy's EXACT labels (verified against `agy models` /
+// the invalid-model probe — see AGENTS.md): shorthand like "gemini 3 pro" is
+// rejected by agy with exit 1. Earlier entries are preferred; launch
+// verification picks the first one agy actually offers.
 var ArtAgyModels = []string{"Gemini 3.1 Pro (High)", "Gemini 3.5 Flash (High)"}
 
 // AllowedArtModel reports whether model is one of the labels art passes may

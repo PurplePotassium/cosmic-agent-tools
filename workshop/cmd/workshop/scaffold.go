@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,47 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/gitx"
 )
+
+// ensureRepoConfig writes the default .workshop/config.toml (the same template
+// `workshop init` scaffolds) the first launch in a repo that has none, so the
+// defaults are visible and editable instead of implicit. Best-effort by
+// design: any failure just leaves config resolution to the built-in defaults,
+// and a repo that isn't a git repo falls through to openApp's real error.
+func ensureRepoConfig(ctx context.Context, repoOverride string) {
+	dir := repoOverride
+	if dir == "" {
+		if wd, err := os.Getwd(); err == nil {
+			dir = wd
+		}
+	}
+	if dir == "" || !gitx.IsRepo(ctx, dir) {
+		return
+	}
+	root, err := gitx.Root(ctx, dir)
+	if err != nil {
+		return
+	}
+	path := config.RepoConfigFile(root)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	// O_EXCL: two concurrent launches must not truncate each other's write.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	_, werr := f.WriteString(scaffoldConfig(filepath.Base(root), false, nil))
+	if cerr := f.Close(); werr != nil || cerr != nil {
+		// A half-written TOML file would fail config load on every future
+		// start — worse than no file at all.
+		_ = os.Remove(path)
+		return
+	}
+	fmt.Printf("first launch in this repo — created %s with the default settings (`workshop init` also adds GOAL.md)\n", path)
+}
 
 func cmdInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)

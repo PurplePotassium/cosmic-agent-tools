@@ -89,9 +89,10 @@ func cmdDoctor(args []string) int {
 		add("agent:"+name, "PASS", detail, "")
 	}
 
-	// agy art models: art-gen / art-gen-trans passes run on agy with one of
-	// the allowed Gemini labels — verify agy actually offers one (quota-free
-	// probe; see driver.(*Agy).ListModels). Skipped in fake-agent harnesses,
+	// agy art models: art-gen / art-gen-trans passes run a claude
+	// orchestrator that hands agy one of the allowed Gemini labels — verify
+	// agy actually offers one (quota-free probe; see
+	// driver.(*Agy).ListModels). Skipped in fake-agent harnesses,
 	// with the same truthy WORKSHOP_SKIP_AGY_VERIFY semantics as the app's
 	// launch verification ("0" must not silently skip here but verify there).
 	skipAgy := false
@@ -114,7 +115,7 @@ func cmdDoctor(args []string) int {
 				}
 			}
 			if pick != "" {
-				add("art models", "PASS", fmt.Sprintf("agy offers %s (art passes will use it)", pick), "")
+				add("art models", "PASS", fmt.Sprintf("agy offers %s (art passes hand it to agy)", pick), "")
 			} else {
 				add("art models", "FAIL", fmt.Sprintf("agy offers none of %v — saw %v", domain.ArtAgyModels, models), "update agy (`agy update`) or refresh its login, then re-run workshop doctor")
 			}

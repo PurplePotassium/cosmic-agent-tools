@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/chroma"
 	"github.com/PurplePotassium/cosmic-agent-tools/workshop/internal/domain"
@@ -21,15 +24,19 @@ import (
 // kv keys shared between the engine (art passes), launch verification, and
 // the dashboard's live art settings.
 const (
-	// KVArtAgyModel is the launch-verified agy model label art passes run
-	// (the first domain.ArtAgyModels entry agy actually offers).
+	// KVArtAgyModel is the launch-verified agy model label art passes hand
+	// to agy (the first domain.ArtAgyModels entry agy actually offers).
 	KVArtAgyModel = "art.agyModel"
 	// KVArtAgyModels is the JSON list of every label the launch probe saw
 	// (doctor/status display).
 	KVArtAgyModels = "art.agyModels"
-	// KVArtRemover is the live green/blue-screen remover override
-	// (dashboard); empty/absent = the [art].remover config value.
+	// KVArtRemover is the legacy single-keyer live override (dashboard);
+	// superseded by KVArtRemovers but still honored when only it is set.
 	KVArtRemover = "art.remover"
+	// KVArtRemovers is the live keyer-list override (dashboard settings
+	// panel): a JSON string array, ordered, primary first. Empty/absent =
+	// the [art] config value.
+	KVArtRemovers = "art.removers"
 )
 
 // greenSubjectThreshold: when at least this fraction of the generated image
@@ -50,18 +57,23 @@ const chromaTimeout = 15 * time.Minute
 // backend.
 var chromaRemove = chroma.Remove
 
-// runArtPass executes an art-generation task: agy (Gemini image model)
-// generates the asset. For art-gen that is the whole pass; art-gen-trans
-// continues strictly linearly — resume the SAME agy conversation to repaint
-// the background as a flat green/blue screen, then key that screen away with
-// the selected remover, leaving a transparent PNG at the target path. Every
-// image agy writes is byte-verified (and re-encoded when mislabeled) before
-// downstream steps trust it — see artNormalize.
+// runArtPass executes an art-generation task: a frontier claude model (see
+// domain.ArtClaudeModels) ORCHESTRATES — it invokes agy (the Gemini image
+// model) through `workshop agy-run` to generate the asset, and verifies what
+// agy wrote. For art-gen that is the whole pass; art-gen-trans continues
+// strictly linearly — the orchestrator resumes the SAME agy conversation to
+// repaint the background as a flat green/blue screen, then the engine keys
+// that screen away with the selected remover, leaving a transparent PNG at
+// the target path. Every image agy writes is byte-verified (and re-encoded
+// when mislabeled) before downstream steps trust it — see artNormalize. A
+// stage that leaves no NEW agy conversation record fails: the image must
+// come from agy, never be fabricated by the orchestrator.
 //
 // The whole agy portion holds the EXCLUSIVE agy slot (WorkerConfig.AgyMu):
 // the conversation id is recovered from agy's per-workdir
 // last_conversations.json, a whole-file-rewritten record that any concurrent
-// agy -p instance races. claude passes are unaffected.
+// agy -p instance — including one under another pass's orchestrator — races.
+// Ordinary claude passes are unaffected.
 func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain.Task, routed *resolved, sessionID string) (PassResult, error) {
 	name := w.cfg.Pipeline.Name
 	trans := task.Type == domain.ArtGenTransType
@@ -69,6 +81,14 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 	res, err := w.resolveArt(ctx, routed)
 	if err != nil {
 		return w.failSetup(ctx, pass, task, err)
+	}
+	agyModel := w.artAgyModel(ctx, routed)
+	// RunPass mints session ids from the ROUTED driver's capabilities; the
+	// art pass may have swapped driver families (e.g. an agy-pinned task), so
+	// mint one here when the orchestrator records sessions and routing didn't.
+	if sessionID == "" && res.caps.Sessions {
+		sessionID = uuid.NewString()
+		w.patchPass(ctx, pass.ID, store.PassPatch{SessionID: &sessionID})
 	}
 
 	target, err := artTargetPath(task)
@@ -97,7 +117,7 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 	w.setState(ctx, pass, domain.PassRunning)
 	w.event(ctx, "pass.started", name, pass.ID, map[string]any{
 		"n": pass.N, "task": task.Title, "art": true, "type": task.Type, "target": target,
-		"agent": res.bundle.Agent, "model": res.bundle.Model,
+		"agent": res.bundle.Agent, "model": res.bundle.Model, "agyModel": agyModel,
 	})
 
 	// Exclusive agy slot for the whole generate(+rescreen) sequence.
@@ -141,17 +161,19 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 		return PassRan, nil
 	}
 
-	// Stage 1: generate the asset.
-	fmt.Fprintf(logFile, "art stage 1: generate %s (model %s)\n", target, res.bundle.Model)
+	// Stage 1: generate the asset — the orchestrator directs agy.
+	fmt.Fprintf(logFile, "art stage 1: generate %s (orchestrator %s, image model %s)\n", target, res.bundle.Model, agyModel)
+	var tail []string
 	var timedOut bool
 	var runErr error
-	exitCode, _, timedOut, runErr = w.spawn(ctx, pass, res, w.artGenPrompt(task, target, trans), w.cfg.RepoDir, logPath, logFile, sessionID, "")
+	genPrompt := w.artGenPrompt(task, target, trans, w.artAgyCommand(agyModel, "", logPath+".agy.op.log"))
+	exitCode, tail, timedOut, runErr = w.spawn(ctx, pass, res, genPrompt, w.cfg.RepoDir, logPath, logFile, sessionID, "")
 	if ctx.Err() != nil {
 		_ = w.st.ReleaseTask(ctx, task.ID)
 		w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailSetup, exitCode, "")
 		return PassRan, ctx.Err()
 	}
-	if res2, err2, handled := w.artRunFailure(ctx, pass, res, fail, exitCode, timedOut, runErr, task); handled {
+	if res2, err2, handled := w.artRunFailure(ctx, pass, res, fail, exitCode, tail, timedOut, runErr, task); handled {
 		return res2, err2
 	}
 	progress := statedir.ReadProgress(w.cfg.StateDir)
@@ -165,21 +187,28 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 	if _, err := os.Stat(targetAbs); err != nil {
 		return fail(domain.FailExit, fmt.Sprintf("agent reported done but %s does not exist", target))
 	}
+	// The asset must come FROM agy: a done-report with no new conversation
+	// record means the orchestrator fabricated (or copied) the file instead
+	// of running agy from the repository root. -trans additionally needs the
+	// id to resume the conversation for the rescreen.
+	conv, cerr := driver.AgyLastConversation(w.cfg.RepoDir)
+	if cerr != nil {
+		return fail(domain.FailSetup, "agy conversation lookup: "+cerr.Error())
+	}
+	if conv == "" || conv == prevConv {
+		return fail(domain.FailExit, "no new agy conversation recorded for this workdir — the image must be generated by agy (via `workshop agy-run`, from the repository root)")
+	}
 	if res2, err2, handled := w.artNormalize(ctx, pass, fail, logFile, targetAbs, target); handled {
 		return res2, err2
 	}
-	w.event(ctx, "art.generated", name, pass.ID, map[string]any{"target": target})
+	w.event(ctx, "art.generated", name, pass.ID, map[string]any{"target": target, "conversation": conv})
 
 	result := "generated " + target
-	if trans {
-		// Stage 2: rescreen, continuing the SAME agy conversation.
-		conv, cerr := driver.AgyLastConversation(w.cfg.RepoDir)
-		if cerr != nil {
-			return fail(domain.FailSetup, "agy conversation lookup: "+cerr.Error())
-		}
-		if conv == "" || conv == prevConv {
-			return fail(domain.FailSetup, "cannot identify the agy conversation to resume (no new last_conversations.json entry for this workdir)")
-		}
+	if !trans {
+		archiveAgyTranscript(conv, logPath)
+	} else {
+		// Stage 2: rescreen — the orchestrator resumes the SAME agy
+		// conversation (the id rides in the command template).
 		key := chroma.KeyGreen
 		if frac, ferr := chroma.FractionKeyish(targetAbs, chroma.KeyGreen); ferr == nil && frac > greenSubjectThreshold {
 			key = chroma.KeyBlue // the sprite is genuinely green — blue screen keys cleaner
@@ -189,14 +218,24 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 		if err := statedir.WriteJSON(filepath.Join(w.cfg.StateDir, statedir.ProgressFile), domain.Progress{}); err != nil {
 			return fail(domain.FailSetup, "reset progress.json: "+err.Error())
 		}
-		fmt.Fprintf(logFile, "\nart stage 2: rescreen %s (conversation %s) -> %s\n", key, conv, screen)
-		exitCode, _, timedOut, runErr = w.spawn(ctx, pass, res, w.artRescreenPrompt(target, screen, key), w.cfg.RepoDir, logPath, logFile, sessionID, conv)
+		// The rescreen is a SECOND orchestrator run: it needs its own session
+		// id (claude refuses a reused one) and its own op-log/transcript stem
+		// so stage 1's evidence is not overwritten.
+		sessionID2 := ""
+		if res.caps.Sessions {
+			sessionID2 = uuid.NewString()
+			fmt.Fprintf(logFile, "rescreen session: %s\n", sessionID2)
+		}
+		rescreenLog := strings.TrimSuffix(logPath, ".log") + ".rescreen.log"
+		fmt.Fprintf(logFile, "\nart stage 2: rescreen %s (agy conversation %s) -> %s\n", key, conv, screen)
+		rescreenPrompt := w.artRescreenPrompt(target, screen, key, w.artAgyCommand(agyModel, conv, rescreenLog+".agy.op.log"))
+		exitCode, tail, timedOut, runErr = w.spawn(ctx, pass, res, rescreenPrompt, w.cfg.RepoDir, rescreenLog, logFile, sessionID2, "")
 		if ctx.Err() != nil {
 			_ = w.st.ReleaseTask(ctx, task.ID)
 			w.finishPass(ctx, pass, domain.PassFailed, domain.OutcomeFailed, domain.FailSetup, exitCode, "")
 			return PassRan, ctx.Err()
 		}
-		if res2, err2, handled := w.artRunFailure(ctx, pass, res, fail, exitCode, timedOut, runErr, task); handled {
+		if res2, err2, handled := w.artRunFailure(ctx, pass, res, fail, exitCode, tail, timedOut, runErr, task); handled {
 			return res2, err2
 		}
 		progress = statedir.ReadProgress(w.cfg.StateDir)
@@ -210,6 +249,8 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 		if _, err := os.Stat(screenAbs); err != nil {
 			return fail(domain.FailExit, fmt.Sprintf("agent reported done but %s does not exist", screen))
 		}
+		// Archive AFTER the resume so the transcript holds both stages.
+		archiveAgyTranscript(conv, logPath)
 		unlockAgy() // agy work is over; verification and keying are local
 		if res2, err2, handled := w.artNormalize(ctx, pass, fail, logFile, screenAbs, screen); handled {
 			return res2, err2
@@ -217,10 +258,14 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 		w.event(ctx, "art.rescreened", name, pass.ID, map[string]any{"screen": screen, "key": key.String()})
 
 		// Stage 3: key the screen away — transparent PNG lands at target.
-		remover, ckDir := w.artRemover(ctx)
-		fmt.Fprintf(logFile, "art stage 3: remove %s screen via %s\n", key, remover)
+		// With more than one keyer selected the FIRST (primary) produces the
+		// committed asset; the rest key the same screen into comparison files
+		// beside the pass log (see compareKeyers).
+		removers, ckDir := w.artRemovers(ctx)
+		primary := removers[0]
+		fmt.Fprintf(logFile, "art stage 3: remove %s screen via %s\n", key, primary)
 		kctx, cancel := context.WithTimeout(ctx, chromaTimeout)
-		kerr := chromaRemove(kctx, remover, ckDir, screenAbs, targetAbs, key)
+		kerr := chromaRemove(kctx, primary, ckDir, screenAbs, targetAbs, key)
 		cancel()
 		if ctx.Err() != nil {
 			// Engine shutdown mid-keying, not a keying failure: conclude the
@@ -237,12 +282,18 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 		if verr := chroma.VerifyTransparency(targetAbs); verr != nil {
 			return fail(domain.FailExit, verr.Error())
 		}
+		if len(removers) > 1 {
+			w.compareKeyers(ctx, pass, logFile, logPath, screenAbs, targetAbs, target, removers, ckDir, key)
+		}
 		// The intermediate screen image is forensic material, not an asset:
 		// archive it next to the pass log, out of the repository.
 		_ = statedir.CopyFile(screenAbs, strings.TrimSuffix(logPath, ".log")+".screen.png")
 		_ = os.Remove(screenAbs)
-		w.event(ctx, "art.keyed", name, pass.ID, map[string]any{"target": target, "remover": remover, "key": key.String()})
-		result = fmt.Sprintf("generated %s with a transparent background (%s screen keyed via %s)", target, key, remover)
+		w.event(ctx, "art.keyed", name, pass.ID, map[string]any{"target": target, "remover": primary, "key": key.String()})
+		result = fmt.Sprintf("generated %s with a transparent background (%s screen keyed via %s)", target, key, primary)
+		if len(removers) > 1 {
+			result += fmt.Sprintf("; %d comparison keyings archived beside the pass log", len(removers)-1)
+		}
 	}
 
 	if progress.Decisions != "" {
@@ -258,10 +309,10 @@ func (w *Worker) runArtPass(ctx context.Context, pass *domain.Pass, task *domain
 	return PassRan, nil
 }
 
-// artRunFailure funnels one agy invocation's process-level failures
+// artRunFailure funnels one orchestrator invocation's process-level failures
 // (spawn error, wedge, nonzero exit) through the pass bookkeeping. handled
 // is false when the invocation succeeded.
-func (w *Worker) artRunFailure(ctx context.Context, pass *domain.Pass, res *resolved, fail func(domain.FailKind, string) (PassResult, error), exitCode int, timedOut bool, runErr error, task *domain.Task) (PassResult, error, bool) {
+func (w *Worker) artRunFailure(ctx context.Context, pass *domain.Pass, res *resolved, fail func(domain.FailKind, string) (PassResult, error), exitCode int, tail []string, timedOut bool, runErr error, task *domain.Task) (PassResult, error, bool) {
 	switch {
 	case runErr != nil:
 		r, e := w.failSetup(ctx, pass, task, runErr)
@@ -271,17 +322,12 @@ func (w *Worker) artRunFailure(ctx context.Context, pass *domain.Pass, res *reso
 		r, e := fail(domain.FailTimeout, "wedged")
 		return r, e, true
 	case exitCode != 0:
-		// agy is blind: a failure with no progress start-write smells like
-		// dead auth or a rejected model id — same heuristic as settlePass.
-		if res.caps.Capture == driver.CaptureNone && statedir.ReadProgress(w.cfg.StateDir).Phase == "" {
-			w.consecNoReport++
-			if w.consecNoReport == w.cfg.SuspectAuthAfter {
-				w.event(ctx, "auth.suspected", w.cfg.Pipeline.Name, pass.ID, map[string]any{
-					"agent": res.drv.Name(),
-					"note": fmt.Sprintf("%d consecutive failures with no self-report — check auth interactively (run `%s` once) and verify the model id",
-						w.consecNoReport, res.drv.Name()),
-				})
-			}
+		// The orchestrator is claude: auth failures are detectable in the
+		// captured output, and — like settlePass — they park the pipeline
+		// instead of burning retries (auth never self-heals).
+		if res.caps.AuthProbe && isAuthFailure(tail) {
+			r, e := w.haltAuth(ctx, pass, task, res, exitCode)
+			return r, e, true
 		}
 		r, e := fail(domain.FailExit, fmt.Sprintf("agent exit %d", exitCode))
 		return r, e, true
@@ -310,36 +356,32 @@ func (w *Worker) artNormalize(ctx context.Context, pass *domain.Pass, fail func(
 	return PassRan, nil, false
 }
 
-// resolveArt forces an art pass onto agy with an allowed art model. Routing
-// may have produced anything (a pipeline's claude bundle, a foreign pin) —
-// art passes are agy-only BY DEFINITION, so the agent is never negotiable.
-// The model keeps whatever routing/pinning chose IF it is one of the allowed
-// labels; otherwise the launch-verified label (KVArtAgyModel), else the
-// preferred default.
+// resolveArt forces an art pass onto claude with a frontier model. Routing
+// may have produced anything (an agy pin, a pipeline's haiku bundle) — art
+// passes are claude-orchestrated BY DEFINITION (the pass invokes agy for the
+// actual image generation via `workshop agy-run`), so the agent is never
+// negotiable. The model keeps whatever routing/pinning chose IF it belongs to
+// one of the allowed frontier families (fable/opus, any version); anything
+// weaker becomes domain.ArtClaudeDefault.
 func (w *Worker) resolveArt(ctx context.Context, routed *resolved) (*resolved, error) {
 	bundle := routed.bundle
-	if !strings.EqualFold(bundle.Agent, "agy") {
+	if !strings.EqualFold(bundle.Agent, "claude") {
 		w.event(ctx, "art.route_forced", w.cfg.Pipeline.Name, 0, map[string]any{
-			"routedAgent": bundle.Agent, "note": "art tasks always run on agy",
+			"routedAgent": bundle.Agent, "note": "art tasks always run on claude, which invokes agy for the image",
 		})
-		bundle = domain.Bundle{Agent: "agy"}
+		bundle = domain.Bundle{Agent: "claude", Effort: bundle.Effort}
 	}
-	if !domain.AllowedArtModel(bundle.Model) {
-		model, _ := w.st.GetKV(ctx, KVArtAgyModel)
-		if !domain.AllowedArtModel(model) {
-			model = domain.ArtAgyModels[0]
-		}
-		bundle.Model = model
+	if !domain.AllowedArtClaudeModel(bundle.Model) {
+		bundle.Model = domain.ArtClaudeDefault
 	}
-	bundle.Effort = "" // agy has no effort flag
 
-	drv, ok := w.drivers["agy"]
+	drv, ok := w.drivers["claude"]
 	if !ok {
 		var err error
-		if drv, err = driver.New("agy"); err != nil {
+		if drv, err = driver.New("claude"); err != nil {
 			return nil, err
 		}
-		w.drivers["agy"] = drv
+		w.drivers["claude"] = drv
 	}
 	caps, err := drv.Probe(ctx)
 	if err != nil {
@@ -348,18 +390,131 @@ func (w *Worker) resolveArt(ctx context.Context, routed *resolved) (*resolved, e
 	return &resolved{bundle: bundle, drv: drv, caps: caps, agyLockHeld: true}, nil
 }
 
-// artRemover resolves the effective green/blue-screen remover: the live kv
-// override (dashboard setting, re-read EVERY use so a mid-run change applies
-// to the very next art pass) over the configured default.
-func (w *Worker) artRemover(ctx context.Context) (remover, corridorkeyDir string) {
-	remover = w.cfg.ArtRemover
-	if v, err := w.st.GetKV(ctx, KVArtRemover); err == nil && v != "" {
-		remover = v
+// artAgyModel resolves the agy image-model label the orchestrator is told to
+// run: an operator pin/route to agy with an allowed label wins, else the
+// launch-verified label (KVArtAgyModel), else the preferred default.
+func (w *Worker) artAgyModel(ctx context.Context, routed *resolved) string {
+	if strings.EqualFold(routed.bundle.Agent, "agy") && domain.AllowedArtModel(routed.bundle.Model) {
+		return routed.bundle.Model
 	}
-	if remover == "" {
-		remover = chroma.Removers[0]
+	model, _ := w.st.GetKV(ctx, KVArtAgyModel)
+	if !domain.AllowedArtModel(model) {
+		model = domain.ArtAgyModels[0]
 	}
-	return remover, w.cfg.CorridorkeyDir
+	return model
+}
+
+// artAgyCommand renders the exact agy invocation the orchestrator must use.
+// It goes through `workshop agy-run` (this very binary) — agy silently drops
+// output and can hang when spawned from a shell with piped stdio, so a bare
+// `agy` from the orchestrator's shell tool is never safe. conversation, when
+// set, resumes that agy conversation (the -trans rescreen).
+func (w *Worker) artAgyCommand(agyModel, conversation, opLog string) string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "workshop"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\"%s\" agy-run", exe)
+	if w.cfg.SkipPermissions {
+		b.WriteString(" --dangerously-skip-permissions")
+	}
+	b.WriteString(" --print-timeout 30m")
+	if conversation != "" {
+		fmt.Fprintf(&b, " --conversation %s", conversation)
+	}
+	fmt.Fprintf(&b, " --model \"%s\" --log-file \"%s\" -p \"<your image prompt>\"", agyModel, opLog)
+	return b.String()
+}
+
+// archiveAgyTranscript archives agy's own brain transcript for conversation
+// conv beside the pass log as iter-NNNNNN.agy.transcript.jsonl — the
+// orchestrator's claude session transcript is archived separately by spawn.
+// Best-effort: agy owns its brain dir and may have pruned the conversation.
+func archiveAgyTranscript(conv, logPath string) {
+	src, err := driver.AgyTranscriptPath(conv)
+	if err != nil {
+		return
+	}
+	_ = statedir.CopyFile(src, strings.TrimSuffix(logPath, ".log")+".agy.transcript.jsonl")
+}
+
+// artRemovers resolves the effective green/blue-screen keyer list, ordered
+// and deduped, primary first — never empty. Live kv overrides (dashboard
+// settings, re-read EVERY use so a mid-run change applies to the very next
+// art pass) beat the configured list: the JSON-array KVArtRemovers first,
+// then the legacy single-value KVArtRemover, then config. Unknown names are
+// dropped defensively (a stale kv from an older/newer build must not fail
+// passes); an all-invalid list falls back to the default backend.
+func (w *Worker) artRemovers(ctx context.Context) (removers []string, corridorkeyDir string) {
+	var picked []string
+	if raw, err := w.st.GetKV(ctx, KVArtRemovers); err == nil && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &picked)
+	}
+	if len(picked) == 0 {
+		if v, err := w.st.GetKV(ctx, KVArtRemover); err == nil && v != "" {
+			picked = []string{v}
+		}
+	}
+	if len(picked) == 0 {
+		picked = w.cfg.ArtRemovers
+	}
+	seen := map[string]bool{}
+	for _, r := range picked {
+		if r != "" && chroma.ValidRemover(r) && !seen[r] {
+			seen[r] = true
+			removers = append(removers, r)
+		}
+	}
+	if len(removers) == 0 {
+		removers = []string{chroma.Removers[0]}
+	}
+	return removers, w.cfg.CorridorkeyDir
+}
+
+// compareKeyers runs every non-primary keyer of an art-gen-trans pass over
+// the same screened intermediate, purely as evidence for the operator: each
+// result (and a copy of the primary's) lands beside the pass log as
+// "<stem>.keyed-<keyer>.png" — the [export] mirror picks the set up
+// automatically — so a human can compare backends file by file and settle on
+// the most effective one. Comparison keyers are best-effort by design: a
+// failure is logged and evented but never fails the pass (the committed
+// asset already exists), and an engine shutdown just stops the loop.
+func (w *Worker) compareKeyers(ctx context.Context, pass *domain.Pass, logFile *os.File, logPath, screenAbs, targetAbs, target string, removers []string, ckDir string, key chroma.Key) {
+	stem := strings.TrimSuffix(logPath, ".log")
+	results := make([]map[string]any, 0, len(removers))
+	// The primary's output is already verified at the target; archive a copy
+	// under the same naming scheme so the comparison set is complete.
+	if err := statedir.CopyFile(targetAbs, stem+".keyed-"+removers[0]+".png"); err == nil {
+		results = append(results, map[string]any{"keyer": removers[0], "ok": true, "primary": true})
+	}
+	for _, remover := range removers[1:] {
+		if ctx.Err() != nil {
+			return // engine shutdown — the pass already has its asset
+		}
+		out := stem + ".keyed-" + remover + ".png"
+		fmt.Fprintf(logFile, "art stage 3+: comparison keyer %s -> %s\n", remover, filepath.Base(out))
+		kctx, cancel := context.WithTimeout(ctx, chromaTimeout)
+		kerr := chromaRemove(kctx, remover, ckDir, screenAbs, out, key)
+		cancel()
+		if kerr == nil {
+			if verr := chroma.VerifyTransparency(out); verr != nil {
+				kerr = verr
+			}
+		}
+		if kerr != nil {
+			fmt.Fprintf(logFile, "art stage 3+: comparison keyer %s FAILED: %v\n", remover, kerr)
+			results = append(results, map[string]any{"keyer": remover, "ok": false, "error": kerr.Error()})
+			w.event(ctx, "art.keyer_compare_failed", w.cfg.Pipeline.Name, pass.ID, map[string]any{
+				"target": target, "keyer": remover, "error": kerr.Error(),
+			})
+			continue
+		}
+		results = append(results, map[string]any{"keyer": remover, "ok": true})
+	}
+	w.event(ctx, "art.keyer_compare", w.cfg.Pipeline.Name, pass.ID, map[string]any{
+		"target": target, "keyers": results, "files": filepath.Base(stem) + ".keyed-<keyer>.png",
+	})
 }
 
 // artTargetPath derives the repo-relative asset path: the task's first files
@@ -429,41 +584,62 @@ func screenPath(target string) string {
 	return strings.TrimSuffix(target, path.Ext(target)) + "-screen.png"
 }
 
-// artGenPrompt composes the stage-1 (generation) prompt. Deliberately NOT the
-// coding contract: no verify command, no proposals, no invent framing — one
-// image is the whole deliverable. The operator's types/<type>.md fragment
-// (style guides, palette rules) rides along when present.
-func (w *Worker) artGenPrompt(task *domain.Task, target string, trans bool) string {
+// artGenPrompt composes the stage-1 (generation) prompt for the claude
+// orchestrator. Deliberately NOT the coding contract: no verify command, no
+// proposals, no invent framing — one image, produced by agy under the
+// orchestrator's direction, is the whole deliverable. agyCmd is the exact
+// `workshop agy-run` invocation to use. The operator's types/<type>.md
+// fragment (style guides, palette rules) rides along when present.
+func (w *Worker) artGenPrompt(task *domain.Task, target string, trans bool, agyCmd string) string {
 	var b strings.Builder
 	b.WriteString(`# Workshop art-generation pass
 
-You are ONE pass of an autonomous art pipeline. Your ONLY deliverable this
-pass is ONE image asset produced with your image generation tool. This is not
-a coding task: do not refactor anything, do not run builds or tests, and
-NEVER run git commit — the engine commits.
+You are ONE pass of an autonomous art pipeline, acting as the ORCHESTRATOR.
+Your ONLY deliverable this pass is ONE image asset, and the image itself MUST
+be produced by the Antigravity CLI (agy) — the image-generation agent you
+invoke from your shell. You direct agy and verify its output; you never draw,
+compose, copy, or convert the asset yourself. This is not a coding task: do
+not refactor anything, do not run builds or tests, and NEVER run git commit —
+the engine commits.
 
 Steps, in order:
 
 1. The moment you start, OVERWRITE progress.json (absolute path in the
    mechanics section) with:
    { "phase": "working", "task": "<task title>", "plan": "<one line>", "updated": "<ISO-8601 UTC now>" }
-2. Generate the image the task describes.`)
+2. Compose a self-contained image-generation prompt for agy from the task
+   (and the GOAL/guidance sections below). It MUST tell agy to save the
+   image as a PNG at EXACTLY the target path named in the mechanics section
+   (relative to the repository root, creating parent directories as needed)
+   and to write nothing else into the repository.`)
 	if trans {
 		b.WriteString(`
-   Compose the subject on a PLAIN single-color background that contrasts
-   with the subject (a later step replaces the background). Keep the whole
-   subject inside the frame with a small margin — it must not touch the
-   image edges.`)
+   It MUST ALSO demand: the subject composed on a PLAIN single-color
+   background that contrasts with the subject (a later step replaces the
+   background), and the WHOLE subject inside the frame with a small margin —
+   it must not touch the image edges.`)
 	}
 	b.WriteString(`
-3. Save it as a PNG at EXACTLY the target path named in the mechanics
-   section, creating parent directories as needed. Write nothing else into
-   the repository.
-4. OVERWRITE progress.json with:
+3. Run agy from the repository root — your working directory; agy keys its
+   conversation record on the directory it is launched from — EXACTLY like
+   this, substituting your image prompt:
+
+   ` + agyCmd + `
+
+   Run it as ONE foreground shell command and wait for it to finish. NEVER
+   invoke a bare "agy" (without a console it drops output and can hang) and
+   never run two agy commands at once.
+4. Verify the deliverable yourself: the file exists at the target path and
+   holds a real image of the right subject (agy prints nothing to your
+   shell — read the file; the --log-file above has agy's operational log if
+   a run fails). A failed or empty run may be retried with a refined
+   prompt: at most 3 agy runs this pass, then report blocked.
+5. OVERWRITE progress.json with:
    { "phase": "done", "task": "<task title>", "result": "saved <target path>", "updated": "<ISO-8601 UTC now>" }
 
-If you cannot produce the image, OVERWRITE progress.json with phase
-"blocked" and a one-line note instead, and change nothing in the repository.`)
+If you cannot produce the image (agy missing, not logged in, repeated
+failures), OVERWRITE progress.json with phase "blocked" and a one-line note
+instead, and change nothing in the repository.`)
 
 	blocks := []string{b.String(), w.artMechanics(target)}
 	if goal := readTrim(w.cfg.GoalPath); goal != "" {
@@ -487,35 +663,46 @@ func (w *Worker) artMechanics(target string) string {
 	return b.String()
 }
 
-// artRescreenPrompt composes the stage-2 prompt sent into the RESUMED agy
-// conversation: repaint the background as a flat key color for chroma keying.
-func (w *Worker) artRescreenPrompt(target, screen string, key chroma.Key) string {
+// artRescreenPrompt composes the stage-2 prompt for the claude orchestrator:
+// resume the SAME agy conversation (the --conversation flag rides in agyCmd)
+// and have it repaint the background as a flat key color for chroma keying.
+func (w *Worker) artRescreenPrompt(target, screen string, key chroma.Key, agyCmd string) string {
 	colorName, hex := "green", "#00FF00"
 	if key == chroma.KeyBlue {
 		colorName, hex = "blue", "#0000FF"
 	}
 	var b strings.Builder
 	b.WriteString("# Workshop art pass — background rescreen step\n\n")
-	fmt.Fprintf(&b, "You are continuing the conversation in which you just generated an image\nasset and saved it at %s (relative to the repository root:\n%s).\n\n", filepath.FromSlash(target), w.cfg.RepoDir)
-	fmt.Fprintf(&b, `Recreate that exact image with its ENTIRE background repainted as one
-uniform, flat, solid pure %s (%s) so it can be chroma-keyed:
+	fmt.Fprintf(&b, "You are the orchestrator of an autonomous art pipeline. In the previous\nstep you had the Antigravity CLI (agy) generate an image asset, now saved at\n%s (relative to the repository root:\n%s).\n\n", filepath.FromSlash(target), w.cfg.RepoDir)
+	fmt.Fprintf(&b, `Resume that SAME agy conversation — the --conversation flag in the command
+below does exactly that; never start a fresh conversation — and direct agy to
+recreate that exact image with its ENTIRE background repainted as one
+uniform, flat, solid pure %s (%s) so it can be chroma-keyed. Your agy prompt
+must demand:
 
 - EVERY background pixel becomes exactly that flat color — no gradients, no
   shadows, no texture, no vignette.
 - The subject stays EXACTLY as it is: same pose, style, colors, size, and
-  position. Do not restyle it and do not let %s bleed into it.
+  position. Not restyled, and no %s bleeding into it.
+- SCREEN PATH — save the result as a PNG at EXACTLY this path (relative to the repository root): %s
+- Do not overwrite %s, and write nothing else into the repository.
 
-SCREEN PATH — save the result as a PNG at EXACTLY this path (relative to the repository root): %s
-Do not overwrite %s. Write nothing else into the repository, and NEVER run
-git commit.
+Run agy from the repository root (your working directory) EXACTLY like this,
+substituting your rescreen prompt — one foreground shell command at a time,
+never a bare "agy", at most 3 runs:
 
-Then OVERWRITE progress.json (absolute path: %s) with:
+   %s
+
+Verify the screened image yourself (it exists at the screen path and shows
+the same subject on the flat %s background), then OVERWRITE progress.json
+(absolute path: %s) with:
 { "phase": "done", "result": "saved %s", "updated": "<ISO-8601 UTC now>" }
 
 If you cannot do it, OVERWRITE progress.json with phase "blocked" and a
-one-line note instead.`,
+one-line note instead. NEVER run git commit.`,
 		colorName, hex, colorName,
 		filepath.FromSlash(screen), filepath.FromSlash(target),
+		agyCmd, colorName,
 		filepath.Join(w.cfg.StateDir, statedir.ProgressFile), filepath.FromSlash(screen))
 	return b.String()
 }

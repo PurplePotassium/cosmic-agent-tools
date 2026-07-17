@@ -89,6 +89,40 @@ func AgyTranscriptPath(conversationID string) (string, error) {
 	return filepath.Join(stateDir, "brain", conversationID, ".system_generated", "logs", "transcript.jsonl"), nil
 }
 
+// AgyExec runs agy with args verbatim in workDir and returns its exit code.
+// The spawn is consoled — agy silently drops output (and can hang) on piped
+// stdio, so it must own a real hidden console; nothing is captured, the
+// caller reads the op log (--log-file) and agy's own artifacts instead. This
+// is the machinery behind `workshop agy-run`, the passthrough the art
+// orchestrator (a claude pass) uses to invoke agy safely from its shell.
+func AgyExec(ctx context.Context, workDir string, args []string) (int, error) {
+	exe, err := findAgy()
+	if err != nil {
+		return -1, err
+	}
+	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd.Dir = workDir
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			return proc.KillTree(cmd.Process.Pid)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 15 * time.Second
+	proc.Configure(cmd, proc.Consoled)
+	if err := cmd.Start(); err != nil {
+		return -1, fmt.Errorf("driver: agy-run: %w", err)
+	}
+	proc.Adopt(cmd.Process.Pid)
+	defer proc.Finished(cmd.Process.Pid)
+	waitErr := cmd.Wait()
+	code := cmd.ProcessState.ExitCode()
+	if waitErr != nil && code == 0 {
+		code = -1
+	}
+	return code, nil
+}
+
 // modelProbeLabel is deliberately never a real model: the probe RELIES on agy
 // rejecting it (exit 1 + the "Available models:" dump in the op log).
 const modelProbeLabel = "workshop-model-probe"

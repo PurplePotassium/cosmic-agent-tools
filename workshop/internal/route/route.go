@@ -67,8 +67,8 @@ const artGenSignature = `\b(generate|create|draw|make|produce|design|render)\b[^
 // artCodeSignal vetoes the art-gen rules: these words say the image noun is
 // part of code machinery ("make the image LOADER faster", "create a sprite
 // atlas PARSER"), not a deliverable asset — without the veto such tasks would
-// be forced onto the agy image model, which would paint a PNG and mark them
-// done. A vetoed title still classifies through the later rules ("art",
+// be forced into the image-generation flow, which would paint a PNG and mark
+// them done. A vetoed title still classifies through the later rules ("art",
 // "code"); the rare false veto ("draw a bug sprite") degrades to plain "art",
 // never to a wrong completion.
 var artCodeSignal = regexp.MustCompile(`(?i)\bloaders?\b|\bparsers?\b|\bcach(e|es|ing)\b|\brefactor|\boptimi[sz]|\bfaster\b|\bperformance\b|\blatency\b|\bthroughput\b|\bframe ?rates?\b|\bfps\b|\bleaks?\b|\bcrash|\bbugs?\b|\bdebug|\bapi\b|\bendpoints?\b|\bcompil|\bserializ|\bdecod|\bencod|\bcompress`)
@@ -84,8 +84,9 @@ var classRules = []struct {
 }{
 	{Type: "merge-conflict", Re: regexp.MustCompile(`(?i)merge[- ]conflict|resolve.*\bconflict\b|\bconflicted\b`)},
 	{Type: "audio", Re: regexp.MustCompile(`(?i)\baudio\b|\bsound(s|track)?\b|\bsfx\b|\bmusic\b|\bvolume\b|\bmute\b|\bfoley\b`)},
-	// Asset GENERATION (an image file is the deliverable) routes to the agy
-	// image-model flow, not the code-flavored "art" type below. The -trans
+	// Asset GENERATION (an image file is the deliverable) routes to the
+	// image-generation flow (a claude orchestrator driving the agy image
+	// model), not the code-flavored "art" type below. The -trans
 	// variant is checked first: same generation signature plus any wording
 	// that implies the asset needs a transparent background.
 	{Type: domain.ArtGenTransType, Re: regexp.MustCompile(`(?i)` + artGenSignature + `(?s).*(transparen|no +background|without +(a +)?background|remove +the +background|background-?less|alpha +channel|cut-?out)`), Not: artCodeSignal},

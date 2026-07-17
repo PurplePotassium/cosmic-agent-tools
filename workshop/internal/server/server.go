@@ -59,10 +59,15 @@ type Server struct {
 	App    *app.App
 	OnStop func() // full process shutdown — CLI `workshop stop` / POST /server/stop
 	OnHalt func() // kill every in-flight pass, stay up parked — POST /server/halt
+	// Version is the running binary's version string, surfaced by the
+	// environment endpoint ("" reads as "dev"). Set by the CLI before Start.
+	Version string
 
 	token     string
 	listener  net.Listener
 	http      *http.Server
+	bound     int       // port actually listening (Start)
+	started   time.Time // when Start succeeded
 	closing   chan struct{} // closed at Shutdown; unblocks long-lived handlers (SSE)
 	closeOnce sync.Once
 }
@@ -103,6 +108,8 @@ func (s *Server) Start(port int) (int, error) {
 		_ = s.http.Close()
 		return 0, err
 	}
+	s.bound = bound
+	s.started = info.Started
 	return bound, nil
 }
 
@@ -171,6 +178,19 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/art", guardRead(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.App.ArtStatus(r.Context()))
 	}))
+	// The settings panel's environment view: external tools (claude, agy,
+	// ffmpeg, git, corridorkey) with versions and login signals, resolved
+	// paths, and the transcript-export destination. ?fresh=1 bypasses the
+	// tool-probe cache (the panel's "re-run checks" button).
+	mux.HandleFunc("GET /api/v1/env", guardRead(func(w http.ResponseWriter, r *http.Request) {
+		env := s.App.EnvStatus(r.Context(), r.URL.Query().Get("fresh") != "")
+		version := s.Version
+		if version == "" {
+			version = "dev"
+		}
+		env.Server = &app.EnvServerInfo{PID: os.Getpid(), Port: s.bound, Started: s.started, Version: version}
+		writeJSON(w, env)
+	}))
 
 	// --- mutating routes (token-gated) ---
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -199,9 +219,26 @@ func (s *Server) handler() http.Handler {
 	// The self-evaluator: ask why the workshop did something; a read-only
 	// forensics agent answers from pass logs, transcripts, and git history.
 	mux.HandleFunc("POST /api/v1/inquiries", guard(s.postInquiry))
-	// The live green/blue-screen remover switch for art-gen-trans passes:
+	// The live green/blue-screen keyer switch for art-gen-trans passes:
 	// stored as a kv override, re-read by the engine every art pass, so it
-	// takes effect immediately with no restart. "" clears back to config.
+	// takes effect immediately with no restart. The list is ordered — the
+	// first keyer's output is the committed asset, the rest key archived
+	// comparison copies. An empty list clears back to config.
+	mux.HandleFunc("PUT /api/v1/art/keyers", guard(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Keyers []string `json:"keyers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := s.App.SetArtKeyers(r.Context(), body.Keyers); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, s.App.ArtStatus(r.Context()))
+	}))
+	// Legacy single-keyer form of the same override ("" clears).
 	mux.HandleFunc("PUT /api/v1/art/remover", guard(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Remover string `json:"remover"`
@@ -215,6 +252,12 @@ func (s *Server) handler() http.Handler {
 			return
 		}
 		writeJSON(w, s.App.ArtStatus(r.Context()))
+	}))
+	// Re-run the agy art-model verification (e.g. right after logging agy
+	// in). Fire-and-forget: progress lands in ArtStatus.Verifying and the
+	// result on the event bus (art.model_verified / art.models_missing).
+	mux.HandleFunc("POST /api/v1/art/verify-models", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]bool{"started": s.App.ReverifyArtModels()})
 	}))
 	mux.HandleFunc("POST /api/v1/inquiries/stop", guard(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]bool{"stopped": s.App.StopInquiry()})

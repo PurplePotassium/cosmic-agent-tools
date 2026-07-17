@@ -28,7 +28,10 @@ PowerShell era:
 - **stdout is silently dropped when it is a pipe/redirect (non-TTY)**, and
   redirected spawns can hang. Therefore agy is **NEVER piped**: it gets its
   own hidden console (Windows `CREATE_NEW_CONSOLE` + hidden window, zero
-  stdio redirection). ConPTY tricks do not help.
+  stdio redirection). ConPTY tricks do not help. This is also why the art
+  passes' claude orchestrator must invoke agy through `workshop agy-run`
+  (a consoled passthrough, `driver.AgyExec`) — a bare `agy` from an agent's
+  shell tool is piped and therefore unsafe.
 - Consequently a pass is **blind**: the iter log holds only a header. This
   is EXPECTED, not a bug, and cannot be "fixed" headless.
 - The agent's `progress.json` self-report is the **only window** into a
