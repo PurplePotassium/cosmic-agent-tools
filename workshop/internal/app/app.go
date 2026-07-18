@@ -6,7 +6,9 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -286,50 +288,38 @@ func ReadEngineLock(stateDir string) (pid int, started time.Time, ok bool) {
 	return el.PID, el.Started, true
 }
 
-// staleLockSeq disambiguates stale-lock claim names within one process (two
-// goroutines racing acquireEngineLock share a pid).
-var staleLockSeq atomic.Int64
-
 // acquireEngineLock takes the per-repo engine singleton lock, clearing a
 // stale lock left by a crashed engine. It returns the release func.
+//
+// The whole check-remove-create sequence runs under an OS lock on a sidecar
+// mutex file, so stale-lock takeover is atomic across processes. Anything
+// weaker races: a rename-claim of the stale file can just as easily rename
+// away the winner's freshly created lock (rename acts on whatever is at the
+// path, not the file that was inspected) and let two engines run.
 func (a *App) acquireEngineLock() (func(), error) {
 	path := EngineLockPath(a.StateDir)
-	for attempt := 0; attempt < 5; attempt++ {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			enc := json.NewEncoder(f)
-			_ = enc.Encode(engineLock{PID: os.Getpid(), Started: time.Now().UTC()})
-			f.Close()
-			return func() { _ = os.Remove(path) }, nil
-		}
-		pid, started, ok := ReadEngineLock(a.StateDir)
-		if ok && pid != os.Getpid() && proc.AliveSince(pid, started) {
-			return nil, fmt.Errorf("another workshop engine is already running for this repo (pid %d) — stop it first (`workshop stop`, --force if wedged)", pid)
-		}
-		if !ok && attempt < 2 {
-			// Unreadable could be another engine mid-write (created, not yet
-			// encoded) rather than a crash's leftover; give the writer a beat
-			// before treating the lock as stale.
-			time.Sleep(20 * time.Millisecond)
-			continue
-		}
-		// Stale lock from a crashed engine. Claim it atomically before
-		// deleting: rename to a unique name, so of two racers exactly one
-		// succeeds and removes it. A bare check-then-remove here could delete
-		// the OTHER racer's freshly created lock (both failed O_EXCL, both
-		// saw the dead pid) and let two engines run. The loser's rename
-		// fails, it loops, and then sees the winner's fresh lock — alive pid,
-		// the proper error above.
-		claimed := fmt.Sprintf("%s.stale-%d-%d", path, os.Getpid(), staleLockSeq.Add(1))
-		if err := os.Rename(path, claimed); err == nil {
-			_ = os.Remove(claimed)
-		} else {
-			// Lost the claim race: let the winner finish recreating its
-			// fresh lock so the next probe sees a live holder.
-			time.Sleep(25 * time.Millisecond)
-		}
+	unlock, err := statedir.LockFile(path + ".mutex")
+	if err != nil {
+		return nil, fmt.Errorf("cannot acquire the engine lock mutex: %w", err)
 	}
-	return nil, fmt.Errorf("cannot acquire the engine lock at %s", path)
+	defer unlock()
+
+	if pid, started, ok := ReadEngineLock(a.StateDir); ok && pid != os.Getpid() && proc.AliveSince(pid, started) {
+		return nil, fmt.Errorf("another workshop engine is already running for this repo (pid %d) — stop it first (`workshop stop`, --force if wedged)", pid)
+	}
+	// Dead holder (or no lock at all): take over. Remove-then-create is safe
+	// here — every writer holds the mutex.
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("cannot clear the stale engine lock at %s: %w", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("cannot acquire the engine lock at %s: %w", path, err)
+	}
+	enc := json.NewEncoder(f)
+	_ = enc.Encode(engineLock{PID: os.Getpid(), Started: time.Now().UTC()})
+	f.Close()
+	return func() { _ = os.Remove(path) }, nil
 }
 
 // resolvePool resolves custom pool paths relative to the repo config dir.
