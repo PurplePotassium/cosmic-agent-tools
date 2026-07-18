@@ -34,9 +34,9 @@ type Config struct {
 // passes plus, for -trans, green/blue-screen removal).
 type ArtConfig struct {
 	// Remover names the green/blue-screen removal backend for art-gen-trans:
-	// "builtin" (pure-Go color keyer, the default), "corridorkey" (the
-	// neural keyer at CorridorkeyDir), or "ffmpeg" (colorkey+despill,
-	// needs ffmpeg on PATH). The dashboard can override it live (kv
+	// "ffmpeg" (colorkey+despill, needs ffmpeg on PATH, the default) or
+	// "corridorkey" (the neural keyer at CorridorkeyDir).
+	// The dashboard can override it live (kv
 	// "art.remover" / "art.removers") without a restart, mirroring the
 	// pipeline overrides. Ignored when Removers is set.
 	Remover string `toml:"remover"`
@@ -233,7 +233,7 @@ func Default() Config {
 			domain.ArtGenType:      {Agent: "claude"},
 			domain.ArtGenTransType: {Agent: "claude"},
 		},
-		Art:    ArtConfig{Remover: "builtin"},
+		Art:    ArtConfig{Remover: "ffmpeg"},
 		Server: ServerConfig{Port: 4455, OpenBrowser: true, StartStopped: true},
 		Agents: map[string]AgentConfig{},
 	}

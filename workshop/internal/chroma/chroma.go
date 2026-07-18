@@ -3,18 +3,16 @@
 // the art-gen-trans flow: the image model repaints the background as a flat
 // key color, then one of these backends keys it out.
 //
-// Three interchangeable backends (operator-selectable live from the
+// Two interchangeable backends (operator-selectable live from the
 // dashboard, kv key "art.remover"):
 //
-//   - builtin: pure Go color-distance keyer with edge despill. No external
-//     dependency, milliseconds per image, ideal for the flat machine-painted
-//     screens this flow produces.
+//   - ffmpeg: ffmpeg's colorkey+despill filter chain, keyed on the actual
+//     screen color estimated from the border. Robust, widely installed,
+//     milliseconds per image — the default.
 //   - corridorkey: the CorridorKey neural keyer (github.com/gw1108/CorridorKey
 //     fork, installed at [art].corridorkey_dir). ML-quality edges (hair,
 //     soft shadows) at the cost of model-load time per call — CPU-only
 //     installs take tens of seconds.
-//   - ffmpeg: ffmpeg's colorkey+despill filter chain. Robust, widely
-//     installed, a good middle ground when it is already on PATH.
 package chroma
 
 import (
@@ -24,7 +22,6 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,7 +51,7 @@ func (k Key) String() string {
 }
 
 // Removers is the ordered set of selectable backends (first = default).
-var Removers = []string{"builtin", "corridorkey", "ffmpeg"}
+var Removers = []string{"ffmpeg", "corridorkey"}
 
 // ValidRemover reports whether name is a selectable backend ("" = default).
 func ValidRemover(name string) bool {
@@ -70,69 +67,17 @@ func ValidRemover(name string) bool {
 }
 
 // Remove keys the screen color out of inPath and writes a transparent PNG to
-// outPath using the named backend ("" = builtin). corridorKeyDir is the
+// outPath using the named backend ("" = ffmpeg). corridorKeyDir is the
 // CorridorKey checkout (used only by that backend).
 func Remove(ctx context.Context, remover, corridorKeyDir, inPath, outPath string, key Key) error {
 	switch remover {
-	case "", "builtin":
-		return RemoveBuiltin(inPath, outPath, key)
+	case "", "ffmpeg":
+		return RemoveFFmpeg(ctx, inPath, outPath, key)
 	case "corridorkey":
 		return RemoveCorridorKey(ctx, corridorKeyDir, inPath, outPath, key)
-	case "ffmpeg":
-		return RemoveFFmpeg(ctx, inPath, outPath, key)
 	default:
 		return fmt.Errorf("chroma: unknown remover %q (available: %s)", remover, strings.Join(Removers, ", "))
 	}
-}
-
-// --- builtin ---
-
-// Thresholds for the alpha ramp, in 8-bit RGB Euclidean distance from the
-// estimated screen color: at most t0 away = fully transparent, at least t1
-// away = fully opaque, linear in between. The screens are machine-painted and
-// nearly flat, so the band mostly catches anti-aliased subject edges.
-const (
-	builtinT0 = 60.0
-	builtinT1 = 130.0
-)
-
-// RemoveBuiltin is the dependency-free keyer: estimate the actual screen
-// color from the border, ramp alpha by color distance, despill edges.
-func RemoveBuiltin(inPath, outPath string, key Key) error {
-	img, err := decode(inPath)
-	if err != nil {
-		return err
-	}
-	screen, frac, err := estimateScreen(img, key)
-	if err != nil {
-		return err
-	}
-	if frac < 0.30 {
-		return fmt.Errorf("chroma: border is only %.0f%% %s — image does not look %s-screened", frac*100, key, key)
-	}
-
-	b := img.Bounds()
-	out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			r, g, bl := rgb8(img.At(x, y))
-			d := dist(r, g, bl, screen[0], screen[1], screen[2])
-			var a uint8
-			switch {
-			case d <= builtinT0:
-				a = 0
-			case d >= builtinT1:
-				a = 255
-			default:
-				a = uint8(255 * (d - builtinT0) / (builtinT1 - builtinT0))
-			}
-			if a > 0 && a < 255 {
-				r, g, bl = despill(r, g, bl, key)
-			}
-			out.SetNRGBA(x-b.Min.X, y-b.Min.Y, color.NRGBA{R: r, G: g, B: bl, A: a})
-		}
-	}
-	return writePNG(outPath, out)
 }
 
 // FractionKeyish reports the fraction of pixels whose color is dominated by
@@ -243,38 +188,9 @@ func isKeyish(r, g, b uint8, key Key) bool {
 	return int(g) > int(r)+margin && int(g) > int(b)+margin
 }
 
-// despill clamps the key channel to the max of the other two — the standard
-// spill fix for the halo the ramp leaves on anti-aliased edges.
-func despill(r, g, b uint8, key Key) (uint8, uint8, uint8) {
-	if key == KeyBlue {
-		if m := max8(r, g); b > m {
-			b = m
-		}
-	} else {
-		if m := max8(r, b); g > m {
-			g = m
-		}
-	}
-	return r, g, b
-}
-
-func max8(a, b uint8) uint8 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func rgb8(c color.Color) (uint8, uint8, uint8) {
 	r, g, b, _ := c.RGBA()
 	return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8)
-}
-
-func dist(r1, g1, b1, r2, g2, b2 uint8) float64 {
-	dr := float64(r1) - float64(r2)
-	dg := float64(g1) - float64(g2)
-	db := float64(b1) - float64(b2)
-	return math.Sqrt(dr*dr + dg*dg + db*db)
 }
 
 func decode(path string) (image.Image, error) {

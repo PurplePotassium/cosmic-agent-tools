@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +71,53 @@ func artRig(t *testing.T, sc fakeagent.Scenario, tweaks ...func(cfg *WorkerConfi
 	})
 	t.Setenv("WORKSHOP_AGY_STATE_DIR", t.TempDir())
 	r.worker.drivers["claude"] = driver.NewFake()
+	// Every real backend shells out (ffmpeg, corridorkey), so the rig keys
+	// hermetically by default; individual tests re-stub for their own probes.
+	orig := chromaRemove
+	chromaRemove = func(_ context.Context, _, _, in, out string, key chroma.Key) error {
+		return testKeyImage(in, out, key)
+	}
+	t.Cleanup(func() { chromaRemove = orig })
 	return r
+}
+
+// testKeyImage is the hermetic stand-in for a keying backend: pixels whose
+// key channel clearly dominates go transparent, everything else stays opaque
+// — enough for chroma.VerifyTransparency on the fake agent's flat screens.
+// The real backends are exercised in internal/chroma.
+func testKeyImage(inPath, outPath string, key chroma.Key) error {
+	f, err := os.Open(inPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return err
+	}
+	b := img.Bounds()
+	out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r16, g16, b16, _ := img.At(x, y).RGBA()
+			r8, g8, b8 := int(r16>>8), int(g16>>8), int(b16>>8)
+			screen := g8 > r8+40 && g8 > b8+40
+			if key == chroma.KeyBlue {
+				screen = b8 > r8+40 && b8 > g8+40
+			}
+			a := uint8(255)
+			if screen {
+				a = 0
+			}
+			out.SetNRGBA(x-b.Min.X, y-b.Min.Y, color.NRGBA{R: uint8(r8), G: uint8(g8), B: uint8(b8), A: a})
+		}
+	}
+	o, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer o.Close()
+	return png.Encode(o, out)
 }
 
 func TestArtGenPass(t *testing.T) {
@@ -236,15 +284,15 @@ func TestArtGenTransPassNormalizesMislabeledBytes(t *testing.T) {
 func TestArtGenTransMultiKeyerComparison(t *testing.T) {
 	r := artRig(t, fakeagent.Scenario{Behavior: "art"})
 	ctx := context.Background()
-	if err := r.st.SetKV(ctx, KVArtRemovers, `["builtin","ffmpeg","corridorkey"]`); err != nil {
+	if err := r.st.SetKV(ctx, KVArtRemovers, `["ffmpeg","corridorkey"]`); err != nil {
 		t.Fatal(err)
 	}
 	var calls []string
 	orig := chromaRemove
-	// Hermetic stub: record which backend was asked for, key via builtin.
+	// Hermetic stub: record which backend was asked for, key via the test keyer.
 	chromaRemove = func(kctx context.Context, remover, ckDir, in, out string, key chroma.Key) error {
 		calls = append(calls, remover)
-		return chroma.RemoveBuiltin(in, out, key)
+		return testKeyImage(in, out, key)
 	}
 	t.Cleanup(func() { chromaRemove = orig })
 
@@ -258,13 +306,13 @@ func TestArtGenTransMultiKeyerComparison(t *testing.T) {
 		t.Fatalf("RunPass = %v, %v; want PassRan, nil", res, err)
 	}
 
-	if want := []string{"builtin", "ffmpeg", "corridorkey"}; len(calls) != 3 || calls[0] != want[0] || calls[1] != want[1] || calls[2] != want[2] {
+	if want := []string{"ffmpeg", "corridorkey"}; len(calls) != 2 || calls[0] != want[0] || calls[1] != want[1] {
 		t.Fatalf("keyer invocations = %v; want %v (primary first, then comparisons)", calls, want)
 	}
 	if err := chroma.VerifyTransparency(filepath.Join(r.repo, "assets", "hero.png")); err != nil {
 		t.Fatalf("final asset is not transparent: %v", err)
 	}
-	for _, k := range []string{"builtin", "ffmpeg", "corridorkey"} {
+	for _, k := range []string{"ffmpeg", "corridorkey"} {
 		cmp := filepath.Join(r.cfg.LogDir, "iter-000001.keyed-"+k+".png")
 		if err := chroma.VerifyTransparency(cmp); err != nil {
 			t.Errorf("comparison image for %s missing/not keyed: %v", k, err)
@@ -274,7 +322,7 @@ func TestArtGenTransMultiKeyerComparison(t *testing.T) {
 		t.Fatalf("screen intermediate should be removed from the repo (err=%v)", err)
 	}
 	// Comparison images are forensic material and must never enter the repo.
-	if _, err := os.Stat(filepath.Join(r.repo, "assets", "hero.keyed-ffmpeg.png")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(r.repo, "assets", "hero.keyed-corridorkey.png")); !os.IsNotExist(err) {
 		t.Fatalf("comparison image leaked into the repo (err=%v)", err)
 	}
 	if got, err := r.st.GetTask(ctx, task.ID); err != nil || got.Status != domain.TaskDone {
@@ -288,7 +336,7 @@ func TestArtGenTransMultiKeyerComparison(t *testing.T) {
 func TestArtGenTransComparisonKeyerFailureTolerated(t *testing.T) {
 	r := artRig(t, fakeagent.Scenario{Behavior: "art"})
 	ctx := context.Background()
-	if err := r.st.SetKV(ctx, KVArtRemovers, `["builtin","corridorkey"]`); err != nil {
+	if err := r.st.SetKV(ctx, KVArtRemovers, `["ffmpeg","corridorkey"]`); err != nil {
 		t.Fatal(err)
 	}
 	orig := chromaRemove
@@ -296,7 +344,7 @@ func TestArtGenTransComparisonKeyerFailureTolerated(t *testing.T) {
 		if remover == "corridorkey" {
 			return errors.New("corridorkey CLI not found")
 		}
-		return chroma.RemoveBuiltin(in, out, key)
+		return testKeyImage(in, out, key)
 	}
 	t.Cleanup(func() { chromaRemove = orig })
 
@@ -315,7 +363,7 @@ func TestArtGenTransComparisonKeyerFailureTolerated(t *testing.T) {
 	if r.worker.consecFails != 0 {
 		t.Fatalf("comparison failure counted toward the breaker (consecFails=%d)", r.worker.consecFails)
 	}
-	if err := chroma.VerifyTransparency(filepath.Join(r.cfg.LogDir, "iter-000001.keyed-builtin.png")); err != nil {
+	if err := chroma.VerifyTransparency(filepath.Join(r.cfg.LogDir, "iter-000001.keyed-ffmpeg.png")); err != nil {
 		t.Errorf("primary comparison copy missing: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(r.cfg.LogDir, "iter-000001.keyed-corridorkey.png")); !os.IsNotExist(err) {
@@ -340,21 +388,21 @@ func TestArtRemoversResolution(t *testing.T) {
 			}
 		}
 	}
-	assertRemovers("builtin") // nothing configured -> default
-	r.worker.cfg.ArtRemovers = []string{"ffmpeg", "builtin"}
-	assertRemovers("ffmpeg", "builtin") // config list
+	assertRemovers("ffmpeg") // nothing configured -> default
+	r.worker.cfg.ArtRemovers = []string{"corridorkey", "ffmpeg"}
+	assertRemovers("corridorkey", "ffmpeg") // config list
 	if err := r.st.SetKV(ctx, KVArtRemover, "corridorkey"); err != nil {
 		t.Fatal(err)
 	}
 	assertRemovers("corridorkey") // legacy single kv beats config
-	if err := r.st.SetKV(ctx, KVArtRemovers, `["builtin","ffmpeg"]`); err != nil {
+	if err := r.st.SetKV(ctx, KVArtRemovers, `["ffmpeg","corridorkey"]`); err != nil {
 		t.Fatal(err)
 	}
-	assertRemovers("builtin", "ffmpeg") // list kv beats everything
+	assertRemovers("ffmpeg", "corridorkey") // list kv beats everything
 	if err := r.st.SetKV(ctx, KVArtRemovers, `["photoshop"]`); err != nil {
 		t.Fatal(err)
 	}
-	assertRemovers("builtin") // garbage entries dropped -> default fallback
+	assertRemovers("ffmpeg") // garbage entries dropped -> default fallback
 }
 
 // An engine shutdown while the keyer runs must conclude like a shutdown

@@ -169,16 +169,16 @@ model  = "claude-opus-4-8"
 effort = "high"
 
 [art]                        # art-gen-trans green/blue-screen removal
-remover = "builtin"          # builtin (pure-Go color keyer, default)
+remover = "ffmpeg"           # ffmpeg (colorkey+despill; needs ffmpeg on
+                             #   PATH — `winget install ffmpeg`; default)
                              # | corridorkey (neural keyer — the CorridorKey
                              #   checkout at corridorkey_dir; invoked with
                              #   --device cuda, NEVER CPU: a CPU-only torch
                              #   venv measured 2+ hours per image, so provision
                              #   it with `uv sync --extra cuda`)
-                             # | ffmpeg (colorkey+despill; needs ffmpeg on PATH)
                              # Switchable LIVE from the dashboard settings
                              # panel (⚙ → keyers) — applies to the next art pass.
-# removers = ["builtin", "ffmpeg"]  # multi-keyer comparison mode (beats `remover`):
+# removers = ["ffmpeg", "corridorkey"]  # multi-keyer comparison mode (beats `remover`):
                              # every listed backend keys each screen; the FIRST
                              # entry's output becomes the committed asset, the
                              # rest are archived beside the pass log (and

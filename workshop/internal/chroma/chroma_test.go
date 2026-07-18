@@ -43,54 +43,6 @@ func at(t *testing.T, path string, x, y int) color.NRGBA {
 	return color.NRGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)}
 }
 
-func TestRemoveBuiltinGreen(t *testing.T) {
-	dir := t.TempDir()
-	in := filepath.Join(dir, "in.png")
-	out := filepath.Join(dir, "out.png")
-	// Slightly off pure green — machine-painted screens never hit #00FF00.
-	writeImg(t, in, color.NRGBA{R: 12, G: 245, B: 20, A: 255}, color.NRGBA{R: 200, G: 30, B: 30, A: 255})
-
-	if err := RemoveBuiltin(in, out, KeyGreen); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyTransparency(out); err != nil {
-		t.Fatal(err)
-	}
-	if p := at(t, out, 2, 2); p.A != 0 {
-		t.Fatalf("background pixel alpha = %d; want 0", p.A)
-	}
-	if p := at(t, out, 32, 32); p.A != 255 || p.R < 150 {
-		t.Fatalf("subject pixel = %+v; want opaque red", p)
-	}
-}
-
-func TestRemoveBuiltinBlue(t *testing.T) {
-	dir := t.TempDir()
-	in := filepath.Join(dir, "in.png")
-	out := filepath.Join(dir, "out.png")
-	writeImg(t, in, color.NRGBA{R: 10, G: 15, B: 250, A: 255}, color.NRGBA{R: 40, G: 190, B: 60, A: 255})
-
-	if err := RemoveBuiltin(in, out, KeyBlue); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyTransparency(out); err != nil {
-		t.Fatal(err)
-	}
-	// The green subject must survive a blue key untouched.
-	if p := at(t, out, 32, 32); p.A != 255 || p.G < 150 {
-		t.Fatalf("subject pixel = %+v; want opaque green", p)
-	}
-}
-
-func TestRemoveBuiltinRejectsUnscreenedImage(t *testing.T) {
-	dir := t.TempDir()
-	in := filepath.Join(dir, "in.png")
-	writeImg(t, in, color.NRGBA{R: 180, G: 60, B: 60, A: 255}, color.NRGBA{R: 20, G: 20, B: 20, A: 255})
-	if err := RemoveBuiltin(in, filepath.Join(dir, "out.png"), KeyGreen); err == nil {
-		t.Fatal("keying a red-background image as green should fail")
-	}
-}
-
 func TestFractionKeyish(t *testing.T) {
 	dir := t.TempDir()
 	greenish := filepath.Join(dir, "green.png")
@@ -154,5 +106,17 @@ func TestRemoveFFmpegReal(t *testing.T) {
 	}
 	if p := at(t, out, 2, 2); p.A > 20 {
 		t.Fatalf("background pixel alpha = %d; want ~0", p.A)
+	}
+}
+
+func TestRemoveFFmpegRejectsUnscreenedImage(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.png")
+	writeImg(t, in, color.NRGBA{R: 180, G: 60, B: 60, A: 255}, color.NRGBA{R: 20, G: 20, B: 20, A: 255})
+	if err := RemoveFFmpeg(t.Context(), in, filepath.Join(dir, "out.png"), KeyGreen); err == nil {
+		t.Fatal("keying a red-background image as green should fail")
 	}
 }

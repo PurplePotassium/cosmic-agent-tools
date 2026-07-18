@@ -51,18 +51,18 @@ func TestArtKeyersRoundTrip(t *testing.T) {
 	if rec := artReq(t, s, "PUT", "/api/v1/art/keyers", `{"keyers":["photoshop"]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("unknown keyer: got %d, want 400: %s", rec.Code, rec.Body.String())
 	}
-	if rec := artReq(t, s, "PUT", "/api/v1/art/keyers", `{"keyers":["builtin","builtin"]}`); rec.Code != http.StatusBadRequest {
+	if rec := artReq(t, s, "PUT", "/api/v1/art/keyers", `{"keyers":["ffmpeg","ffmpeg"]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("duplicate keyer: got %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 
 	// A valid ordered list becomes the live override, primary first.
-	rec := artReq(t, s, "PUT", "/api/v1/art/keyers", `{"keyers":["ffmpeg","builtin"]}`)
+	rec := artReq(t, s, "PUT", "/api/v1/art/keyers", `{"keyers":["corridorkey","ffmpeg"]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("set keyers: got %d: %s", rec.Code, rec.Body.String())
 	}
 	a := decodeArt(t, rec)
-	if len(a.Keyers) != 2 || a.Keyers[0] != "ffmpeg" || a.Keyers[1] != "builtin" || a.Remover != "ffmpeg" {
-		t.Fatalf("after set: keyers=%v remover=%q; want [ffmpeg builtin] / ffmpeg", a.Keyers, a.Remover)
+	if len(a.Keyers) != 2 || a.Keyers[0] != "corridorkey" || a.Keyers[1] != "ffmpeg" || a.Remover != "corridorkey" {
+		t.Fatalf("after set: keyers=%v remover=%q; want [corridorkey ffmpeg] / corridorkey", a.Keyers, a.Remover)
 	}
 	if len(a.Override) != 2 {
 		t.Fatalf("override = %v; want the applied list", a.Override)
@@ -70,7 +70,7 @@ func TestArtKeyersRoundTrip(t *testing.T) {
 
 	// GET reflects the same view.
 	a = decodeArt(t, artReq(t, s, "GET", "/api/v1/art", ""))
-	if len(a.Keyers) != 2 || a.Keyers[0] != "ffmpeg" {
+	if len(a.Keyers) != 2 || a.Keyers[0] != "corridorkey" {
 		t.Fatalf("GET after set: keyers=%v", a.Keyers)
 	}
 

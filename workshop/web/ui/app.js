@@ -171,9 +171,8 @@ function TopBar({ status, connected, active, pauseAfterPending, stopped, soundOn
 
 // KEYER_BLURBS mirrors internal/chroma's backend docs for the keyer pickers.
 const KEYER_BLURBS = {
-  builtin: "Pure-Go color-distance keyer with edge despill. No dependencies, milliseconds per image — ideal for the flat machine-painted screens this flow produces.",
+  ffmpeg: "ffmpeg colorkey+despill filter chain, keyed on the actual screen color. Robust, milliseconds per image; needs ffmpeg on PATH. The default.",
   corridorkey: "CorridorKey neural keyer. ML-quality edges (hair, soft shadows); needs the CorridorKey checkout and CUDA — it refuses CPU (measured 2+ hours per image).",
-  ffmpeg: "ffmpeg colorkey+despill filter chain. Robust middle ground; needs ffmpeg on PATH.",
 };
 
 const SETTINGS_TABS = [

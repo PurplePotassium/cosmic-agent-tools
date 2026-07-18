@@ -44,7 +44,7 @@ const (
 // rescreen step uses a BLUE screen instead.
 const greenSubjectThreshold = 0.25
 
-// chromaTimeout bounds the keying step. The builtin/ffmpeg backends take
+// chromaTimeout bounds the keying step. The ffmpeg backend takes
 // milliseconds; CorridorKey (always --device cuda — see RemoveCorridorKey)
 // loads two ~400MB models per call and measured ~1 minute per image on real
 // hardware (2026-07), so this is a generous ceiling for big assets and cold
