@@ -140,23 +140,23 @@ converting "for each X" into real backlog tasks, not doing them:
 // InventBlock is the tail block for an idle pipeline. PlanningPercent controls
 // the chance that a pass creates goal-moving proposals; the remaining passes
 // re-validate recent committed work through a code review or bug hunt.
-func InventBlock(p domain.Pipeline, rng *rand.Rand, planningPercent int) (block string, planning bool) {
+func InventBlock(p domain.Pipeline, rng *rand.Rand, planningPercent, planningProposalMax int) (block string, planning bool) {
 	if rng.Intn(100) < planningPercent {
-		return inventBlock(p), true
+		return inventBlock(p, planningProposalMax), true
 	}
 	return reviewBlock(), false
 }
 
-func inventBlock(p domain.Pipeline) string {
+func inventBlock(p domain.Pipeline, planningProposalMax int) string {
 	var b strings.Builder
 	b.WriteString("## YOUR TASK THIS PASS\n\nThe backlog has no eligible task for you. ")
 	b.WriteString("This is a PLANNING pass: assess current progress toward the GOAL by reading the GOAL, backlog, recent completions, and relevant repository evidence. ")
-	b.WriteString("Then create one to five concrete, high-impact, unqueued tasks that would materially move the work closer to completing the GOAL")
+	fmt.Fprintf(&b, "Then create one to %d concrete, high-impact, unqueued tasks that would materially move the work closer to completing the GOAL", planningProposalMax)
 	if len(p.TaskTypes) > 0 {
 		fmt.Fprintf(&b, ", staying within your task types (%s)", strings.Join(p.TaskTypes, ", "))
 	}
 	b.WriteString(". Do not select an imagined single \"highest-impact\" task. ")
-	b.WriteString("The usual two-proposal cap does not apply to this planning pass: write one to five tasks to proposals.json with implementation-ready titles and details; check the entire backlog first so none duplicate queued work. ")
+	fmt.Fprintf(&b, "The ordinary follow-up proposal cap does not apply to this planning pass: write one to %d tasks to proposals.json with implementation-ready titles and details; check the entire backlog first so none duplicate queued work. ", planningProposalMax)
 	b.WriteString("Do NOT implement or begin any proposed task, edit repository files, or run an unrelated increment in this pass. ")
 	b.WriteString("The proposals are the deliverable. Record the evidence behind the task choices and how many you created in progress.json, then finish done.")
 	return b.String()
@@ -191,6 +191,9 @@ type MechanicsInputs struct {
 	Branch    string
 	VerifyCmd string
 	VerifyDir string
+	// FollowUpProposalMax is the configured cap for ordinary assigned-task
+	// follow-ups. Planning passes override it in InventBlock.
+	FollowUpProposalMax int
 }
 
 func Mechanics(m MechanicsInputs) string {
@@ -211,6 +214,11 @@ func Mechanics(m MechanicsInputs) string {
 	} else {
 		b.WriteString("- No verify command configured: verify by the most direct means available and note it in progress.json.\n")
 	}
+	followUpProposalMax := m.FollowUpProposalMax
+	if followUpProposalMax <= 0 {
+		followUpProposalMax = 2
+	}
+	fmt.Fprintf(&b, "- ORDINARY FOLLOW-UP PROPOSAL LIMIT: %d (planning passes state their own limit)\n", followUpProposalMax)
 	return strings.TrimRight(b.String(), "\n")
 }
 

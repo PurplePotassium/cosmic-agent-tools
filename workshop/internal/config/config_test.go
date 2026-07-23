@@ -32,6 +32,9 @@ func TestDefaultsAloneWork(t *testing.T) {
 	if res.Config.Server.PlanningPercent != 75 {
 		t.Fatalf("planning_percent = %d", res.Config.Server.PlanningPercent)
 	}
+	if res.Config.Server.PlanningProposalMax != 5 || res.Config.Server.FollowUpProposalMax != 2 {
+		t.Fatalf("proposal caps = (%d, %d), want (5, 2)", res.Config.Server.PlanningProposalMax, res.Config.Server.FollowUpProposalMax)
+	}
 	if !res.Config.Server.StartStopped {
 		t.Fatal("start_stopped should default to true")
 	}
@@ -57,6 +60,8 @@ func TestLayerPrecedenceAndProvenance(t *testing.T) {
 port = 5000
 open_browser = false
 planning_percent = 60
+planning_proposal_max = 7
+follow_up_proposal_max = 4
 [spice]
 personas = "gamedev"
 `)
@@ -85,6 +90,9 @@ verify = "npm test"
 	if c.Server.PlanningPercent != 60 {
 		t.Fatalf("planning_percent = %d", c.Server.PlanningPercent)
 	}
+	if c.Server.PlanningProposalMax != 7 || c.Server.FollowUpProposalMax != 4 {
+		t.Fatalf("proposal caps = (%d, %d), want (7, 4)", c.Server.PlanningProposalMax, c.Server.FollowUpProposalMax)
+	}
 	if c.Spice.Personas != "gamedev" {
 		t.Fatalf("personas = %q", c.Spice.Personas)
 	}
@@ -92,12 +100,14 @@ verify = "npm test"
 		t.Fatalf("override layer lost: verify = %q", c.Project.Verify)
 	}
 	for key, want := range map[string]string{
-		"server.port":             LayerRepo,
-		"server.open_browser":     LayerUser,
-		"server.planning_percent": LayerUser,
-		"project.verify":          LayerOverride,
-		"project.name":            LayerRepo,
-		"safety.max_iterations":   LayerBuiltin,
+		"server.port":                   LayerRepo,
+		"server.open_browser":           LayerUser,
+		"server.planning_percent":       LayerUser,
+		"server.planning_proposal_max":  LayerUser,
+		"server.follow_up_proposal_max": LayerUser,
+		"project.verify":                LayerOverride,
+		"project.name":                  LayerRepo,
+		"safety.max_iterations":         LayerBuiltin,
 	} {
 		if got := res.Source(key); got != want {
 			t.Errorf("provenance[%s] = %q, want %q", key, got, want)
@@ -310,11 +320,13 @@ effort = "gigantic"
 // refuse to start, not WARN into the void.
 func TestValidateBlocksUnsafeConfig(t *testing.T) {
 	for name, body := range map[string]string{
-		"zero wedge":                    "[safety]\nwedge_minutes = 0",
-		"negative breaker":              "[safety]\nbreaker_failures = -1",
-		"agent-less model":              "[types.art]\nmodel = \"gemini-3-flash\"",
-		"port out of range":             "[server]\nport = 999999",
-		"planning percent out of range": "[server]\nplanning_percent = 101",
+		"zero wedge":                       "[safety]\nwedge_minutes = 0",
+		"negative breaker":                 "[safety]\nbreaker_failures = -1",
+		"agent-less model":                 "[types.art]\nmodel = \"gemini-3-flash\"",
+		"port out of range":                "[server]\nport = 999999",
+		"planning percent out of range":    "[server]\nplanning_percent = 101",
+		"zero planning proposal max":       "[server]\nplanning_proposal_max = 0",
+		"too-large follow-up proposal max": "[server]\nfollow_up_proposal_max = 101",
 	} {
 		dir := t.TempDir()
 		repo := writeFile(t, dir, "repo.toml", body)

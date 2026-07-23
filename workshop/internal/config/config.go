@@ -194,6 +194,10 @@ type ServerConfig struct {
 	// PlanningPercent is the chance that an idle, goal-mode pass creates
 	// goal-moving proposals rather than reviewing recent committed work.
 	PlanningPercent int `toml:"planning_percent"`
+	// PlanningProposalMax bounds the number of new tasks a planning pass may
+	// create. FollowUpProposalMax does the same for ordinary task follow-ups.
+	PlanningProposalMax int `toml:"planning_proposal_max"`
+	FollowUpProposalMax int `toml:"follow_up_proposal_max"`
 	// StartStopped launches `up` with every pipeline parked (operator-halted)
 	// so nothing runs until you resume it from the dashboard. Only affects
 	// `up`; `run` (headless CI) ignores it.
@@ -236,8 +240,11 @@ func Default() Config {
 			domain.ArtGenType:      {Agent: "claude"},
 			domain.ArtGenTransType: {Agent: "claude"},
 		},
-		Art:    ArtConfig{Remover: "ffmpeg"},
-		Server: ServerConfig{Port: 4455, OpenBrowser: true, PlanningPercent: 75, StartStopped: true},
+		Art: ArtConfig{Remover: "ffmpeg"},
+		Server: ServerConfig{
+			Port: 4455, OpenBrowser: true, PlanningPercent: 75,
+			PlanningProposalMax: 5, FollowUpProposalMax: 2, StartStopped: true,
+		},
 		Agents: map[string]AgentConfig{},
 	}
 }
@@ -537,6 +544,12 @@ func (c *Config) Validate() (errs, warns []error) {
 	}
 	if c.Server.PlanningPercent < 0 || c.Server.PlanningPercent > 100 {
 		errs = append(errs, fmt.Errorf("server.planning_percent: %d out of range (want 0-100)", c.Server.PlanningPercent))
+	}
+	if c.Server.PlanningProposalMax < 1 || c.Server.PlanningProposalMax > 100 {
+		errs = append(errs, fmt.Errorf("server.planning_proposal_max: %d out of range (want 1-100)", c.Server.PlanningProposalMax))
+	}
+	if c.Server.FollowUpProposalMax < 1 || c.Server.FollowUpProposalMax > 100 {
+		errs = append(errs, fmt.Errorf("server.follow_up_proposal_max: %d out of range (want 1-100)", c.Server.FollowUpProposalMax))
 	}
 	// Safety knobs guard unattended execution — nonsense values must block.
 	if c.Safety.WedgeMinutes <= 0 {

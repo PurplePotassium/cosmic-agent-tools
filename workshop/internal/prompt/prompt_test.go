@@ -167,13 +167,13 @@ func TestScopeBlockSoloIsEmpty(t *testing.T) {
 }
 
 func TestInventBlockPlansTasksWithoutImplementingThem(t *testing.T) {
-	got := inventBlock(domain.Pipeline{TaskTypes: []string{"code", "tests"}})
+	got := inventBlock(domain.Pipeline{TaskTypes: []string{"code", "tests"}}, 7)
 	for _, want := range []string{
 		"PLANNING pass",
 		"current progress toward the GOAL",
-		"one to five concrete, high-impact, unqueued tasks",
+		"one to 7 concrete, high-impact, unqueued tasks",
 		"code, tests",
-		"one to five tasks to proposals.json",
+		"one to 7 tasks to proposals.json",
 		"Do NOT implement or begin any proposed task",
 	} {
 		if !strings.Contains(got, want) {
@@ -186,7 +186,7 @@ func TestInventBlockSelectsReviewOneQuarterOfTheTime(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
 	reviews, invents := 0, 0
 	for range 400 {
-		got, planning := InventBlock(domain.Pipeline{}, rng, 75)
+		got, planning := InventBlock(domain.Pipeline{}, rng, 75, 5)
 		switch {
 		case !planning && strings.Contains(got, "CODE REVIEW / BUG HUNT"):
 			reviews++
@@ -218,7 +218,7 @@ func TestInventBlockHonorsPlanningPercentBoundaries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rng := rand.New(rand.NewSource(42))
 			for range 20 {
-				got, planning := InventBlock(domain.Pipeline{}, rng, tc.percent)
+				got, planning := InventBlock(domain.Pipeline{}, rng, tc.percent, 5)
 				if !strings.Contains(got, tc.contains) {
 					t.Fatalf("planning_percent=%d returned the wrong block:\n%s", tc.percent, got)
 				}
@@ -227,6 +227,13 @@ func TestInventBlockHonorsPlanningPercentBoundaries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMechanicsStatesConfiguredFollowUpProposalLimit(t *testing.T) {
+	got := Mechanics(MechanicsInputs{StateDir: "/state", RepoDir: "/repo", FollowUpProposalMax: 7})
+	if !strings.Contains(got, "ORDINARY FOLLOW-UP PROPOSAL LIMIT: 7") {
+		t.Fatalf("mechanics omit configured proposal limit:\n%s", got)
 	}
 }
 

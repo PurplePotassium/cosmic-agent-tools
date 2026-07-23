@@ -88,7 +88,8 @@ OVERWRITE `progress.json` with `"phase": "blocked"` (or `"reverted"`) and a
 one-line `note` explaining why. That is all — do not touch the other files.
 
 Optionally suggest follow-up work: first CHECK `backlog.json` for duplicates
-across ALL backlogs, then write `proposals.json` as an array of AT MOST 2:
+across ALL backlogs, then write `proposals.json` as an array up to the ordinary
+follow-up proposal limit stated in the mechanics section:
 
 ```json
 [ { "title": "...", "detail": "...", "type": "<task type or omit>", "backlog": "<pipeline name, or omit for the shared backlog>" } ]

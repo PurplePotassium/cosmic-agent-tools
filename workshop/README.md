@@ -119,8 +119,10 @@ nouns    = "gamedev"
 start_stopped = true         # come up with every pipeline stopped; resume from the dashboard
                              # (default true; `up --start-running` overrides for one launch)
 open_browser  = true         # open the dashboard on launch (default true)
-planning_percent = 75        # idle goal-mode pass: 75% plan 1-5 high-impact tasks,
-                             # 25% evidence-backed code review / bug hunt (0-100)
+planning_percent = 75        # idle goal-mode pass: 75% plans, 25% evidence-backed
+                             # code review / bug hunt (0-100)
+planning_proposal_max = 5    # new, deduplicated high-impact tasks per planning pass (1-100)
+follow_up_proposal_max = 2   # ordinary assigned-task follow-ups per pass (1-100)
 
 # ---- task-type routing: type -> {agent, model, effort} --------------------
 # Precedence per task: pin > live dashboard override > this table > pipeline

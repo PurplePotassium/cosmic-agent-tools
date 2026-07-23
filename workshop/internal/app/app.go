@@ -223,6 +223,8 @@ func (a *App) BuildWorker(p domain.Pipeline, multi bool, opts WorkerOpts) (*engi
 		PersonalityEnabled:  cfg.Personality.Enabled,
 		Personalities:       cfg.Personality.List,
 		PlanningPercent:     cfg.Server.PlanningPercent,
+		PlanningProposalMax: cfg.Server.PlanningProposalMax,
+		FollowUpProposalMax: cfg.Server.FollowUpProposalMax,
 		SyncTrunk:           opts.SyncTrunk,
 		TreeMu:              opts.TreeMu,
 		Sem:                 opts.Sem,

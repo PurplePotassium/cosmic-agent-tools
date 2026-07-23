@@ -153,8 +153,10 @@ name = "` + name + `"
 # wedge_minutes    = 35    # in-flight pass older than this is killed (keep above agy's 30m print-timeout)
 
 # [server]
-# planning_percent = 75    # idle goal-mode pass: chance to plan 1-5 high-impact tasks;
-                           # the rest are evidence-backed code reviews / bug hunts (0-100)
+# planning_percent = 75      # idle goal-mode pass: chance to plan; the rest are
+                             # evidence-backed code reviews / bug hunts (0-100)
+# planning_proposal_max = 5  # new tasks per planning pass (1-100)
+# follow_up_proposal_max = 2 # ordinary assigned-task follow-ups per pass (1-100)
 
 `)
 	if game {

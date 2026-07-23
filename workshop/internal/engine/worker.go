@@ -39,16 +39,15 @@ const (
 	HaltBreaker = "breaker"
 )
 
-// Proposal-ingest caps. proposalCap bounds a pass's freeform follow-up
-// suggestions (the contract's "AT MOST 2" — an anti-busywork throttle).
-// expandProposalCap bounds an expand task's enumeration instead: high enough
-// for any real "for each X", low enough to stop a runaway agent.
+// Proposal-ingest caps. Ordinary and planning caps are server-configured;
+// expandProposalCap remains a fixed, high ceiling for operator-ordered
+// enumeration tasks.
 // Idle planning passes may enqueue up to five proposals; review-only idle
 // passes are still instructed to propose at most one evidence-backed follow-up.
 const (
-	proposalCap       = 2
-	inventProposalCap = 5
-	expandProposalCap = 100
+	defaultFollowUpProposalMax = 2
+	defaultPlanningProposalMax = 5
+	expandProposalCap          = 100
 )
 
 // ErrHalted is returned by Loop when the pipeline stopped itself (auth
@@ -117,7 +116,9 @@ type WorkerConfig struct {
 	Rng          *rand.Rand
 	// PlanningPercent is the [server].planning_percent chance (0-100) that
 	// an idle pass plans goal-moving tasks instead of reviewing recent work.
-	PlanningPercent int
+	PlanningPercent     int
+	PlanningProposalMax int // [server].planning_proposal_max; default 5
+	FollowUpProposalMax int // [server].follow_up_proposal_max; default 2
 
 	// PersonalityEnabled is the [personality].enabled master switch; false
 	// makes every pipeline's Personality selector a no-op regardless of its
@@ -178,6 +179,12 @@ func (c *WorkerConfig) fillDefaults() {
 	}
 	if c.SuspectAuthAfter <= 0 {
 		c.SuspectAuthAfter = 3
+	}
+	if c.PlanningProposalMax <= 0 {
+		c.PlanningProposalMax = defaultPlanningProposalMax
+	}
+	if c.FollowUpProposalMax <= 0 {
+		c.FollowUpProposalMax = defaultFollowUpProposalMax
 	}
 	if c.Rng == nil {
 		c.Rng = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -518,7 +525,7 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 			typeFragment = w.fragment(filepath.Join("types", task.Type+".md"))
 		}
 	} else {
-		taskBlock, idlePlanning = prompt.InventBlock(w.cfg.Pipeline, w.cfg.Rng, w.cfg.PlanningPercent)
+		taskBlock, idlePlanning = prompt.InventBlock(w.cfg.Pipeline, w.cfg.Rng, w.cfg.PlanningPercent, w.cfg.PlanningProposalMax)
 	}
 	var spice prompt.Spice
 	if w.cfg.SpiceEnabled {
@@ -528,11 +535,12 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 	_, full := prompt.Compose(prompt.Inputs{
 		BaseContract: base,
 		Mechanics: prompt.Mechanics(prompt.MechanicsInputs{
-			StateDir:  w.cfg.StateDir,
-			RepoDir:   w.cfg.RepoDir,
-			Branch:    branch,
-			VerifyCmd: w.cfg.Verify,
-			VerifyDir: w.cfg.VerifyDir,
+			StateDir:            w.cfg.StateDir,
+			RepoDir:             w.cfg.RepoDir,
+			Branch:              branch,
+			VerifyCmd:           w.cfg.Verify,
+			VerifyDir:           w.cfg.VerifyDir,
+			FollowUpProposalMax: w.cfg.FollowUpProposalMax,
 		}),
 		Goal:             readTrim(w.cfg.GoalPath),
 		ProjectFragment:  w.fragment("project.md"),
@@ -854,9 +862,9 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 	var dropped []domain.Proposal
 	var ingestErr error
 	if (acceptProposals || expand) && len(props) > 0 {
-		maxAccept := proposalCap
+		maxAccept := w.cfg.FollowUpProposalMax
 		if idlePlanning {
-			maxAccept = inventProposalCap
+			maxAccept = w.cfg.PlanningProposalMax
 		}
 		if expand {
 			maxAccept = expandProposalCap
@@ -906,7 +914,7 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 			outcome = domain.OutcomeNoChange
 			w.event(ctx, "task.failed", name, pass.ID, map[string]any{
 				"task": passTaskTitle(task), "phase": progress.Phase,
-				"note": fmt.Sprintf("planning pass exceeded the %d-proposal cap", inventProposalCap),
+				"note": fmt.Sprintf("planning pass exceeded the %d-proposal cap", w.cfg.PlanningProposalMax),
 			})
 		case expand && len(props) == 0:
 			// The enumeration never happened: nothing to enqueue means the

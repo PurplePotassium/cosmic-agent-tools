@@ -84,13 +84,15 @@ func newRig(t *testing.T, scenario fakeagent.Scenario, tweak func(*WorkerConfig)
 			Enabled:         true,
 			PassTimeout:     2 * time.Minute,
 		},
-		RepoDir:         repo,
-		StateDir:        statedir.PipelineDir(stateRoot, "main"),
-		LogDir:          filepath.Join(stateRoot, "logs", "main"),
-		GoalPath:        goalPath,
-		SpiceEnabled:    false,
-		PlanningPercent: 75,
-		IdlePoll:        50 * time.Millisecond,
+		RepoDir:             repo,
+		StateDir:            statedir.PipelineDir(stateRoot, "main"),
+		LogDir:              filepath.Join(stateRoot, "logs", "main"),
+		GoalPath:            goalPath,
+		SpiceEnabled:        false,
+		PlanningPercent:     75,
+		PlanningProposalMax: defaultPlanningProposalMax,
+		FollowUpProposalMax: defaultFollowUpProposalMax,
+		IdlePoll:            50 * time.Millisecond,
 	}
 	if tweak != nil {
 		tweak(&cfg)
@@ -236,14 +238,16 @@ func TestProposalsIngestedWithDedupe(t *testing.T) {
 // Idle planning passes are proposal-only work. They may enqueue up to five
 // deduplicated follow-ups, while ordinary assigned-task follow-ups retain the
 // stricter two-item cap covered above.
-func TestInventPassIngestsUpToFiveProposals(t *testing.T) {
-	props := make([]domain.Proposal, inventProposalCap+1)
+func TestInventPassUsesConfiguredPlanningProposalCap(t *testing.T) {
+	const planningProposalMax = 3
+	props := make([]domain.Proposal, planningProposalMax+1)
 	for i := range props {
 		props[i] = domain.Proposal{Title: fmt.Sprintf("planned task %d", i+1)}
 	}
 	r := newRig(t, fakeagent.Scenario{Behavior: "happy", NoEdit: true, Proposals: props}, func(cfg *WorkerConfig) {
 		cfg.Pipeline.Invent = true
 		cfg.PlanningPercent = 100
+		cfg.PlanningProposalMax = planningProposalMax
 	})
 	ctx := context.Background()
 
@@ -252,11 +256,11 @@ func TestInventPassIngestsUpToFiveProposals(t *testing.T) {
 	}
 
 	open, _ := r.st.ListTasks(ctx, store.TaskFilter{Statuses: []domain.TaskStatus{domain.TaskOpen}})
-	if len(open) != inventProposalCap {
-		t.Fatalf("accepted %d idle-pass proposals, want %d: %+v", len(open), inventProposalCap, open)
+	if len(open) != planningProposalMax {
+		t.Fatalf("accepted %d idle-pass proposals, want %d: %+v", len(open), planningProposalMax, open)
 	}
 	for _, task := range open {
-		if task.Title == "planned task 6" {
+		if task.Title == "planned task 4" {
 			t.Fatalf("proposal over idle-pass cap was ingested: %+v", open)
 		}
 	}
@@ -265,11 +269,30 @@ func TestInventPassIngestsUpToFiveProposals(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, ev := range evs {
-		if ev.Type == "proposals.dropped" && fmt.Sprint(ev.Payload["cap"]) == fmt.Sprint(inventProposalCap) {
+		if ev.Type == "proposals.dropped" && fmt.Sprint(ev.Payload["cap"]) == fmt.Sprint(planningProposalMax) {
 			return
 		}
 	}
-	t.Fatal("no proposals.dropped event for idle-pass proposal over the five-item cap")
+	t.Fatal("no proposals.dropped event for idle-pass proposal over the configured cap")
+}
+
+func TestAssignedTaskUsesConfiguredFollowUpProposalCap(t *testing.T) {
+	const followUpProposalMax = 1
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", Proposals: []domain.Proposal{
+		{Title: "first follow-up"}, {Title: "second follow-up"},
+	}}, func(cfg *WorkerConfig) {
+		cfg.FollowUpProposalMax = followUpProposalMax
+	})
+	ctx := context.Background()
+	r.addTask("assigned task")
+
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	open, _ := r.st.ListTasks(ctx, store.TaskFilter{Statuses: []domain.TaskStatus{domain.TaskOpen}})
+	if len(open) != followUpProposalMax || open[0].Title != "first follow-up" {
+		t.Fatalf("configured follow-up cap ignored: %+v", open)
+	}
 }
 
 func TestPlanningPassNeedsAtLeastOneNewProposal(t *testing.T) {

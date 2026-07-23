@@ -11,10 +11,9 @@ const SHARED = "shared";
 // pipeline to go idle.
 const INVENT_TASK_TITLE = "Plan next tasks toward the goal";
 const INVENT_TASK_DETAIL = "This is a PLANNING pass: assess current progress toward the GOAL by reading the GOAL, " +
-  "backlog, recent completions, and relevant repository evidence. Then create one to five concrete, high-impact, " +
-  "unqueued tasks that would materially move the work closer to completing the GOAL. Do not select an imagined " +
-  "single highest-impact task. The usual two-proposal cap does not apply to this planning pass: write one to five tasks " +
-  "to proposals.json with implementation-ready titles and details; check " +
+  "backlog, recent completions, and relevant repository evidence. Then create concrete, high-impact, unqueued tasks " +
+  "that would materially move the work closer to completing the GOAL. Do not select an imagined single highest-impact " +
+  "task. Write the tasks to proposals.json with implementation-ready titles and details; check " +
   "the entire backlog first so none duplicate queued work. Do NOT implement or begin any proposed task, edit repository " +
   "files, or run an unrelated increment in this pass. The proposals are the deliverable. Record the evidence behind the " +
   "task choices and how many you created in progress.json, then finish done.";
