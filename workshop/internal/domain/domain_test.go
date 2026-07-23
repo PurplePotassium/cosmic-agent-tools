@@ -90,3 +90,14 @@ func TestAllowedArtClaudeModel(t *testing.T) {
 		t.Errorf("the default %q must itself be allowed", ArtClaudeDefault)
 	}
 }
+
+func TestCodexModelFamilies(t *testing.T) {
+	for _, model := range CodexModels {
+		if !KnownModel("codex", model) {
+			t.Errorf("KnownModel(codex, %q) = false, want true", model)
+		}
+	}
+	if KnownModel("codex", "gpt-5.6-unknown") {
+		t.Fatal("an uncurated Codex model must not be treated as known")
+	}
+}

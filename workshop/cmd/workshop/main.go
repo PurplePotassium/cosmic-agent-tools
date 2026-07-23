@@ -87,7 +87,7 @@ func main() {
 func usage() {
 	fmt.Print(`workshop — autonomous coding-agent loops with a live dashboard
 
-Workshop runs coding agents (claude = Claude Code, agy = Gemini CLI)
+Workshop runs coding agents (claude = Claude Code, agy = Gemini CLI, codex = OpenAI Codex CLI)
 in unattended loops against the git repo it is invoked in. Each pass
 picks eligible work from the backlog (or the repo's GOAL.md), runs the
 agent, and commits the result — repeating until stopped, drained, or

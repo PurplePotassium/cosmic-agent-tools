@@ -84,12 +84,13 @@ func newRig(t *testing.T, scenario fakeagent.Scenario, tweak func(*WorkerConfig)
 			Enabled:         true,
 			PassTimeout:     2 * time.Minute,
 		},
-		RepoDir:      repo,
-		StateDir:     statedir.PipelineDir(stateRoot, "main"),
-		LogDir:       filepath.Join(stateRoot, "logs", "main"),
-		GoalPath:     goalPath,
-		SpiceEnabled: false,
-		IdlePoll:     50 * time.Millisecond,
+		RepoDir:         repo,
+		StateDir:        statedir.PipelineDir(stateRoot, "main"),
+		LogDir:          filepath.Join(stateRoot, "logs", "main"),
+		GoalPath:        goalPath,
+		SpiceEnabled:    false,
+		PlanningPercent: 75,
+		IdlePoll:        50 * time.Millisecond,
 	}
 	if tweak != nil {
 		tweak(&cfg)
@@ -232,6 +233,65 @@ func TestProposalsIngestedWithDedupe(t *testing.T) {
 	}
 }
 
+// Idle planning passes are proposal-only work. They may enqueue up to five
+// deduplicated follow-ups, while ordinary assigned-task follow-ups retain the
+// stricter two-item cap covered above.
+func TestInventPassIngestsUpToFiveProposals(t *testing.T) {
+	props := make([]domain.Proposal, inventProposalCap+1)
+	for i := range props {
+		props[i] = domain.Proposal{Title: fmt.Sprintf("planned task %d", i+1)}
+	}
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", NoEdit: true, Proposals: props}, func(cfg *WorkerConfig) {
+		cfg.Pipeline.Invent = true
+		cfg.PlanningPercent = 100
+	})
+	ctx := context.Background()
+
+	if err := r.worker.Loop(ctx, 1, false); err != nil {
+		t.Fatal(err)
+	}
+
+	open, _ := r.st.ListTasks(ctx, store.TaskFilter{Statuses: []domain.TaskStatus{domain.TaskOpen}})
+	if len(open) != inventProposalCap {
+		t.Fatalf("accepted %d idle-pass proposals, want %d: %+v", len(open), inventProposalCap, open)
+	}
+	for _, task := range open {
+		if task.Title == "planned task 6" {
+			t.Fatalf("proposal over idle-pass cap was ingested: %+v", open)
+		}
+	}
+	evs, err := r.st.EventsSince(ctx, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range evs {
+		if ev.Type == "proposals.dropped" && fmt.Sprint(ev.Payload["cap"]) == fmt.Sprint(inventProposalCap) {
+			return
+		}
+	}
+	t.Fatal("no proposals.dropped event for idle-pass proposal over the five-item cap")
+}
+
+func TestPlanningPassNeedsAtLeastOneNewProposal(t *testing.T) {
+	r := newRig(t, fakeagent.Scenario{Behavior: "happy", NoEdit: true}, func(cfg *WorkerConfig) {
+		cfg.Pipeline.Invent = true
+		cfg.PlanningPercent = 100
+	})
+	ctx := context.Background()
+
+	if res, err := r.worker.RunPass(ctx); err != nil || res != PassRan {
+		t.Fatalf("res=%v err=%v", res, err)
+	}
+	completions, _ := r.st.ListCompletions(ctx, 5)
+	if len(completions) != 0 {
+		t.Fatalf("empty planning pass must not complete: %+v", completions)
+	}
+	passes, _ := r.st.RecentPasses(ctx, "main", 1)
+	if len(passes) != 1 || passes[0].Outcome != domain.OutcomeNoChange {
+		t.Fatalf("empty planning pass outcome: %+v", passes)
+	}
+}
+
 // An expand task's proposals are its deliverable: every enumerated item is
 // ingested — the freeform cap does not apply — even on a proposal-refusing
 // (drain-mode) pipeline, and the task completes without any repo edit.
@@ -356,7 +416,7 @@ func TestExpandTaskPromptCarriesDirective(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	full, _, _, err := r.worker.preparePass(ctx, task)
+	full, _, _, _, err := r.worker.preparePass(ctx, task)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,3 +10,7 @@ func ClaudePath() (string, error) { return findClaude() }
 // (WORKSHOP_AGY_BIN → PATH → known install dirs). Same status-surface use as
 // ClaudePath.
 func AgyPath() (string, error) { return findAgy() }
+
+// CodexPath resolves the Codex CLI exactly as the codex driver would spawn it
+// (WORKSHOP_CODEX_BIN override → PATH). Same status-surface use as ClaudePath.
+func CodexPath() (string, error) { return findCodex() }

@@ -3,7 +3,7 @@
 Autonomous coding-agent loops for any git repository, with a live dashboard.
 
 One self-contained binary. Point it at a repo and it runs the **Ralph loop**:
-a coding agent (Claude Code, Antigravity/Gemini, pluggable others) is invoked
+a coding agent (Claude Code, Codex/GPT, Antigravity/Gemini, pluggable others) is invoked
 back-to-back — each pass cold-starts with fresh context, reads your GOAL and
 a curated backlog, makes ONE small verified increment, and exits; the engine
 commits it and goes again. The repo is the memory, so it grinds for hours
@@ -30,7 +30,8 @@ workshop           # dashboard opens (pipelines start stopped); set the goal, ad
   (`%LOCALAPPDATA%\Programs\workshop\` is a good spot on Windows).
 
 You also need at least one agent CLI on PATH and authenticated:
-**`claude`** (Claude Code) and/or **`agy`** (Antigravity CLI / Gemini).
+**`claude`** (Claude Code), **`codex`** (OpenAI Codex CLI; GPT Sol, Terra, or
+Luna), and/or **`agy`** (Antigravity CLI / Gemini).
 `workshop doctor` checks everything.
 
 There is no Node, no npm, no scripts to copy: the dashboard is embedded in
@@ -118,6 +119,8 @@ nouns    = "gamedev"
 start_stopped = true         # come up with every pipeline stopped; resume from the dashboard
                              # (default true; `up --start-running` overrides for one launch)
 open_browser  = true         # open the dashboard on launch (default true)
+planning_percent = 75        # idle goal-mode pass: 75% plan 1-5 high-impact tasks,
+                             # 25% evidence-backed code review / bug hunt (0-100)
 
 # ---- task-type routing: type -> {agent, model, effort} --------------------
 # Precedence per task: pin > live dashboard override > this table > pipeline
@@ -158,6 +161,12 @@ open_browser  = true         # open the dashboard on launch (default true)
 agent  = "claude"
 model  = "claude-opus-4-8"
 effort = "high"              # low|medium|high|xhigh|max — ignored if the agent has no effort knob
+
+# Codex can run GPT Sol, Terra, or Luna. Terra is its balanced default.
+# [types.code]
+# agent  = "codex"
+# model  = "gpt-5.6-terra" # gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna
+# effort = "high"
 
 [types.art]
 agent = "agy"                # blind headless: self-report only (see AGENTS.md)
@@ -203,7 +212,7 @@ human_readable = false       # true also renders each transcript as markdown
                              # in full, tool payloads truncated (the .jsonl keeps all).
 
 # model is validated against a curated family list per agent — claude:
-# sonnet/fable/opus/haiku, agy: gemini — and just WARNS (never blocks) on a
+# sonnet/fable/opus/haiku, codex: gpt-5.6-sol/terra/luna, agy: gemini — and just WARNS (never blocks) on a
 # mismatch. Off-list on purpose (a proxy alias, a brand-new id)? Whitelist it:
 # [agents.claude]
 # extra_models = ["my-internal-proxy-model"]
@@ -322,12 +331,15 @@ effort = "xhigh"
 
 ## ⚠️ Unattended execution
 
-Agents run with `--dangerously-skip-permissions` by default
-(`[safety] skip_permissions = false` disables it): they edit, run, and delete
-files on their own, for as many passes as you allow. **Only run where git can
-fully revert you.** Start bounded (`workshop run`), watch the first passes,
-and give `verify` real teeth — the gate is the whole safety story. The
-server binds 127.0.0.1 and is never safe to expose.
+Agents run with their CLI's unattended permission bypass by default
+(`--dangerously-skip-permissions` for Claude/agy and
+`--dangerously-bypass-approvals-and-sandbox` for Codex). Set
+`[safety] skip_permissions = false` to disable it: Codex then uses its
+workspace-write sandbox. Agents can edit, run, and delete files on their own,
+for as many passes as you allow. **Only run where git can fully revert you.**
+Start bounded (`workshop run`), watch the first passes, and give `verify` real
+teeth — the gate is the whole safety story. The server binds 127.0.0.1 and is
+never safe to expose.
 
 ## Development
 

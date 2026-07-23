@@ -152,6 +152,10 @@ name = "` + name + `"
 # breaker_failures = 5     # consecutive failed passes -> pipeline halts
 # wedge_minutes    = 35    # in-flight pass older than this is killed (keep above agy's 30m print-timeout)
 
+# [server]
+# planning_percent = 75    # idle goal-mode pass: chance to plan 1-5 high-impact tasks;
+                           # the rest are evidence-backed code reviews / bug hunts (0-100)
+
 `)
 	if game {
 		b.WriteString(`[spice]                    # anti-circling persona/noun injection
@@ -172,6 +176,12 @@ nouns    = "gamedev"
 # [types.code]
 # agent  = "claude"
 # model  = "claude-opus-4-8"
+# effort = "high"
+#
+# Codex routes can use gpt-5.6-sol, gpt-5.6-terra, or gpt-5.6-luna.
+# [types.code]
+# agent  = "codex"
+# model  = "gpt-5.6-terra"
 # effort = "high"
 #
 # [types.merge-conflict]   # defining this enables agent-resolved conflicts

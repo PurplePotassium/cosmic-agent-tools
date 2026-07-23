@@ -20,6 +20,20 @@ an if-chain on an agent's name elsewhere.
   an expired login never self-heals and must not burn passes.
 - Binary discovery: `WORKSHOP_CLAUDE_BIN` env override → PATH.
 
+## codex (OpenAI Codex CLI)
+
+- Prompt over **stdin**; invocation `codex exec --model <id>` with
+  `-c model_reasoning_effort="<level>"` when the installed CLI advertises
+  `--config` support.
+- Output is **capturable and streamable** — the engine pipes stdout+stderr
+  to the pass log, dashboard, and auth scan.
+- Codex has no caller-minted session-transcript flag in `exec` mode, so the
+  driver does not claim the `Sessions` capability.
+- `[safety] skip_permissions = true` maps to Codex's documented
+  `--dangerously-bypass-approvals-and-sandbox`; when disabled, Workshop uses
+  `--sandbox workspace-write` instead.
+- Binary discovery: `WORKSHOP_CODEX_BIN` env override → PATH.
+
 ## agy (Antigravity CLI / Gemini)
 
 The blind driver. Upstream facts, all confirmed the hard way in the

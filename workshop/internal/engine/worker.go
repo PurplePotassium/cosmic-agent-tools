@@ -43,8 +43,11 @@ const (
 // suggestions (the contract's "AT MOST 2" — an anti-busywork throttle).
 // expandProposalCap bounds an expand task's enumeration instead: high enough
 // for any real "for each X", low enough to stop a runaway agent.
+// Idle planning passes may enqueue up to five proposals; review-only idle
+// passes are still instructed to propose at most one evidence-backed follow-up.
 const (
 	proposalCap       = 2
+	inventProposalCap = 5
 	expandProposalCap = 100
 )
 
@@ -112,6 +115,9 @@ type WorkerConfig struct {
 	Personas     []string
 	Nouns        []string
 	Rng          *rand.Rand
+	// PlanningPercent is the [server].planning_percent chance (0-100) that
+	// an idle pass plans goal-moving tasks instead of reviewing recent work.
+	PlanningPercent int
 
 	// PersonalityEnabled is the [personality].enabled master switch; false
 	// makes every pipeline's Personality selector a no-op regardless of its
@@ -435,7 +441,7 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 		return w.runArtPass(ctx, pass, task, res, sessionID)
 	}
 
-	full, spice, personality, err := w.preparePass(ctx, task)
+	full, spice, personality, idlePlanning, err := w.preparePass(ctx, task)
 	if err != nil {
 		return w.failSetup(ctx, pass, task, err)
 	}
@@ -475,21 +481,21 @@ func (w *Worker) RunPass(ctx context.Context) (PassResult, error) {
 
 	// INGEST + COMMIT.
 	w.setState(ctx, pass, domain.PassIngesting)
-	return w.settlePass(ctx, pass, task, res, logFile, exitCode, tail, timedOut, runErr)
+	return w.settlePass(ctx, pass, task, res, logFile, idlePlanning, exitCode, tail, timedOut, runErr)
 }
 
 // preparePass materializes state files and composes the prompt.
-func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, prompt.Spice, string, error) {
+func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, prompt.Spice, string, bool, error) {
 	snapshot, err := w.bl.Snapshot(ctx)
 	if err != nil {
-		return "", prompt.Spice{}, "", err
+		return "", prompt.Spice{}, "", false, err
 	}
 	completions, err := w.st.ListCompletions(ctx, 20)
 	if err != nil {
-		return "", prompt.Spice{}, "", err
+		return "", prompt.Spice{}, "", false, err
 	}
 	if err := statedir.Materialize(w.cfg.StateDir, task, snapshot, completions); err != nil {
-		return "", prompt.Spice{}, "", err
+		return "", prompt.Spice{}, "", false, err
 	}
 
 	branch, _ := gitx.CurrentBranch(ctx, w.cfg.RepoDir)
@@ -498,6 +504,7 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 		base = o
 	}
 	var taskBlock, typeFragment string
+	idlePlanning := false
 	if task != nil {
 		taskBlock = prompt.TaskBlock(task)
 		if task.IsExpand() {
@@ -511,7 +518,7 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 			typeFragment = w.fragment(filepath.Join("types", task.Type+".md"))
 		}
 	} else {
-		taskBlock = prompt.InventBlock(w.cfg.Pipeline)
+		taskBlock, idlePlanning = prompt.InventBlock(w.cfg.Pipeline, w.cfg.Rng, w.cfg.PlanningPercent)
 	}
 	var spice prompt.Spice
 	if w.cfg.SpiceEnabled {
@@ -536,7 +543,7 @@ func (w *Worker) preparePass(ctx context.Context, task *domain.Task) (string, pr
 		Spice:            spice,
 		Personality:      personality,
 	})
-	return full, spice, personality, nil
+	return full, spice, personality, idlePlanning, nil
 }
 
 // resolvePersonality applies this pipeline's Personality selector: ""/"none"
@@ -775,7 +782,7 @@ func (w *Worker) exportPass(ctx context.Context, pass *domain.Pass, logPath stri
 }
 
 // settlePass classifies the finished pass, reconciles state, and commits.
-func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved, logFile *os.File, exitCode int, tail []string, timedOut bool, runErr error) (PassResult, error) {
+func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain.Task, res *resolved, logFile *os.File, idlePlanning bool, exitCode int, tail []string, timedOut bool, runErr error) (PassResult, error) {
 	name := w.cfg.Pipeline.Name
 	blind := res.caps.Capture == driver.CaptureNone
 
@@ -843,14 +850,17 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 			w.event(ctx, "proposals.invalid", name, pass.ID, map[string]any{"error": perr.Error()})
 		}
 	}
+	var added []*domain.Task
 	var dropped []domain.Proposal
 	var ingestErr error
 	if (acceptProposals || expand) && len(props) > 0 {
 		maxAccept := proposalCap
+		if idlePlanning {
+			maxAccept = inventProposalCap
+		}
 		if expand {
 			maxAccept = expandProposalCap
 		}
-		var added []*domain.Task
 		added, dropped, ingestErr = w.bl.Ingest(ctx, name, props, w.cfg.KnownPipelines, maxAccept)
 		if ingestErr != nil {
 			// Losing proposals silently strands work — for an expand task,
@@ -878,6 +888,26 @@ func (w *Worker) settlePass(ctx context.Context, pass *domain.Pass, task *domain
 	switch progress.Phase {
 	case "done":
 		switch {
+		case idlePlanning && ingestErr != nil:
+			outcome = domain.OutcomeNoChange
+			w.event(ctx, "task.failed", name, pass.ID, map[string]any{
+				"task": passTaskTitle(task), "phase": progress.Phase, "note": "planning proposal ingest failed",
+			})
+		case idlePlanning && len(added) == 0:
+			// Planning is an idle pass's actual deliverable. Empty output (or
+			// only duplicates) must not masquerade as completed work.
+			outcome = domain.OutcomeNoChange
+			w.event(ctx, "task.failed", name, pass.ID, map[string]any{
+				"task": passTaskTitle(task), "phase": progress.Phase, "note": "planning pass produced no new proposals",
+			})
+		case idlePlanning && len(dropped) > 0:
+			// Keep the accepted work, but do not call a pass that exceeded its
+			// 1-5 proposal contract a successful planning completion.
+			outcome = domain.OutcomeNoChange
+			w.event(ctx, "task.failed", name, pass.ID, map[string]any{
+				"task": passTaskTitle(task), "phase": progress.Phase,
+				"note": fmt.Sprintf("planning pass exceeded the %d-proposal cap", inventProposalCap),
+			})
 		case expand && len(props) == 0:
 			// The enumeration never happened: nothing to enqueue means the
 			// task is retried, not completed — "done" would silently strand

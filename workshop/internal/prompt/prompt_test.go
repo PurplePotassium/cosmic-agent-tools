@@ -166,6 +166,85 @@ func TestScopeBlockSoloIsEmpty(t *testing.T) {
 	}
 }
 
+func TestInventBlockPlansTasksWithoutImplementingThem(t *testing.T) {
+	got := inventBlock(domain.Pipeline{TaskTypes: []string{"code", "tests"}})
+	for _, want := range []string{
+		"PLANNING pass",
+		"current progress toward the GOAL",
+		"one to five concrete, high-impact, unqueued tasks",
+		"code, tests",
+		"one to five tasks to proposals.json",
+		"Do NOT implement or begin any proposed task",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("invent block missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestInventBlockSelectsReviewOneQuarterOfTheTime(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	reviews, invents := 0, 0
+	for range 400 {
+		got, planning := InventBlock(domain.Pipeline{}, rng, 75)
+		switch {
+		case !planning && strings.Contains(got, "CODE REVIEW / BUG HUNT"):
+			reviews++
+		case planning && strings.Contains(got, "PLANNING pass"):
+			invents++
+		default:
+			t.Fatalf("unrecognized idle-pass block:\n%s", got)
+		}
+	}
+	if reviews == 0 || invents == 0 {
+		t.Fatalf("expected both review and planning passes; reviews=%d invents=%d", reviews, invents)
+	}
+	// With planning_percent = 75, every pass independently has a 75% planning
+	// probability and a 25% review/bug-hunt probability.
+	if reviews < 70 || reviews > 130 {
+		t.Fatalf("review count outside the expected deterministic sample range: %d", reviews)
+	}
+}
+
+func TestInventBlockHonorsPlanningPercentBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		percent  int
+		contains string
+	}{
+		{name: "always review", percent: 0, contains: "CODE REVIEW / BUG HUNT"},
+		{name: "always plan", percent: 100, contains: "PLANNING pass"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rng := rand.New(rand.NewSource(42))
+			for range 20 {
+				got, planning := InventBlock(domain.Pipeline{}, rng, tc.percent)
+				if !strings.Contains(got, tc.contains) {
+					t.Fatalf("planning_percent=%d returned the wrong block:\n%s", tc.percent, got)
+				}
+				if (tc.percent == 100) != planning {
+					t.Fatalf("planning_percent=%d returned planning=%v", tc.percent, planning)
+				}
+			}
+		})
+	}
+}
+
+func TestReviewBlockRequiresEvidence(t *testing.T) {
+	got := reviewBlock()
+	for _, want := range []string{
+		"recent committed changes",
+		"real evidence",
+		"configured verification",
+		"test or reproduction",
+		"progress.json",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("review block missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSpiceModes(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
 	personas := []string{"a poet"}

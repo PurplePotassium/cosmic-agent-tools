@@ -82,6 +82,11 @@ var ClaudeModels = []string{"claude-sonnet", "claude-fable", "claude-opus", "cla
 // produces a warning, never blocks.
 var AgyModels = []string{"gemini"}
 
+// CodexModels are the curated GPT model ids available through the Codex CLI.
+// Keep these as full ids rather than a broad "gpt" prefix: Workshop should
+// offer only the supported Sol, Terra, and Luna variants by default.
+var CodexModels = []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+
 // Art-generation task types. Both run on the claude driver pinned to a
 // frontier model (see ArtClaudeModels): the claude pass ORCHESTRATES — it
 // invokes the Antigravity CLI (agy, the Gemini image model) to do the actual
@@ -148,6 +153,8 @@ func ModelFamilies(agent string) []string {
 		return ClaudeModels
 	case "agy":
 		return AgyModels
+	case "codex":
+		return CodexModels
 	default:
 		return nil
 	}

@@ -191,6 +191,9 @@ type PipelineConfig struct {
 type ServerConfig struct {
 	Port        int  `toml:"port"` // binds 127.0.0.1 only — by design, not configurable
 	OpenBrowser bool `toml:"open_browser"`
+	// PlanningPercent is the chance that an idle, goal-mode pass creates
+	// goal-moving proposals rather than reviewing recent committed work.
+	PlanningPercent int `toml:"planning_percent"`
 	// StartStopped launches `up` with every pipeline parked (operator-halted)
 	// so nothing runs until you resume it from the dashboard. Only affects
 	// `up`; `run` (headless CI) ignores it.
@@ -234,7 +237,7 @@ func Default() Config {
 			domain.ArtGenTransType: {Agent: "claude"},
 		},
 		Art:    ArtConfig{Remover: "ffmpeg"},
-		Server: ServerConfig{Port: 4455, OpenBrowser: true, StartStopped: true},
+		Server: ServerConfig{Port: 4455, OpenBrowser: true, PlanningPercent: 75, StartStopped: true},
 		Agents: map[string]AgentConfig{},
 	}
 }
@@ -531,6 +534,9 @@ func (c *Config) Validate() (errs, warns []error) {
 	}
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		errs = append(errs, fmt.Errorf("server.port: %d out of range", c.Server.Port))
+	}
+	if c.Server.PlanningPercent < 0 || c.Server.PlanningPercent > 100 {
+		errs = append(errs, fmt.Errorf("server.planning_percent: %d out of range (want 0-100)", c.Server.PlanningPercent))
 	}
 	// Safety knobs guard unattended execution — nonsense values must block.
 	if c.Safety.WedgeMinutes <= 0 {

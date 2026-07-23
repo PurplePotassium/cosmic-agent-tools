@@ -6,14 +6,18 @@ import { api, subscribe, attachmentURL } from "/api.js";
 const html = htm.bind(h);
 const SHARED = "shared";
 
-// Mirrors internal/prompt/compose.go's InventBlock — the instruction a pass
-// gets automatically when its backlog is empty and Invent is on. Queuing it
-// as a real task via the "invent" button gives operators the same choice
-// on demand, without waiting for a pipeline to go idle.
-const INVENT_TASK_TITLE = "Invent the next task toward the goal";
-const INVENT_TASK_DETAIL = "INVENT the single highest-impact task that moves the GOAL forward, " +
-  "then do exactly that one increment. Record what you chose in progress.json's task field. " +
-  "If the last few completions are all the same KIND of work, pick a different kind.";
+// Mirrors the planning branch of internal/prompt/compose.go's InventBlock.
+// The manual button queues planning on demand rather than waiting for a
+// pipeline to go idle.
+const INVENT_TASK_TITLE = "Plan next tasks toward the goal";
+const INVENT_TASK_DETAIL = "This is a PLANNING pass: assess current progress toward the GOAL by reading the GOAL, " +
+  "backlog, recent completions, and relevant repository evidence. Then create one to five concrete, high-impact, " +
+  "unqueued tasks that would materially move the work closer to completing the GOAL. Do not select an imagined " +
+  "single highest-impact task. The usual two-proposal cap does not apply to this planning pass: write one to five tasks " +
+  "to proposals.json with implementation-ready titles and details; check " +
+  "the entire backlog first so none duplicate queued work. Do NOT implement or begin any proposed task, edit repository " +
+  "files, or run an unrelated increment in this pass. The proposals are the deliverable. Record the evidence behind the " +
+  "task choices and how many you created in progress.json, then finish done.";
 
 // GOAL_EVAL_QUESTIONS are asked one at a time (as separate self-evaluator
 // inquiries — see internal/app/inquiry.go) by the "evaluate goal.md" button.
@@ -633,10 +637,10 @@ function BacklogBoard({ tasks, pipelines, onTop, onMove, onDelete }) {
 }
 
 const EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];
-const AGENTS = ["", "claude", "agy"];
+const AGENTS = ["", "claude", "agy", "codex"];
 
 // MODEL_FAMILIES mirrors internal/domain's curated prefixes (ClaudeModels,
-// AgyModels) with one representative id per family, for the model dropdown
+// AgyModels, CodexModels) with one representative id per family, for the model dropdown
 // below. The dropdown is extended at runtime by the user's
 // [agents.<agent>] extra_models (fetched from /api/v1/config) — that's how
 // off-list ids become selectable now that the field is a select, not a
@@ -644,6 +648,7 @@ const AGENTS = ["", "claude", "agy"];
 const MODEL_FAMILIES = {
   claude: ["claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"],
   agy: ["gemini-3-flash"],
+  codex: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
 };
 
 // modelsFor unions an agent's curated representatives with the user's
@@ -1206,7 +1211,7 @@ function App() {
         <div class="card">
           <h2>Add task
             <button class="primary" style="margin-left:auto"
-              title="Queue a task that tells the AI to invent and complete the next highest-impact step toward the goal — the same choice a pipeline makes automatically when its backlog is empty, triggered on demand"
+              title="Queue a planning pass that evaluates goal progress and creates high-impact follow-up tasks without implementing them"
               onClick=${() => act(() => api.addTask({ title: INVENT_TASK_TITLE, detail: INVENT_TASK_DETAIL }))}>invent</button>
           </h2>
           <${AddTask} pipelines=${pipelines} types=${cfgTypes}

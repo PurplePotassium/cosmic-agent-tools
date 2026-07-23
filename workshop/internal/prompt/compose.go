@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"fmt"
+	"math/rand"
 	"path/filepath"
 	"strings"
 
@@ -136,18 +137,51 @@ converting "for each X" into real backlog tasks, not doing them:
   proposed. Finishing with an empty proposals.json marks this pass failed.`
 }
 
-// InventBlock is the tail block for an idle pipeline allowed to invent work.
-func InventBlock(p domain.Pipeline) string {
+// InventBlock is the tail block for an idle pipeline. PlanningPercent controls
+// the chance that a pass creates goal-moving proposals; the remaining passes
+// re-validate recent committed work through a code review or bug hunt.
+func InventBlock(p domain.Pipeline, rng *rand.Rand, planningPercent int) (block string, planning bool) {
+	if rng.Intn(100) < planningPercent {
+		return inventBlock(p), true
+	}
+	return reviewBlock(), false
+}
+
+func inventBlock(p domain.Pipeline) string {
 	var b strings.Builder
 	b.WriteString("## YOUR TASK THIS PASS\n\nThe backlog has no eligible task for you. ")
-	b.WriteString("INVENT the single highest-impact task that moves the GOAL forward")
+	b.WriteString("This is a PLANNING pass: assess current progress toward the GOAL by reading the GOAL, backlog, recent completions, and relevant repository evidence. ")
+	b.WriteString("Then create one to five concrete, high-impact, unqueued tasks that would materially move the work closer to completing the GOAL")
 	if len(p.TaskTypes) > 0 {
 		fmt.Fprintf(&b, ", staying within your task types (%s)", strings.Join(p.TaskTypes, ", "))
 	}
-	b.WriteString(", then do exactly that one increment. ")
-	b.WriteString("Record what you chose in progress.json's task field. ")
-	b.WriteString("If the last few completions are all the same KIND of work, pick a different kind.")
+	b.WriteString(". Do not select an imagined single \"highest-impact\" task. ")
+	b.WriteString("The usual two-proposal cap does not apply to this planning pass: write one to five tasks to proposals.json with implementation-ready titles and details; check the entire backlog first so none duplicate queued work. ")
+	b.WriteString("Do NOT implement or begin any proposed task, edit repository files, or run an unrelated increment in this pass. ")
+	b.WriteString("The proposals are the deliverable. Record the evidence behind the task choices and how many you created in progress.json, then finish done.")
 	return b.String()
+}
+
+func reviewBlock() string {
+	return `## YOUR TASK THIS PASS
+
+This is a CODE REVIEW / BUG HUNT pass. Review recent committed changes and
+their stated results, then re-validate them or look for a demonstrably better
+or incorrect implementation. Read the relevant diffs and surrounding code;
+do not speculate from commit messages alone.
+
+- Validate every conclusion with real evidence: run the configured verification
+  command and, where useful, a focused test or reproduction that exercises the
+  reviewed behavior. Record the commits examined and the actual results in
+  progress.json.
+- If you find a defect or mistake, only claim it when a test or reproduction
+  proves it. Make at most one small, scoped correction when you can verify it;
+  otherwise create a precise follow-up proposal backed by the evidence.
+- If the implementation is sound, finish the review without repository
+  changes. Do not invent unrelated work or make speculative refactors.
+
+Record "Code review / bug hunt" in progress.json's task field and finish done
+with the review scope, evidence, and outcome.`
 }
 
 // Mechanics renders the injected mechanics header.

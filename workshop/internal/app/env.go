@@ -143,7 +143,11 @@ func (a *App) refreshEnvLive(ctx context.Context, info EnvInfo) EnvInfo {
 		switch tools[i].Name {
 		case "claude":
 			if tools[i].Present {
-				tools[i].Auth = a.claudeAuthSignal(ctx)
+				tools[i].Auth = a.capturableAuthSignal(ctx, "claude")
+			}
+		case "codex":
+			if tools[i].Present {
+				tools[i].Auth = a.capturableAuthSignal(ctx, "codex")
 			}
 		case "agy":
 			if tools[i].Present {
@@ -158,7 +162,7 @@ func (a *App) refreshEnvLive(ctx context.Context, info EnvInfo) EnvInfo {
 // probeTools spawns the version probes. Slow path — cached by EnvStatus.
 func (a *App) probeTools(ctx context.Context) []ToolInfo {
 	res := a.Res()
-	tools := make([]ToolInfo, 0, 5)
+	tools := make([]ToolInfo, 0, 6)
 
 	// claude — capturable CLI: version and capabilities are probeable.
 	claude := ToolInfo{Name: "claude"}
@@ -177,6 +181,25 @@ func (a *App) probeTools(ctx context.Context) []ToolInfo {
 		}
 	}
 	tools = append(tools, claude)
+
+	// codex — capturable non-interactive CLI, with the same per-pass auth
+	// observation model as Claude.
+	codex := ToolInfo{Name: "codex"}
+	if path, err := driver.CodexPath(); err != nil {
+		codex.Fix = "install Codex CLI, or set WORKSHOP_CODEX_BIN"
+	} else {
+		codex.Present = true
+		codex.Path = path
+		codex.Version = probeVersion(ctx, path, "--version")
+		if caps, err := driver.NewCodex().Probe(ctx); err == nil {
+			if caps.Effort {
+				codex.Detail = "streams output; supports effort levels"
+			} else {
+				codex.Detail = "streams output; no config effort override (configured efforts are ignored)"
+			}
+		}
+	}
+	tools = append(tools, codex)
 
 	// agy — blind CLI: NEVER spawned with piped stdio (it drops output and
 	// can hang — AGENTS.md), so there is no headless version probe. Presence
@@ -229,14 +252,16 @@ func (a *App) probeTools(ctx context.Context) []ToolInfo {
 	return tools
 }
 
-// claudeAuthSignal derives claude's login signal from the engine's own auth
+// capturableAuthSignal derives a streaming driver's login signal from the engine's own auth
 // detection: the driver's output is scanned during passes and an expired
 // login halts the pipeline with the auth reason. No pass-independent
 // headless check exists, so absence of a halt is the best available signal.
-func (a *App) claudeAuthSignal(ctx context.Context) string {
+func (a *App) capturableAuthSignal(ctx context.Context, agent string) string {
 	for _, p := range a.Res().Config.ResolvedPipelines() {
-		if halted, _ := a.Store.HaltedReason(ctx, p.Name); halted == engine.HaltAuth {
-			return fmt.Sprintf("AUTH FAILURE — pipeline %q halted; log in (`claude`) and resume it", p.Name)
+		if p.Bundle.Agent == agent {
+			if halted, _ := a.Store.HaltedReason(ctx, p.Name); halted == engine.HaltAuth {
+				return fmt.Sprintf("AUTH FAILURE — pipeline %q halted; log in (`%s`) and resume it", p.Name, agent)
+			}
 		}
 	}
 	return "no auth failure observed (verified per pass from agent output)"

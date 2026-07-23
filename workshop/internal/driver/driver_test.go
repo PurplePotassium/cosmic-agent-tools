@@ -23,6 +23,15 @@ func fakeClaudeBin(t *testing.T) string {
 	return path
 }
 
+func fakeCodexBin(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "codex-stub")
+	if err := os.WriteFile(path, []byte("stub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestClaudePlanArgs(t *testing.T) {
 	t.Setenv("WORKSHOP_CLAUDE_BIN", fakeClaudeBin(t))
 	c := NewClaude()
@@ -110,6 +119,41 @@ func TestClaudeEffortWhenSupported(t *testing.T) {
 	}
 }
 
+func TestCodexPlanArgs(t *testing.T) {
+	t.Setenv("WORKSHOP_CODEX_BIN", fakeCodexBin(t))
+	c := NewCodex()
+	caps, err := c.Probe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps.PromptVia != PromptStdin || caps.Capture != CaptureStreaming || !caps.AuthProbe || !caps.ModelSelect {
+		t.Fatalf("caps: %+v", caps)
+	}
+
+	c.caps.Effort = true // simulate a current Codex CLI advertising --config
+	plan, err := c.Plan(InvokeSpec{
+		Model: "gpt-5.6-luna", Effort: "xhigh", SkipPermissions: true, ExtraArgs: []string{"--verbose"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"exec", "--model", "gpt-5.6-luna", "--config", `model_reasoning_effort="xhigh"`, "--dangerously-bypass-approvals-and-sandbox", "--verbose"}
+	if !slices.Equal(plan.Args, want) {
+		t.Fatalf("args: %v, want %v", plan.Args, want)
+	}
+	if !plan.StdinPrompt || plan.Mode != proc.Piped {
+		t.Fatalf("plan: %+v", plan)
+	}
+
+	plan, err = c.Plan(InvokeSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(plan.Args, DefaultCodexModel) || !slices.Contains(plan.Args, "--sandbox") || !slices.Contains(plan.Args, "workspace-write") {
+		t.Fatalf("default constrained plan: %v", plan.Args)
+	}
+}
+
 func TestParseEffortSupport(t *testing.T) {
 	if parseEffortSupport("usage: claude [options]\n  --model <id>\n") {
 		t.Fatal("false positive")
@@ -146,8 +190,44 @@ func TestRegistry(t *testing.T) {
 	if d, err := New("fake"); err != nil || d.Name() != "fake" {
 		t.Fatalf("fake: %v", err)
 	}
+	if d, err := New("codex"); err != nil || d.Name() != "codex" {
+		t.Fatalf("codex: %v", err)
+	}
 	if _, err := New("nonsense"); err == nil {
 		t.Fatal("unknown driver should error")
+	}
+}
+
+func TestFindCodexEnvOverrideGuard(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "codex-stub")
+	if err := os.WriteFile(stub, []byte("stub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("WORKSHOP_CODEX_BIN", stub)
+	got, err := findCodex()
+	if err != nil || got != stub {
+		t.Fatalf("absolute override: got %q, %v; want %q", got, err, stub)
+	}
+
+	t.Chdir(dir)
+	t.Setenv("WORKSHOP_CODEX_BIN", "codex-stub")
+	got, err = findCodex()
+	if err != nil {
+		t.Fatalf("relative override: %v", err)
+	}
+	if !filepath.IsAbs(got) || got != stub {
+		t.Fatalf("relative override not absolutized: got %q, want %q", got, stub)
+	}
+
+	t.Setenv("WORKSHOP_CODEX_BIN", filepath.Join(dir, "does-not-exist"))
+	if _, err := findCodex(); err == nil {
+		t.Fatal("missing override binary must be refused")
+	}
+	t.Setenv("WORKSHOP_CODEX_BIN", dir)
+	if _, err := findCodex(); err == nil {
+		t.Fatal("directory override must be refused")
 	}
 }
 
