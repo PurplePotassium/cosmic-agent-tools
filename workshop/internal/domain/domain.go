@@ -236,12 +236,16 @@ func (t *Task) IsExpand() bool { return t != nil && t.Meta[ExpandMetaKey] == "tr
 // Runtime state (iteration counter, breaker, halt reason) lives in the store
 // and engine, not here.
 type Pipeline struct {
-	Name      string
-	Bundle    Bundle   // fallback bundle for untyped / invented tasks
-	TaskTypes []string // main-backlog claim filter; empty = all types
-	DrainMain bool     // also claim from the main backlog
-	ScopeHint string   // soft file-ownership guidance appended to the prompt tail
-	Invent    bool     // idle + empty backlog => may invent one task toward GOAL
+	Name   string
+	Bundle Bundle // fallback bundle for untyped / invented tasks
+	// PlanningBundle optionally overrides Bundle for idle planning passes that
+	// invent new tasks. It is separate from task-type routing because there is
+	// no task type to route until the planner creates one.
+	PlanningBundle Bundle
+	TaskTypes      []string // main-backlog claim filter; empty = all types
+	DrainMain      bool     // also claim from the main backlog
+	ScopeHint      string   // soft file-ownership guidance appended to the prompt tail
+	Invent         bool     // idle + empty backlog => may invent one task toward GOAL
 	// AcceptProposals: whether a finished pass's proposals.json follow-ups get
 	// ingested into the backlog. Together with Invent this forms the pipeline's
 	// mode: goal (both true, the default), discover (Invent false, this true —

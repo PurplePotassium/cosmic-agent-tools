@@ -173,6 +173,9 @@ effort = "high"
 name = "code"
 types = ["code", "tests"]
 effort = "high"
+planning_agent = "codex"
+planning_model = "gpt-5.6-sol"
+planning_effort = "xhigh"
 
 [[pipelines]]
 name = "art"
@@ -196,6 +199,9 @@ drain_main = false
 	code, art := pl[0], pl[1]
 	if !code.DrainMain || code.Bundle.Agent != "claude" || code.Bundle.Effort != "high" || !code.Invent {
 		t.Fatalf("code pipeline: %+v", code)
+	}
+	if got, want := code.PlanningBundle, (domain.Bundle{Agent: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"}); got != want {
+		t.Fatalf("code planning bundle: got %+v want %+v", got, want)
 	}
 	if art.DrainMain || art.Invent || art.Bundle.Agent != "agy" {
 		t.Fatalf("art pipeline: %+v", art)

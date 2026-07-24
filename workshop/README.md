@@ -225,6 +225,12 @@ name   = "code"
 types  = ["code", "tests", "docs", "merge-conflict"]
 agent  = "claude"
 effort = "high"
+# Idle planning passes normally inherit the pipeline bundle above. Set these
+# only when inventing new tasks should use a different agent/model/effort;
+# queued tasks still use this pipeline's normal routing.
+# planning_agent  = "codex"
+# planning_model  = "gpt-5.6-sol"
+# planning_effort = "xhigh"
 
 [[pipelines]]
 name       = "art"

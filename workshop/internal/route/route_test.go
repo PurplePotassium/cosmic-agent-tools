@@ -55,6 +55,24 @@ func TestResolveCrossAgentDropsModel(t *testing.T) {
 	}
 }
 
+func TestResolvePlanningUsesDedicatedBundle(t *testing.T) {
+	planning := domain.Bundle{Agent: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"}
+	if got, want := ResolvePlanning(domain.Bundle{}, planning, pipelineBundle), planning; got != want {
+		t.Fatalf("dedicated planning bundle: got %+v want %+v", got, want)
+	}
+
+	// A planning-agent switch must not inherit Claude's model or effort.
+	if got, want := ResolvePlanning(domain.Bundle{}, domain.Bundle{Agent: "agy"}, pipelineBundle), (domain.Bundle{Agent: "agy"}); got != want {
+		t.Fatalf("cross-agent planning bundle: got %+v want %+v", got, want)
+	}
+
+	// The live dashboard override remains strongest.
+	override := domain.Bundle{Model: "gpt-5.6-terra", Effort: "high"}
+	if got, want := ResolvePlanning(override, planning, pipelineBundle), (domain.Bundle{Agent: "codex", Model: "gpt-5.6-terra", Effort: "high"}); got != want {
+		t.Fatalf("planning override: got %+v want %+v", got, want)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	vocab := Vocabulary(typesTable, []domain.Pipeline{
 		{TaskTypes: []string{"tests", "audio"}},
@@ -106,9 +124,9 @@ func TestClassifyArtGeneration(t *testing.T) {
 		{"Generate a sprite of the merchant", "must have a transparent background", "art-gen-trans"},
 		{"Create the hero icon with no background", "", "art-gen-trans"},
 		{"transparent cursor needed — please generate the image", "", "art-gen-trans"},
-		{"fix the sprite flicker on jump", "", "art"},           // no generation verb
-		{"repaint the player sprite palette", "", "art"},        // code-side art work
-		{"make the loading screen faster", "", ""},              // generation verb but no image-asset noun
+		{"fix the sprite flicker on jump", "", "art"},            // no generation verb
+		{"repaint the player sprite palette", "", "art"},         // code-side art work
+		{"make the loading screen faster", "", ""},               // generation verb but no image-asset noun
 		{"add transparency support to the renderer", "", "code"}, // transparency alone isn't art-gen
 		// Code work about images/sprites must NOT reach the image-generation
 		// flow: a misroute here makes the engine paint a PNG and mark the

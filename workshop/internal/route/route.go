@@ -29,6 +29,14 @@ func Resolve(task *domain.Task, override domain.Bundle, types map[string]domain.
 	return merge(task.Pin, b)
 }
 
+// ResolvePlanning resolves an idle planning pass. Planning has no task (and
+// therefore no type or pin), but may use a dedicated configured bundle. The
+// live pipeline override remains highest precedence, as it does for an
+// ordinary pass.
+func ResolvePlanning(override, planning, pipeline domain.Bundle) domain.Bundle {
+	return merge(override, merge(planning, pipeline))
+}
+
 // Effective overlays the live override on a configured bundle with the same
 // agent-switch guard Resolve uses (for status displays).
 func Effective(override, base domain.Bundle) domain.Bundle { return merge(override, base) }

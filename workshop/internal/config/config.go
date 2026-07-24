@@ -166,7 +166,13 @@ type PipelineConfig struct {
 	Agent     string   `toml:"agent"`
 	Model     string   `toml:"model"`
 	Effort    string   `toml:"effort"`
-	Invent    *bool    `toml:"invent"` // default true; ignored when Mode is set
+	// Planning* overrides the normal pipeline bundle only for idle passes that
+	// survey the goal and create new tasks. Empty values inherit Agent/Model/
+	// Effort, preserving the historical behavior.
+	PlanningAgent  string `toml:"planning_agent"`
+	PlanningModel  string `toml:"planning_model"`
+	PlanningEffort string `toml:"planning_effort"`
+	Invent         *bool  `toml:"invent"` // default true; ignored when Mode is set
 	// Mode names the pipeline's goal-pursuit/backlog-growth stance:
 	//   "goal" (default) - invents work when idle (per Invent) AND accepts
 	//     agent-proposed follow-ups. Today's behavior.
@@ -312,6 +318,7 @@ func (c *Config) ResolvedPipelines() []domain.Pipeline {
 		out = append(out, domain.Pipeline{
 			Name:            pc.Name,
 			Bundle:          domain.Bundle{Agent: agent, Model: pc.Model, Effort: pc.Effort},
+			PlanningBundle:  domain.Bundle{Agent: pc.PlanningAgent, Model: pc.PlanningModel, Effort: pc.PlanningEffort},
 			TaskTypes:       types,
 			DrainMain:       boolOr(pc.DrainMain, true),
 			ScopeHint:       pc.ScopeHint,
@@ -467,6 +474,16 @@ func (c *Config) Validate() (errs, warns []error) {
 			agent = "claude"
 		}
 		if err := c.checkModel("pipelines."+p.Name, agent, p.Model); err != nil {
+			warns = append(warns, err)
+		}
+		if !domain.ValidEffort(p.PlanningEffort) {
+			errs = append(errs, fmt.Errorf("pipelines.%s: planning_effort %q is not one of %v", p.Name, p.PlanningEffort, domain.Efforts))
+		}
+		planningAgent := p.PlanningAgent
+		if planningAgent == "" {
+			planningAgent = agent
+		}
+		if err := c.checkModel("pipelines."+p.Name+".planning", planningAgent, p.PlanningModel); err != nil {
 			warns = append(warns, err)
 		}
 		switch p.Mode {

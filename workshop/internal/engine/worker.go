@@ -242,6 +242,9 @@ func (w *Worker) resolve(ctx context.Context, task *domain.Task) (*resolved, err
 	// operator can switch agent/model for the next pass without a restart.
 	override, _ := w.st.PipelineBundle(ctx, w.cfg.Pipeline.Name)
 	bundle := route.Resolve(task, override, w.cfg.Types, w.cfg.Pipeline.Bundle)
+	if task == nil {
+		bundle = route.ResolvePlanning(override, w.cfg.Pipeline.PlanningBundle, w.cfg.Pipeline.Bundle)
+	}
 	drv, ok := w.drivers[bundle.Agent]
 	if !ok {
 		var err error
