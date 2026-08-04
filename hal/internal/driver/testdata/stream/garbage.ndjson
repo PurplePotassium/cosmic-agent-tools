@@ -1,0 +1,7 @@
+npm WARN exec the following package was not found and will be installed: something
+{"type":"future_event_kind","payload":{"x":1},"session_id":"33333333-4444-5555-6666-777777777777"}
+{"type":"system","subtype":"future_subtype","session_id":"33333333-4444-5555-6666-777777777777"}
+{not json at all
+{"type":"stream_event","event":{"type":"some_new_api_event","data":true},"session_id":"33333333-4444-5555-6666-777777777777"}
+
+{"type":"result","is_error":true,"duration_api_ms":100,"num_turns":1,"stop_reason":null,"session_id":"33333333-4444-5555-6666-777777777777","total_cost_usd":0.001,"usage":{"input_tokens":5,"output_tokens":0},"permission_denials":[],"subtype":"error_during_execution","api_error_status":529,"result":"API error: overloaded","type":"result","duration_ms":150,"uuid":"accb204a-fae7-440d-89f1-09f596e29c2b"}

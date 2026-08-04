@@ -1,0 +1,49 @@
+version: "2"
+
+# Static analysis for the Go engine. Built on golangci-lint's "standard" set
+# (errcheck, govet, ineffassign, staticcheck, unused) plus a few targeted
+# correctness linters for the concurrency/persistence-heavy code here:
+#   nilerr        - `if err != nil { return nil }` slips (would have caught the
+#                   W-3 panics mechanically)
+#   sqlclosecheck - unclosed sql.Rows/sql.Stmt (the store hand-manages these)
+#   govet/nilness - nil-pointer/interface deref analysis
+# contextcheck was evaluated and left OFF: its only hits here are legitimate
+# detached contexts (an async inquiry must outlive the request that started it)
+# and a false positive (an SSE closure that already threads r.Context()), so it
+# would force nolint noise on correct code without catching a real bug.
+# CI-only (not the self-hosting pre-commit gate — see the README rationale).
+linters:
+  default: standard
+  enable:
+    - nilerr
+    - sqlclosecheck
+  settings:
+    govet:
+      enable:
+        - nilness
+    errcheck:
+      exclude-functions:
+        # best-effort handle cleanup on error/defer paths — nothing
+        # actionable if closing an already-doomed handle fails.
+        - golang.org/x/sys/windows.CloseHandle
+        - syscall.CloseHandle
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # defer tx.Rollback() after a successful commit / test cleanup Wait():
+      # the error is deliberately discarded, not overlooked.
+      - linters: [errcheck]
+        source: 'defer .*\.Rollback\(\)'
+      - linters: [errcheck]
+        path: _test\.go
+        source: '\.Wait\(\)'
+      # QF1001 (apply De Morgan's law) is a stylistic quickfix — the explicit
+      # 'a'<=c&&c<='z' char-class tests read clearer than their negation.
+      - linters: [staticcheck]
+        text: "QF1001"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

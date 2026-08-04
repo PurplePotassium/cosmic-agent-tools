@@ -1,0 +1,569 @@
+// Package gitx is a thin, deliberate wrapper over the git CLI. Every helper
+// takes the working directory explicitly — there is no ambient repo state —
+// and parses only porcelain/plumbing output formats that git documents as
+// stable.
+package gitx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Error wraps a failed git invocation with its output for diagnostics.
+type Error struct {
+	Args   []string
+	Output string
+	Err    error
+}
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("git %s: %v\n%s", strings.Join(e.Args, " "), e.Err, strings.TrimSpace(e.Output))
+}
+
+func (e *Error) Unwrap() error { return e.Err }
+
+// run executes git in dir, returning trimmed combined output. For commands
+// whose output is PARSED, use runOut instead — never this.
+func run(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	s := strings.TrimRight(string(out), "\r\n")
+	if err != nil {
+		return s, &Error{Args: args, Output: s, Err: err}
+	}
+	return s, nil
+}
+
+// runOut executes git in dir, returning trimmed stdout ONLY. Every helper
+// whose result is parsed must use this: CombinedOutput interleaves stderr
+// emitted on a SUCCESSFUL exit ("warning: refname 'x' is ambiguous",
+// fsmonitor chatter) into the value — turning a SHA into garbage or a warning
+// line into a "changed path". Stderr still reaches the Error wrapper on
+// failure.
+func runOut(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	s := strings.TrimRight(string(out), "\r\n")
+	if err != nil {
+		msg := s
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			msg = strings.TrimRight(string(ee.Stderr), "\r\n")
+		}
+		return s, &Error{Args: args, Output: msg, Err: err}
+	}
+	return s, nil
+}
+
+// rejectFlagLike guards ref/branch/path arguments assembled from config and
+// task data: git parses a leading-dash value as an option ("--detach",
+// "--keep"), silently changing a command's meaning instead of erroring.
+func rejectFlagLike(names ...string) error {
+	for _, n := range names {
+		if strings.HasPrefix(n, "-") {
+			return fmt.Errorf("gitx: ref/branch %q looks like an option flag", n)
+		}
+	}
+	return nil
+}
+
+// IsRepo reports whether dir is inside a git work tree.
+func IsRepo(ctx context.Context, dir string) bool {
+	out, err := runOut(ctx, dir, "rev-parse", "--is-inside-work-tree")
+	return err == nil && out == "true"
+}
+
+// Root returns the top-level directory of the work tree containing dir.
+func Root(ctx context.Context, dir string) (string, error) {
+	out, err := runOut(ctx, dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return filepath.FromSlash(out), nil
+}
+
+// GitDir returns the absolute git directory for dir. For linked worktrees
+// this resolves to .git/worktrees/<name>/ — where that worktree's index.lock
+// and MERGE_HEAD live.
+func GitDir(ctx context.Context, dir string) (string, error) {
+	out, err := runOut(ctx, dir, "rev-parse", "--git-dir")
+	if err != nil {
+		return "", err
+	}
+	gd := filepath.FromSlash(out)
+	if !filepath.IsAbs(gd) {
+		gd = filepath.Join(dir, gd)
+	}
+	return gd, nil
+}
+
+// CurrentBranch returns the checked-out branch name ("" when detached).
+func CurrentBranch(ctx context.Context, dir string) (string, error) {
+	out, err := runOut(ctx, dir, "branch", "--show-current")
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// BranchExistsErr reports whether a local branch exists, keeping a clean "ref
+// absent" (false, nil) distinct from git itself failing (false, err). With
+// --quiet, rev-parse exits 1 and stays silent when the ref simply does not
+// resolve; any other exit (128 fatal, lock contention, unreadable .git) is a
+// real error, not proof of absence. This matters at engine startup: on Windows
+// a git child killed when a prior run's ctx was cancelled (dashboard Halt,
+// add-pipeline relaunch) keeps a brief grip on .git, so a probe fired in that
+// window errors transiently and must NOT be read as "branch missing".
+func BranchExistsErr(ctx context.Context, dir, branch string) (bool, error) {
+	_, err := runOut(ctx, dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	if err == nil {
+		return true, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// BranchExists reports whether a local branch exists, collapsing a git error
+// to "absent". Callers that must not confuse the two use BranchExistsErr.
+func BranchExists(ctx context.Context, dir, branch string) bool {
+	ok, _ := BranchExistsErr(ctx, dir, branch)
+	return ok
+}
+
+// CheckoutBranch checks out an existing branch.
+func CheckoutBranch(ctx context.Context, dir, branch string) error {
+	if err := rejectFlagLike(branch); err != nil {
+		return err
+	}
+	_, err := run(ctx, dir, "checkout", "-q", branch)
+	return err
+}
+
+// CreateBranch creates (without checking out) a branch at base.
+func CreateBranch(ctx context.Context, dir, branch, base string) error {
+	if err := rejectFlagLike(branch, base); err != nil {
+		return err
+	}
+	_, err := run(ctx, dir, "branch", branch, base)
+	return err
+}
+
+// DeleteBranch deletes a local branch; force ignores unmerged state.
+func DeleteBranch(ctx context.Context, dir, branch string, force bool) error {
+	if err := rejectFlagLike(branch); err != nil {
+		return err
+	}
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	_, err := run(ctx, dir, "branch", flag, branch)
+	return err
+}
+
+// RevParse resolves a ref to a full SHA.
+func RevParse(ctx context.Context, dir, ref string) (string, error) {
+	if err := rejectFlagLike(ref); err != nil {
+		return "", err
+	}
+	return runOut(ctx, dir, "rev-parse", ref)
+}
+
+// CommitInfo returns ref's parent SHAs and subject line.
+func CommitInfo(ctx context.Context, dir, ref string) (parents []string, subject string, err error) {
+	if err := rejectFlagLike(ref); err != nil {
+		return nil, "", err
+	}
+	out, err := runOut(ctx, dir, "show", "-s", "--format=%P%x1f%s", ref)
+	if err != nil {
+		return nil, "", err
+	}
+	ps, subj, _ := strings.Cut(out, "\x1f")
+	return strings.Fields(ps), subj, nil
+}
+
+// StatusPorcelain returns the changed paths (git status --porcelain lines,
+// path portion only). quotepath=off keeps non-ASCII names verbatim instead of
+// C-quoted octal escapes that match nothing on disk.
+func StatusPorcelain(ctx context.Context, dir string) ([]string, error) {
+	return statusPorcelain(ctx, dir, "--porcelain")
+}
+
+// StatusPorcelainAll is StatusPorcelain with untracked-directory contents
+// listed file-by-file (-uall). Path-scope checks need real file paths — the
+// default mode collapses a new directory to "dir/", which defeats any
+// prefix test against a deeper root.
+func StatusPorcelainAll(ctx context.Context, dir string) ([]string, error) {
+	return statusPorcelain(ctx, dir, "--porcelain", "-uall")
+}
+
+func statusPorcelain(ctx context.Context, dir string, flags ...string) ([]string, error) {
+	args := append([]string{"-c", "core.quotepath=off", "status"}, flags...)
+	out, err := runOut(ctx, dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	var paths []string
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) > 3 {
+			p := strings.TrimSpace(line[3:])
+			// Renames appear as "old -> new".
+			if i := strings.Index(p, " -> "); i >= 0 {
+				p = p[i+4:]
+			}
+			paths = append(paths, strings.Trim(p, `"`))
+		}
+	}
+	return paths, nil
+}
+
+// IsDirty reports whether the work tree has any changes.
+func IsDirty(ctx context.Context, dir string) (bool, error) {
+	paths, err := StatusPorcelain(ctx, dir)
+	return len(paths) > 0, err
+}
+
+// AheadCount returns how many commits branch is ahead of base.
+func AheadCount(ctx context.Context, dir, base, branch string) (int, error) {
+	if err := rejectFlagLike(base, branch); err != nil {
+		return 0, err
+	}
+	out, err := runOut(ctx, dir, "rev-list", "--count", base+".."+branch)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(out))
+}
+
+// BuildCommitMessage assembles a subject, an optional body, and git trailers.
+// The trailers stay in their own final block so git still parses them as
+// trailers even when the body has multiple paragraphs.
+func BuildCommitMessage(subject, body string, trailers [][2]string) string {
+	var b strings.Builder
+	b.WriteString(subject)
+	if body = strings.TrimSpace(body); body != "" {
+		b.WriteString("\n\n")
+		b.WriteString(body)
+	}
+	if len(trailers) > 0 {
+		b.WriteString("\n\n")
+		for _, tr := range trailers {
+			fmt.Fprintf(&b, "%s: %s\n", tr[0], tr[1])
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// CommitAll stages everything and commits with the given message, returning
+// the short SHA. If the repo has no committer identity configured it retries
+// with a Hal fallback identity rather than failing the pass.
+func CommitAll(ctx context.Context, dir, message string) (string, error) {
+	if _, err := run(ctx, dir, "add", "-A"); err != nil {
+		return "", err
+	}
+	_, err := run(ctx, dir, "commit", "-q", "-m", message)
+	if err != nil {
+		var ge *Error
+		if isIdentityError(err, &ge) {
+			_, err = run(ctx, dir,
+				"-c", "user.name=Hal", "-c", "user.email=hal@localhost",
+				"commit", "-q", "-m", message)
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return runOut(ctx, dir, "rev-parse", "--short", "HEAD")
+}
+
+// CommitPaths stages exactly the given paths (repo-relative) and commits,
+// returning the short SHA — the workflow artifact-approval commit, which must
+// never sweep unrelated operator edits the way CommitAll does. Returns
+// ("", nil) when the paths hold no changes to commit. Applies CommitAll's
+// identity fallback.
+func CommitPaths(ctx context.Context, dir, message string, paths ...string) (string, error) {
+	if len(paths) == 0 {
+		return "", nil
+	}
+	if err := rejectFlagLike(paths...); err != nil {
+		return "", err
+	}
+	addArgs := append([]string{"add", "-A", "--"}, paths...)
+	if _, err := run(ctx, dir, addArgs...); err != nil {
+		return "", err
+	}
+	staged, err := runOut(ctx, dir, "diff", "--cached", "--name-only")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(staged) == "" {
+		return "", nil
+	}
+	// Commit ONLY the staged paths: -- <paths> keeps a concurrently-dirty
+	// tree (other workflows' artifacts, operator edits) out of the commit.
+	commitArgs := append([]string{"commit", "-q", "-m", message, "--"}, paths...)
+	_, err = run(ctx, dir, commitArgs...)
+	if err != nil {
+		var ge *Error
+		if isIdentityError(err, &ge) {
+			_, err = run(ctx, dir, append([]string{
+				"-c", "user.name=Hal", "-c", "user.email=hal@localhost",
+			}, commitArgs...)...)
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return runOut(ctx, dir, "rev-parse", "--short", "HEAD")
+}
+
+// DiscardChanges reverts the given paths (repo-relative): tracked files are
+// restored from HEAD, untracked ones deleted. This is the read-only-stage
+// tree check's teeth — call it ONLY with paths that changed during the turn,
+// never with pre-existing operator edits.
+func DiscardChanges(ctx context.Context, dir string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	if err := rejectFlagLike(paths...); err != nil {
+		return err
+	}
+	// checkout -- restores tracked paths; it errors on untracked ones, so
+	// tolerate that and sweep untracked leftovers with clean -f afterwards.
+	_, _ = run(ctx, dir, append([]string{"checkout", "-q", "--"}, paths...)...)
+	_, err := run(ctx, dir, append([]string{"clean", "-fq", "--"}, paths...)...)
+	return err
+}
+
+// CherryPick replays one commit onto HEAD, keeping its message. On a
+// conflict (or any failure) the caller must CherryPickAbort before touching
+// the tree again.
+func CherryPick(ctx context.Context, dir, commit string) error {
+	if err := rejectFlagLike(commit); err != nil {
+		return err
+	}
+	_, err := run(ctx, dir, "cherry-pick", commit)
+	if err != nil {
+		var ge *Error
+		if isIdentityError(err, &ge) {
+			_, err = run(ctx, dir,
+				"-c", "user.name=Hal", "-c", "user.email=hal@localhost",
+				"cherry-pick", commit)
+		}
+	}
+	return err
+}
+
+// CherryPickAbort cancels an in-progress cherry-pick, restoring HEAD.
+func CherryPickAbort(ctx context.Context, dir string) error {
+	_, err := run(ctx, dir, "cherry-pick", "--abort")
+	return err
+}
+
+func isIdentityError(err error, ge **Error) bool {
+	e, ok := err.(*Error)
+	if !ok {
+		if u, ok2 := err.(interface{ Unwrap() error }); ok2 {
+			if e2, ok3 := u.Unwrap().(*Error); ok3 {
+				e = e2
+			} else {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+	*ge = e
+	out := strings.ToLower(e.Output)
+	return strings.Contains(out, "please tell me who you are") || strings.Contains(out, "empty ident")
+}
+
+// Commit is one entry of the recent-commit feed.
+type Commit struct {
+	SHA     string    `json:"sha"`
+	Subject string    `json:"subject"`
+	When    time.Time `json:"when"`
+}
+
+// RecentCommits returns the newest n commits on HEAD.
+func RecentCommits(ctx context.Context, dir string, n int) ([]Commit, error) {
+	out, err := runOut(ctx, dir, "log", "-n", strconv.Itoa(n), "--format=%h%x1f%s%x1f%ct")
+	if err != nil {
+		// An empty repo (no commits yet) is not an error for a feed.
+		if strings.Contains(err.Error(), "does not have any commits") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var commits []Commit
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.Split(line, "\x1f")
+		if len(parts) != 3 {
+			continue
+		}
+		secs, _ := strconv.ParseInt(parts[2], 10, 64)
+		commits = append(commits, Commit{SHA: parts[0], Subject: parts[1], When: time.Unix(secs, 0).UTC()})
+	}
+	return commits, nil
+}
+
+// DiffStat returns the stat summary of a revision range (base..HEAD) — the
+// dashboard's implementation-diff view.
+func DiffStat(ctx context.Context, dir, base, head string) (string, error) {
+	if err := rejectFlagLike(base, head); err != nil {
+		return "", err
+	}
+	return runOut(ctx, dir, "diff", "--stat", base+".."+head)
+}
+
+// ShowStat returns the stat summary of a commit (for pass logs).
+func ShowStat(ctx context.Context, dir, ref string) (string, error) {
+	return run(ctx, dir, "show", "--stat", "--format=commit %h  %s", ref)
+}
+
+// CleanStaleLock removes an index.lock older than maxAge from dir's git dir
+// (worktree-aware). A live git operation never holds the lock that long; a
+// crashed agent's orphan lock otherwise blocks every git op.
+func CleanStaleLock(ctx context.Context, dir string, maxAge time.Duration) (bool, error) {
+	gd, err := GitDir(ctx, dir)
+	if err != nil {
+		return false, err
+	}
+	lock := filepath.Join(gd, "index.lock")
+	info, err := os.Stat(lock)
+	if err != nil {
+		return false, nil //nolint:nilerr // no lock file (the common case) — nothing to do
+	}
+	if time.Since(info.ModTime()) < maxAge {
+		return false, nil
+	}
+	if err := os.Remove(lock); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// HasMergeHead reports whether dir is mid-merge (MERGE_HEAD present).
+func HasMergeHead(ctx context.Context, dir string) bool {
+	gd, err := GitDir(ctx, dir)
+	if err != nil {
+		return false
+	}
+	_, statErr := os.Stat(filepath.Join(gd, "MERGE_HEAD"))
+	return statErr == nil
+}
+
+// Merge merges ref into the current branch. It returns conflict=true when
+// the merge stopped on conflicts (caller decides: abort, or hand to an
+// agent). A missing committer identity is retried with the Hal fallback
+// identity (same as CommitAll) rather than failing the merge. Other failures
+// return an error.
+func Merge(ctx context.Context, dir, ref string, noFF bool) (conflict bool, err error) {
+	if err := rejectFlagLike(ref); err != nil {
+		return false, err
+	}
+	args := []string{"merge", "--no-edit"}
+	if noFF {
+		args = append(args, "--no-ff")
+	}
+	args = append(args, ref)
+	_, err = run(ctx, dir, args...)
+	if err != nil {
+		var ge *Error
+		if isIdentityError(err, &ge) {
+			_ = MergeAbort(ctx, dir) // clear any half-started merge state first
+			withIdent := append([]string{
+				"-c", "user.name=Hal", "-c", "user.email=hal@localhost",
+			}, args...)
+			_, err = run(ctx, dir, withIdent...)
+		}
+	}
+	if err == nil {
+		return false, nil
+	}
+	// Conflict signature: unmerged paths or MERGE_HEAD left behind.
+	if HasMergeHead(ctx, dir) {
+		return true, nil
+	}
+	if files, uerr := UnmergedFiles(ctx, dir); uerr == nil && len(files) > 0 {
+		return true, nil
+	}
+	return false, err
+}
+
+// MergeAbort aborts an in-progress merge (no-op if none).
+func MergeAbort(ctx context.Context, dir string) error {
+	if !HasMergeHead(ctx, dir) {
+		return nil
+	}
+	_, err := run(ctx, dir, "merge", "--abort")
+	return err
+}
+
+// MergeContinueCommit commits a fully resolved in-progress merge.
+func MergeContinueCommit(ctx context.Context, dir string) error {
+	_, err := run(ctx, dir, "commit", "--no-edit")
+	if err != nil {
+		var ge *Error
+		if isIdentityError(err, &ge) {
+			_, err = run(ctx, dir,
+				"-c", "user.name=Hal", "-c", "user.email=hal@localhost",
+				"commit", "--no-edit")
+		}
+	}
+	return err
+}
+
+// UnmergedFiles lists paths still in conflict.
+func UnmergedFiles(ctx context.Context, dir string) ([]string, error) {
+	out, err := runOut(ctx, dir, "-c", "core.quotepath=off", "diff", "--name-only", "--diff-filter=U")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+// ResetHard resets the work tree and HEAD to ref.
+func ResetHard(ctx context.Context, dir, ref string) error {
+	if err := rejectFlagLike(ref); err != nil {
+		return err
+	}
+	_, err := run(ctx, dir, "reset", "--hard", "-q", ref)
+	return err
+}
+
+// UpdateRef points a fully-qualified ref (e.g. refs/hal/green) at target.
+func UpdateRef(ctx context.Context, dir, ref, target string) error {
+	if err := rejectFlagLike(ref, target); err != nil {
+		return err
+	}
+	_, err := run(ctx, dir, "update-ref", ref, target)
+	return err
+}
+
+// RefExists reports whether a ref resolves to a commit.
+func RefExists(ctx context.Context, dir, ref string) bool {
+	if rejectFlagLike(ref) != nil {
+		return false
+	}
+	_, err := runOut(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	return err == nil
+}

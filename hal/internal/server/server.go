@@ -1,0 +1,769 @@
+// Package server is the local HTTP surface: REST API + SSE + the embedded
+// dashboard. It binds 127.0.0.1 ONLY — this process spawns
+// permission-skipping agents; it must never be reachable from the network.
+// Mutating routes require the session token minted at startup (loopback CSRF
+// insurance), and cross-origin browser requests are refused outright.
+package server
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/app"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/statedir"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/store"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/web"
+)
+
+// ServerInfo is persisted to <stateDir>/server.json so CLI subcommands can
+// find (and authenticate to) a running instance.
+type ServerInfo struct {
+	PID     int       `json:"pid"`
+	Port    int       `json:"port"`
+	Token   string    `json:"token"`
+	Started time.Time `json:"started"`
+}
+
+// InfoPath returns the server.json path for a state dir.
+func InfoPath(stateDir string) string { return filepath.Join(stateDir, "server.json") }
+
+// ReadInfo loads server.json if present.
+func ReadInfo(stateDir string) (*ServerInfo, error) {
+	var si ServerInfo
+	if err := statedir.ReadJSON(InfoPath(stateDir), &si); err != nil {
+		return nil, err
+	}
+	return &si, nil
+}
+
+// Server hosts the API for one project.
+type Server struct {
+	App    *app.App
+	OnStop func() // full process shutdown — CLI `hal stop` / POST /server/stop
+	OnHalt func() // kill every in-flight pass, stay up parked — POST /server/halt
+	// Version is the running binary's version string, surfaced by the
+	// environment endpoint ("" reads as "dev"). Set by the CLI before Start.
+	Version string
+
+	token     string
+	listener  net.Listener
+	http      *http.Server
+	bound     int       // port actually listening (Start)
+	started   time.Time // when Start succeeded
+	closing   chan struct{} // closed at Shutdown; unblocks long-lived handlers (SSE)
+	closeOnce sync.Once
+}
+
+// New builds the server (not yet listening).
+func New(a *app.App, onStop, onHalt func()) *Server {
+	buf := make([]byte, 16)
+	_, _ = rand.Read(buf)
+	return &Server{
+		App: a, OnStop: onStop, OnHalt: onHalt,
+		token:   hex.EncodeToString(buf),
+		closing: make(chan struct{}),
+	}
+}
+
+// Token returns the session token (embedded in the URL the CLI opens).
+func (s *Server) Token() string { return s.token }
+
+// Start listens on 127.0.0.1:port (0 = ephemeral) and writes server.json.
+func (s *Server) Start(port int) (int, error) {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return 0, err
+	}
+	s.listener = ln
+	bound := ln.Addr().(*net.TCPAddr).Port
+	s.http = &http.Server{
+		Handler: s.handler(),
+		// WriteTimeout stays 0 (SSE holds the response open), but header
+		// reads and idle keep-alives must not be holdable forever.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	go func() { _ = s.http.Serve(ln) }()
+
+	info := ServerInfo{PID: os.Getpid(), Port: bound, Token: s.token, Started: time.Now().UTC()}
+	if err := statedir.WriteJSON(InfoPath(s.App.StateDir), info); err != nil {
+		_ = s.http.Close()
+		return 0, err
+	}
+	s.bound = bound
+	s.started = info.Started
+	return bound, nil
+}
+
+// Shutdown stops the HTTP server and removes server.json. The closing
+// channel drains SSE handlers first — http.Server.Shutdown waits for active
+// handlers without cancelling their request contexts, so an open dashboard
+// tab would otherwise stall every shutdown to the full ctx deadline.
+func (s *Server) Shutdown(ctx context.Context) {
+	s.closeOnce.Do(func() { close(s.closing) })
+	if s.http != nil {
+		_ = s.http.Shutdown(ctx)
+	}
+	_ = os.Remove(InfoPath(s.App.StateDir))
+}
+
+func (s *Server) handler() http.Handler {
+	mux := http.NewServeMux()
+
+	// Reads are token-gated too: they expose the same repo intelligence (pass
+	// logs, GOAL, prompts, pasted screenshots) the mutating routes protect, so
+	// on a shared machine another OS user's loopback process must not read them
+	// without the token. guardRead also accepts a ?token= query param for the
+	// browser GETs that can't set a header (SSE EventSource, <img> thumbnails).
+	guardRead := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !s.authorizedRead(r) {
+				httpErr(w, fmt.Errorf("bad or missing token"), http.StatusForbidden)
+				return
+			}
+			h(w, r)
+		}
+	}
+
+	// --- read routes (token-gated) ---
+	mux.HandleFunc("GET /api/v1/status", guardRead(s.getStatus))
+	mux.HandleFunc("GET /api/v1/config", guardRead(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, s.App.ConfigSnapshot())
+	}))
+	mux.HandleFunc("GET /api/v1/goal", guardRead(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]string{"goal": s.App.Goal()})
+	}))
+	mux.HandleFunc("GET /api/v1/prompts/{frag...}", guardRead(func(w http.ResponseWriter, r *http.Request) {
+		body, err := s.App.Fragment(r.PathValue("frag"))
+		if err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]string{"content": body})
+	}))
+	mux.HandleFunc("GET /api/v1/tasks", guardRead(s.getTasks))
+	mux.HandleFunc("GET /api/v1/runs", guardRead(s.getRuns))
+	mux.HandleFunc("GET /api/v1/runs/{id}/log", guardRead(s.getRunLog))
+	mux.HandleFunc("GET /api/v1/events", guardRead(s.getEvents)) // SSE
+	mux.HandleFunc("GET /api/v1/attachments/{name}", guardRead(s.getAttachment))
+	mux.HandleFunc("GET /api/v1/inquiries", guardRead(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, s.App.Inquiries())
+	}))
+	mux.HandleFunc("GET /api/v1/art", guardRead(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, s.App.ArtStatus(r.Context()))
+	}))
+	// The settings panel's environment view: external tools (claude, agy,
+	// ffmpeg, git, corridorkey) with versions and login signals, resolved
+	// paths, and the transcript-export destination. ?fresh=1 bypasses the
+	// tool-probe cache (the panel's "re-run checks" button).
+	mux.HandleFunc("GET /api/v1/env", guardRead(func(w http.ResponseWriter, r *http.Request) {
+		env := s.App.EnvStatus(r.Context(), r.URL.Query().Get("fresh") != "")
+		version := s.Version
+		if version == "" {
+			version = "dev"
+		}
+		env.Server = &app.EnvServerInfo{PID: os.Getpid(), Port: s.bound, Started: s.started, Version: version}
+		writeJSON(w, env)
+	}))
+
+	// --- mutating routes (token-gated) ---
+	guard := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !s.authorized(r) {
+				httpErr(w, fmt.Errorf("bad or missing token"), http.StatusForbidden)
+				return
+			}
+			h(w, r)
+		}
+	}
+	// The interactive workflow surface (see workflows.go).
+	s.workflowRoutes(mux, guardRead, guard)
+
+	mux.HandleFunc("PUT /api/v1/goal", guard(s.putGoal))
+	mux.HandleFunc("PUT /api/v1/prompts/{frag...}", guard(s.putFragment))
+	mux.HandleFunc("POST /api/v1/tasks", guard(s.postTask))
+	mux.HandleFunc("POST /api/v1/tasks/attachments", guard(s.postAttachment))
+	mux.HandleFunc("PATCH /api/v1/tasks/{id}", guard(s.patchTask))
+	mux.HandleFunc("DELETE /api/v1/tasks/{id}", guard(s.deleteTask))
+	mux.HandleFunc("POST /api/v1/tasks/reorder", guard(s.reorderTasks))
+	// The self-evaluator: ask why the hal did something; a read-only
+	// forensics agent answers from pass logs, transcripts, and git history.
+	mux.HandleFunc("POST /api/v1/inquiries", guard(s.postInquiry))
+	// The live green/blue-screen keyer switch for art-gen-trans passes:
+	// stored as a kv override, re-read by the engine every art pass, so it
+	// takes effect immediately with no restart. The list is ordered — the
+	// first keyer's output is the committed asset, the rest key archived
+	// comparison copies. An empty list clears back to config.
+	mux.HandleFunc("PUT /api/v1/art/keyers", guard(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Keyers []string `json:"keyers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := s.App.SetArtKeyers(r.Context(), body.Keyers); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, s.App.ArtStatus(r.Context()))
+	}))
+	// Legacy single-keyer form of the same override ("" clears).
+	mux.HandleFunc("PUT /api/v1/art/remover", guard(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Remover string `json:"remover"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := s.App.SetArtRemover(r.Context(), body.Remover); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, s.App.ArtStatus(r.Context()))
+	}))
+	// Re-run the agy art-model verification (e.g. right after logging agy
+	// in). Fire-and-forget: progress lands in ArtStatus.Verifying and the
+	// result on the event bus (art.model_verified / art.models_missing).
+	mux.HandleFunc("POST /api/v1/art/verify-models", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]bool{"started": s.App.ReverifyArtModels()})
+	}))
+	// Start one art-generation job (the claude-orchestrated agy flow; see
+	// internal/artjob). Single-flight: a second job while one runs is a 409.
+	// Returns the pass id recording the job — its log streams over the bus
+	// ("pass.log") and lands under GET /api/v1/runs/{id}/log.
+	mux.HandleFunc("POST /api/v1/art/jobs", guard(func(w http.ResponseWriter, r *http.Request) {
+		var body app.ArtJobReq
+		if err := readBody(r, &body); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		passID, err := s.App.RunArtJob(r.Context(), body)
+		if errors.Is(err, app.ErrArtJobBusy) {
+			httpErr(w, err, http.StatusConflict)
+			return
+		}
+		if err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"pass": passID})
+	}))
+	mux.HandleFunc("POST /api/v1/inquiries/stop", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]bool{"stopped": s.App.StopInquiry()})
+	}))
+	mux.HandleFunc("POST /api/v1/server/stop", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]bool{"stopping": true})
+		if s.OnStop != nil {
+			go s.OnStop()
+		}
+	}))
+	// Halt kills every in-flight pass right now but leaves the server (and
+	// this HTTP request's own process) running — the dashboard's "stop"
+	// button, distinct from the CLI's full-shutdown "stop server".
+	mux.HandleFunc("POST /api/v1/server/halt", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]bool{"halting": true})
+		if s.OnHalt != nil {
+			go s.OnHalt()
+		}
+	}))
+
+	// --- static SPA ---
+	mux.HandleFunc("GET /", s.serveUI)
+
+	return guardLoopback(mux)
+}
+
+func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
+	snap, err := s.App.Snapshot(r.Context())
+	if err != nil {
+		httpErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, snap)
+}
+
+func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
+	filter := store.TaskFilter{}
+	if r.URL.Query().Get("all") == "" {
+		filter.Statuses = []domain.TaskStatus{domain.TaskOpen, domain.TaskClaimed, domain.TaskStuck}
+	}
+	tasks, err := s.App.Store.ListTasks(r.Context(), filter)
+	if err != nil {
+		httpErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	if tasks == nil {
+		tasks = []*domain.Task{}
+	}
+	writeJSON(w, tasks)
+}
+
+type taskBody struct {
+	Title   *string        `json:"title"`
+	Detail  *string        `json:"detail"`
+	Type    *string        `json:"type"`
+	Backlog *string        `json:"backlog"` // "shared" or pipeline name
+	Pin     *domain.Bundle `json:"pin"`
+	First   bool           `json:"first"`
+}
+
+// validatePin rejects pins to unknown agents or efforts at the API boundary —
+// a task pinned to a typo'd agent would otherwise burn its retry attempts
+// failing pass setup — and, for a pinned model that is off-family for its
+// agent, publishes the same non-blocking driver.model_unknown warning
+// SetPipelineBundle emits. A wrong-for-agent model id fails silently for blind
+// drivers (AGENTS.md), so warn but never block, matching config load's
+// warn-not-block policy; with no explicit agent the check is a no-op since the
+// running pipeline's agent isn't known here (KnownOrExtraModel treats an empty
+// agent as acceptable).
+func (s *Server) validatePin(ctx context.Context, pin *domain.Bundle) error {
+	if pin == nil {
+		return nil
+	}
+	if pin.Agent != "" {
+		if _, err := driver.New(pin.Agent); err != nil {
+			return err
+		}
+	}
+	if !domain.ValidEffort(pin.Effort) {
+		return fmt.Errorf("effort %q is not one of %v", pin.Effort, domain.Efforts)
+	}
+	if pin.Model != "" && !s.App.Res().Config.KnownOrExtraModel(pin.Agent, pin.Model) {
+		s.App.Bus.Publish(ctx, domain.Event{Type: "driver.model_unknown", Payload: map[string]any{
+			"agent": pin.Agent, "model": pin.Model, "families": domain.ModelFamilies(pin.Agent),
+		}})
+	}
+	return nil
+}
+
+func (s *Server) postTask(w http.ResponseWriter, r *http.Request) {
+	var body taskBody
+	if err := readBody(r, &body); err != nil || body.Title == nil || strings.TrimSpace(*body.Title) == "" {
+		httpErr(w, fmt.Errorf("a task needs a title"), http.StatusBadRequest)
+		return
+	}
+	task := &domain.Task{Title: strings.TrimSpace(*body.Title)}
+	if body.Detail != nil {
+		task.Detail = *body.Detail
+	}
+	if body.Type != nil {
+		task.Type = strings.ToLower(*body.Type)
+	}
+	if body.Pin != nil {
+		if err := s.validatePin(r.Context(), body.Pin); err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		task.Pin = *body.Pin
+	}
+	if body.Backlog != nil {
+		backlog, err := s.resolveBacklog(*body.Backlog)
+		if err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		task.Backlog = backlog
+	}
+	added, err := s.App.Store.AddTask(r.Context(), task, body.First)
+	if err != nil {
+		httpErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, added)
+}
+
+type attachmentBody struct {
+	Name    *string `json:"name"`
+	DataURL *string `json:"dataUrl"`
+}
+
+// postAttachment saves a pasted/attached image so the add-task form can
+// reference it by path before the task itself exists. It bypasses readBody's
+// 1MB cap — a base64-encoded screenshot routinely exceeds that.
+func (s *Server) postAttachment(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(r.Body, 24<<20))
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	var body attachmentBody
+	if err := json.Unmarshal(data, &body); err != nil || body.Name == nil || body.DataURL == nil {
+		httpErr(w, fmt.Errorf("an attachment needs a name and a dataUrl"), http.StatusBadRequest)
+		return
+	}
+	path, err := s.App.SaveAttachment(*body.Name, *body.DataURL)
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]string{"path": path})
+}
+
+// getAttachment serves a saved attachment by basename so the dashboard can
+// render a thumbnail: SaveAttachment's markdown reference embeds an absolute
+// host filesystem path, which the browser can't dereference directly. The
+// basename is re-joined under <StateDir>/attachments rather than trusted as a
+// path, so "../.." can't escape it.
+func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
+	dir := filepath.Join(s.App.StateDir, "attachments")
+	path := filepath.Join(dir, filepath.Base(r.PathValue("name")))
+	if filepath.Dir(path) != dir {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType(path))
+	_, _ = w.Write(data)
+}
+
+func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body taskBody
+	if err := readBody(r, &body); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.validatePin(r.Context(), body.Pin); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	if body.Backlog != nil {
+		backlog, err := s.resolveBacklog(*body.Backlog)
+		if err != nil {
+			httpErr(w, err, http.StatusBadRequest)
+			return
+		}
+		if _, err := s.App.Store.MoveTask(r.Context(), id, backlog); err != nil {
+			httpErr(w, err, statusFor(err))
+			return
+		}
+	}
+	patch := store.TaskPatch{Title: body.Title, Detail: body.Detail, Pin: body.Pin}
+	if body.Type != nil {
+		lower := strings.ToLower(*body.Type)
+		patch.Type = &lower
+	}
+	task, err := s.App.UpdateTask(r.Context(), id, patch)
+	if err != nil {
+		httpErr(w, err, statusFor(err))
+		return
+	}
+	writeJSON(w, task)
+}
+
+func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
+	if err := s.App.DeleteTask(r.Context(), r.PathValue("id")); err != nil {
+		httpErr(w, err, statusFor(err))
+		return
+	}
+	writeJSON(w, map[string]bool{"deleted": true})
+}
+
+func (s *Server) reorderTasks(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Backlog string   `json:"backlog"`
+		IDs     []string `json:"ids"`
+	}
+	if err := readBody(r, &body); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	backlog, err := s.resolveBacklog(body.Backlog)
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.App.Store.ReorderBacklog(r.Context(), backlog, body.IDs); err != nil {
+		httpErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) putGoal(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Goal *string `json:"goal"`
+	}
+	if err := readBody(r, &body); err != nil || body.Goal == nil {
+		httpErr(w, fmt.Errorf(`body needs {"goal":"..."}`), http.StatusBadRequest)
+		return
+	}
+	if err := s.App.SetGoal(*body.Goal); err != nil {
+		httpErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) putFragment(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Content *string `json:"content"`
+	}
+	if err := readBody(r, &body); err != nil || body.Content == nil {
+		httpErr(w, fmt.Errorf(`body needs {"content":"..."}`), http.StatusBadRequest)
+		return
+	}
+	if err := s.App.SetFragment(r.PathValue("frag"), *body.Content); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) getRuns(w http.ResponseWriter, r *http.Request) {
+	limit := 30
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	passes, err := s.App.Store.RecentPasses(r.Context(), r.URL.Query().Get("pipeline"), limit)
+	if err != nil {
+		httpErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	if passes == nil {
+		passes = []*domain.Pass{}
+	}
+	writeJSON(w, passes)
+}
+
+func (s *Server) getRunLog(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	log, err := s.App.PassLog(r.Context(), id)
+	if err != nil {
+		httpErr(w, err, statusFor(err))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, log)
+}
+
+func (s *Server) postInquiry(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Question *string        `json:"question"`
+		Bundle   *domain.Bundle `json:"bundle"` // optional agent/model/effort override for this question
+	}
+	if err := readBody(r, &body); err != nil || body.Question == nil {
+		httpErr(w, fmt.Errorf(`body needs {"question":"...", "bundle":{agent,model,effort}}`), http.StatusBadRequest)
+		return
+	}
+	if err := s.validatePin(r.Context(), body.Bundle); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	var override domain.Bundle
+	if body.Bundle != nil {
+		override = *body.Bundle
+	}
+	inq, err := s.App.AskInquiry(r.Context(), *body.Question, override)
+	if errors.Is(err, app.ErrInquiryBusy) {
+		httpErr(w, err, http.StatusConflict)
+		return
+	}
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, inq)
+}
+
+func (s *Server) resolveBacklog(name string) (string, error) {
+	switch strings.ToLower(name) {
+	case "", statedir.SharedLabel:
+		return domain.MainBacklog, nil
+	}
+	return "", fmt.Errorf("unknown backlog %q — tasks live in the shared ideas inbox (%q)", name, statedir.SharedLabel)
+}
+
+// authorized accepts the session token from the header only. Mutating routes
+// use this: URLs leak (history, logs, Referer), and the dashboard carries the
+// token via the URL fragment into sessionStorage and sends it as a header on
+// every fetch, so a query channel buys nothing for writes.
+func (s *Server) authorized(r *http.Request) bool {
+	return tokenEqual(r.Header.Get("X-Hal-Token"), s.token)
+}
+
+// authorizedRead is authorized plus a ?token= query-parameter fallback, for
+// the two browser-driven GETs that can't set a header: the SSE EventSource and
+// the <img>-loaded attachment thumbnails. The token still isn't in any
+// navigable URL (it rides an EventSource/img request, never the address bar),
+// so it doesn't leak through history the way a page URL would.
+func (s *Server) authorizedRead(r *http.Request) bool {
+	if s.authorized(r) {
+		return true
+	}
+	return tokenEqual(r.URL.Query().Get("token"), s.token)
+}
+
+func tokenEqual(got, want string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+// serveUI serves the embedded dashboard with history fallback.
+func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
+	dist := web.Dist()
+	if dist == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, placeholderPage)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	if path == "" {
+		path = "index.html"
+	}
+	data, err := dist.ReadFile(path)
+	if err != nil {
+		// SPA history fallback.
+		data, err = dist.ReadFile("index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		path = "index.html"
+	}
+	w.Header().Set("Content-Type", contentType(path))
+	_, _ = w.Write(data)
+}
+
+func contentType(path string) string {
+	switch filepath.Ext(path) {
+	case ".html":
+		return "text/html; charset=utf-8"
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".json", ".map":
+		return "application/json"
+	case ".png":
+		return "image/png"
+	case ".jpeg", ".jpg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// guardLoopback rejects anything that isn't loopback-addressed, anything
+// whose Host header names a non-loopback host, and cross-origin browser
+// requests. The Host check is the DNS-rebinding defense: a page at evil.com
+// whose DNS answer is 127.0.0.1 reaches us with a loopback RemoteAddr and NO
+// Origin header (the browser considers it same-origin) — the Host header is
+// the only tell. Origin matching is by exact parsed hostname, never
+// substring ("localhost.evil.com" must not pass).
+func guardLoopback(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || !net.ParseIP(host).IsLoopback() {
+			http.Error(w, "loopback only", http.StatusForbidden)
+			return
+		}
+		if !loopbackHostname(hostnameOf(r.Host)) {
+			http.Error(w, "bad host", http.StatusForbidden)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, err := url.Parse(origin)
+			if err != nil || !loopbackHostname(u.Hostname()) {
+				http.Error(w, "cross-origin refused", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hostnameOf strips an optional port (and IPv6 brackets) from a host:port.
+func hostnameOf(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return strings.Trim(hostport, "[]")
+}
+
+// loopbackHostname reports whether h names this machine's loopback:
+// "localhost" or a literal loopback IP. Nothing else qualifies.
+func loopbackHostname(h string) bool {
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+func readBody(r *http.Request, v any) error {
+	defer r.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("empty body")
+	}
+	return json.Unmarshal(data, v)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+}
+
+func httpErr(w http.ResponseWriter, err error, code int) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+func statusFor(err error) int {
+	if err == store.ErrNotFound {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+const placeholderPage = `<!doctype html>
+<meta charset="utf-8">
+<title>Hal</title>
+<style>body{font-family:system-ui;background:#111;color:#ddd;display:grid;place-items:center;height:100vh;margin:0}div{max-width:40rem;text-align:center}</style>
+<div>
+  <h1>Hal is running</h1>
+  <p>No dashboard is embedded in this build. The API is live:</p>
+  <p><code>GET /api/v1/status</code> · <code>hal status</code> · <code>hal stop</code></p>
+</div>`

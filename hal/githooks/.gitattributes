@@ -1,0 +1,2 @@
+# Hook scripts run through /bin/sh — keep LF regardless of core.autocrlf.
+* text eol=lf
