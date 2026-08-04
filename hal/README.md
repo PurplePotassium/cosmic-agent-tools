@@ -236,6 +236,12 @@ per repo with optional fragments under `.hal/prompts/`:
 `hal init` also seeds `.claude/agents/` with the locator/analyzer
 sub-agent definitions the research/design prompts call by name.
 
+In a repo that carries the `agent_play/` toolkit, `hal init` additionally
+seeds `agent_play/agent_play.config.json` with an example `smoke` entry —
+the level select / setup the validate stage plays as its quick agent
+playthrough. An existing toolkit config is never touched (even with
+`--force`); if it lacks a `smoke` entry, init prints the entry to merge.
+
 ## The dashboard
 
 `hal` opens `http://127.0.0.1:4455` (loopback ONLY; mutations need the

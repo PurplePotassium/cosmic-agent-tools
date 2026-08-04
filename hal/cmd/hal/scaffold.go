@@ -113,19 +113,65 @@ func cmdInit(args []string) int {
 		writeIfAbsent(filepath.Join(agentsDir, name), content)
 	}
 
+	// The validate stage ends with a quick agent_play playthrough when the
+	// repo carries the agent_play toolkit, driven by the `smoke` entry in
+	// agent_play.config.json — the configured level select / setup for one
+	// representative path. Seed an example entry so games adopt the
+	// convention. The config is the toolkit's own file and may hold real
+	// settings (godotProject, port, ...), so an existing one is never
+	// rewritten — not even with --force; the entry to merge is printed
+	// instead.
+	smokeSeeded, smokeHint := false, ""
+	apCfg := filepath.Join(root, "agent_play", "agent_play.config.json")
+	if fi, err := os.Stat(filepath.Dir(apCfg)); err == nil && fi.IsDir() {
+		if b, err := os.ReadFile(apCfg); os.IsNotExist(err) {
+			writeIfAbsent(apCfg, scaffoldAgentPlayConfig)
+			smokeSeeded = true
+		} else if err == nil && !strings.Contains(string(b), `"smoke"`) {
+			smokeHint = "note: " + apCfg + " has no \"smoke\" entry — the validate stage\n" +
+				"reads it for its quick agent playthrough. Merge in, adjusted to your game:\n" +
+				scaffoldSmokeEntry + "\n"
+		}
+	}
+
 	for _, p := range wrote {
 		fmt.Println("created", p)
 	}
 	for _, p := range skipped {
 		fmt.Println("kept   ", p, "(use --force to overwrite)")
 	}
-	fmt.Println(`
-Next steps:
-  1. Edit .hal/GOAL.md — the north star every workflow reads first.
-  2. (Optional) set project.verify in .hal/config.toml to your test command.
-  3. hal            # opens the dashboard; workflows are driven from it`)
+	if smokeHint != "" {
+		fmt.Print(smokeHint)
+	}
+	fmt.Println("\nNext steps:")
+	n := 0
+	step := func(s string) { n++; fmt.Printf("  %d. %s\n", n, s) }
+	step("Edit .hal/GOAL.md — the north star every workflow reads first.")
+	step("(Optional) set project.verify in .hal/config.toml to your test command.")
+	if smokeSeeded {
+		step("Point the smoke entry in agent_play/agent_play.config.json at your game's representative path.")
+	}
+	step("hal            # opens the dashboard; workflows are driven from it")
 	return 0
 }
+
+// scaffoldSmokeEntry is the example `smoke` entry for the agent_play
+// toolkit's config — the level select / setup the validate stage plays as
+// its smoke test. A standalone fragment so the scaffolded file and the
+// "merge this in" hint cannot drift apart.
+const scaffoldSmokeEntry = `  "smoke": {
+    "_comment": "Read by hal's validate stage: level select / setup for a quick agent playthrough of ONE common path covering the game's major features. Edit level/seed/path for your game; keep steps small.",
+    "level": "level_1",
+    "seed": 123,
+    "steps": 40,
+    "path": "spawn -> core mechanic -> first hazard -> level exit"
+  }`
+
+const scaffoldAgentPlayConfig = `{
+  "_comment": "agent_play toolkit config — see agent_play/README.md for the toolkit's own fields (godotProject, exportPreset, model, port). hal init seeded the smoke entry below.",
+` + scaffoldSmokeEntry + `
+}
+`
 
 const scaffoldGoal = `# Goal
 
