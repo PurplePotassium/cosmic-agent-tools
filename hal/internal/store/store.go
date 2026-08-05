@@ -159,6 +159,7 @@ var schema = []string{
 		bundle_agent  TEXT NOT NULL DEFAULT '',
 		bundle_model  TEXT NOT NULL DEFAULT '',
 		bundle_effort TEXT NOT NULL DEFAULT '',
+		stage_bundles TEXT NOT NULL DEFAULT '{}',
 		created       INTEGER NOT NULL,
 		updated       INTEGER NOT NULL
 	)`,
@@ -255,6 +256,12 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("workflows", "validated_by", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	// Per-stage model/effort overrides (a JSON stage→bundle map) — the
+	// per-flow successor of the single bundle_* columns, which stay as the
+	// all-stages base.
+	if err := s.ensureColumn("workflows", "stage_bundles", `TEXT NOT NULL DEFAULT '{}'`); err != nil {
 		return err
 	}
 	// DO UPDATE, not DO NOTHING: the stored version must track the binary

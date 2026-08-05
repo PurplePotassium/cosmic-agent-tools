@@ -530,6 +530,18 @@ code, .mono { font-family: ui-monospace, Consolas, monospace; }
 .bundle-editor input { flex: 1; min-width: 140px; }
 .bundle-editor select.model { flex: 1; min-width: 140px; }
 
+/* per-stage model/effort override rows (workflow defaults, bundle popover) */
+.stage-matrix { margin-top: 6px; }
+.stage-matrix-row { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
+.stage-matrix-name {
+  color: var(--dim);
+  font-size: 0.78rem;
+  width: 72px;
+  flex: none;
+  text-align: right;
+}
+.stage-matrix-row select.model { flex: 1; min-width: 140px; }
+
 /* ---- the settings panel (⚙ popup) ---- */
 .modal-backdrop {
   position: fixed;

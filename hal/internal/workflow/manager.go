@@ -165,7 +165,10 @@ type CreateReq struct {
 	StartStage  domain.WorkflowStage // "" = refine; later stages stub-skip predecessors
 	AutoApprove bool                 // ready stages advance; asking/blocked/error states stop
 	Bundle      domain.Bundle
-	Attachments []string // absolute paths passed into the opening prompt
+	// StageBundles overrides model/effort for individual stages (beats
+	// Bundle for that stage).
+	StageBundles map[domain.WorkflowStage]domain.Bundle
+	Attachments  []string // absolute paths passed into the opening prompt
 }
 
 // Create mints the workflow, stub-skips pre-start stages, and fires the
@@ -189,14 +192,15 @@ func (m *Manager) Create(ctx context.Context, req CreateReq) (domain.Workflow, e
 		return domain.Workflow{}, fmt.Errorf("workflow: unknown start stage %q", start)
 	}
 	wf := domain.Workflow{
-		ID:          store.NewWorkflowID(title, time.Now()),
-		Title:       title,
-		Brief:       strings.TrimSpace(req.Brief),
-		Stage:       start,
-		Status:      domain.WorkflowAwaitingUser,
-		AutoApprove: req.AutoApprove,
-		Bundle:      req.Bundle,
-		Created:     time.Now().UTC(),
+		ID:           store.NewWorkflowID(title, time.Now()),
+		Title:        title,
+		Brief:        strings.TrimSpace(req.Brief),
+		Stage:        start,
+		Status:       domain.WorkflowAwaitingUser,
+		AutoApprove:  req.AutoApprove,
+		Bundle:       req.Bundle,
+		StageBundles: req.StageBundles,
+		Created:      time.Now().UTC(),
 	}
 	if err := os.MkdirAll(m.artifactDirAbs(wf.ID), 0o755); err != nil {
 		return domain.Workflow{}, err
@@ -1232,6 +1236,10 @@ func (m *Manager) fragment(rel string) string {
 
 // ---- small helpers ----
 
+// bundleFor resolves the model/effort a stage's turns run with. Precedence,
+// weakest first: config [workflow.stages.<stage>] filled from the config
+// default, then the workflow's all-stages bundle, then the workflow's
+// per-stage override for exactly this stage.
 func (m *Manager) bundleFor(wf domain.Workflow, stage domain.WorkflowStage) domain.Bundle {
 	b := m.cfg.StageBundles[stage]
 	if b.Model == "" {
@@ -1245,6 +1253,14 @@ func (m *Manager) bundleFor(wf domain.Workflow, stage domain.WorkflowStage) doma
 	}
 	if wf.Bundle.Effort != "" {
 		b.Effort = wf.Bundle.Effort
+	}
+	if sb, ok := wf.StageBundles[stage]; ok {
+		if sb.Model != "" {
+			b.Model = sb.Model
+		}
+		if sb.Effort != "" {
+			b.Effort = sb.Effort
+		}
 	}
 	return b
 }

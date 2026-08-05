@@ -820,3 +820,43 @@ func TestValidateGateRed(t *testing.T) {
 		t.Fatalf("status: %s", got.Status)
 	}
 }
+
+// TestBundleForPerStagePrecedence pins the resolution order: config stage
+// entry (filled from the config default) < workflow base bundle < workflow
+// per-stage override.
+func TestBundleForPerStagePrecedence(t *testing.T) {
+	m := New(nil, nil, nil, nil, Config{
+		StageBundles: map[domain.WorkflowStage]domain.Bundle{
+			domain.StagePlan: {Model: "cfg-plan", Effort: "low"},
+		},
+		DefaultBundle: domain.Bundle{Model: "cfg-default", Effort: "medium"},
+	})
+	wf := domain.Workflow{
+		Bundle: domain.Bundle{Model: "wf-base"},
+		StageBundles: map[domain.WorkflowStage]domain.Bundle{
+			domain.StageResearch: {Model: "wf-research"},
+			domain.StagePlan:     {Effort: "max"},
+		},
+	}
+	// research: the per-stage model wins; effort has no override anywhere on
+	// the workflow, so the config default holds.
+	if b := m.bundleFor(wf, domain.StageResearch); b.Model != "wf-research" || b.Effort != "medium" {
+		t.Fatalf("research: %+v", b)
+	}
+	// plan: the workflow base model beats the config stage entry; the
+	// per-stage effort beats everything.
+	if b := m.bundleFor(wf, domain.StagePlan); b.Model != "wf-base" || b.Effort != "max" {
+		t.Fatalf("plan: %+v", b)
+	}
+	// implement: untouched by per-stage overrides — base model, default effort.
+	if b := m.bundleFor(wf, domain.StageImplement); b.Model != "wf-base" || b.Effort != "medium" {
+		t.Fatalf("implement: %+v", b)
+	}
+
+	// Without a workflow base, a stage not overridden per-stage resolves to
+	// its config entry.
+	wf.Bundle = domain.Bundle{}
+	if b := m.bundleFor(wf, domain.StagePlan); b.Model != "cfg-plan" || b.Effort != "max" {
+		t.Fatalf("plan sans base: %+v", b)
+	}
+}

@@ -156,20 +156,29 @@ func (s *Server) postWorkflow(w http.ResponseWriter, r *http.Request) {
 		AutoApprove *bool         `json:"autoApprove"`
 		FromTaskID  string        `json:"fromTaskId"`
 		Bundle      domain.Bundle `json:"bundle"`
-		Attachments []string      `json:"attachments"`
+		// StageBundles overrides model/effort per stage (beats bundle for
+		// that stage), keyed by the fixed stage names.
+		StageBundles map[string]domain.Bundle `json:"stageBundles"`
+		Attachments  []string                 `json:"attachments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
+	stageBundles, err := parseStageBundles(body.StageBundles)
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
 	autoApprove := body.AutoApprove == nil || *body.AutoApprove
 	req := workflow.CreateReq{
-		Title:       strings.TrimSpace(body.Title),
-		Brief:       body.Text,
-		StartStage:  domain.WorkflowStage(body.StartStage),
-		AutoApprove: autoApprove,
-		Bundle:      body.Bundle,
-		Attachments: body.Attachments,
+		Title:        strings.TrimSpace(body.Title),
+		Brief:        body.Text,
+		StartStage:   domain.WorkflowStage(body.StartStage),
+		AutoApprove:  autoApprove,
+		Bundle:       body.Bundle,
+		StageBundles: stageBundles,
+		Attachments:  body.Attachments,
 	}
 	// Promoting an idea: the task's title/detail seed the workflow, and the
 	// task row is closed with a pointer at it.
@@ -339,13 +348,51 @@ func (s *Server) putWorkflowArtifact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, art)
 }
 
+// parseStageBundles validates a per-stage override map at the API boundary:
+// stage names must be the fixed ladder's, efforts must be recognized. Zero
+// entries are dropped; an empty result is nil (no overrides).
+func parseStageBundles(in map[string]domain.Bundle) (map[domain.WorkflowStage]domain.Bundle, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := map[domain.WorkflowStage]domain.Bundle{}
+	for stage, b := range in {
+		if !domain.ValidWorkflowStage(stage) {
+			return nil, fmt.Errorf("stageBundles.%s: unknown stage (stages: refine, research, design, plan, implement, validate)", stage)
+		}
+		if !domain.ValidEffort(b.Effort) {
+			return nil, fmt.Errorf("stageBundles.%s: effort %q is not one of %v", stage, b.Effort, domain.Efforts)
+		}
+		if !b.IsZero() {
+			out[domain.WorkflowStage(stage)] = b
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func (s *Server) putWorkflowBundle(w http.ResponseWriter, r *http.Request) {
-	var body domain.Bundle
+	var body struct {
+		Agent  string `json:"agent"`
+		Model  string `json:"model"`
+		Effort string `json:"effort"`
+		// Stages: per-stage model/effort overrides, beating the base fields
+		// for that stage. Absent/empty = base only.
+		Stages map[string]domain.Bundle `json:"stages"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
-	if err := s.App.Store.SetWorkflowBundle(r.Context(), r.PathValue("id"), body); err != nil {
+	stages, err := parseStageBundles(body.Stages)
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	base := domain.Bundle{Agent: body.Agent, Model: body.Model, Effort: body.Effort}
+	if err := s.App.Store.SetWorkflowBundle(r.Context(), r.PathValue("id"), base, stages); err != nil {
 		wfErr(w, err)
 		return
 	}

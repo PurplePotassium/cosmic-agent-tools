@@ -3,8 +3,8 @@ import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import htm from "htm";
 import { api, subscribe, attachmentURL } from "/api.js";
 import {
-  WorkflowIntake, WorkflowList, WorkflowDetail, WfBundlePicker, ValidationCard,
-  AWAITING, CLAUDE_MODELS, WF_EFFORTS, ago,
+  WorkflowIntake, WorkflowList, WorkflowDetail, WfBundlePicker, WfStageMatrix,
+  ValidationCard, AWAITING, CLAUDE_MODELS, WF_EFFORTS, STAGES, ago,
 } from "/workflow.js";
 
 const html = htm.bind(h);
@@ -270,16 +270,21 @@ function KeyerSettings({ art, onApply, onVerify }) {
 function ToolsSettings({ env, extras, stageCfg, wfDefaults, onWfDefaults, loading, onRefresh }) {
   return html`<div>
     <h3>Workflow defaults</h3>
-    <div class="note">The model/effort every new workflow starts with. This is the same
-      setting as the New workflow form's advanced row — changing either place updates both,
-      and the choice is saved in this browser. The blank model option shows what the
-      per-stage config default actually resolves to.</div>
+    <div class="note">The model/effort every new workflow starts with — an all-stages
+      base pair, plus per-flow rows that override it for exactly that stage (research
+      can run one model, plan another). This is the same setting as the New workflow
+      form's advanced row — changing either place updates both, and the choice is saved
+      in this browser. Blank options show what that pick actually inherits.</div>
     <div class="bundle-editor">
       <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg}
         model=${(wfDefaults && wfDefaults.model) || ""} effort=${(wfDefaults && wfDefaults.effort) || ""}
         onModel=${(m) => onWfDefaults({ ...wfDefaults, model: m })}
         onEffort=${(ef) => onWfDefaults({ ...wfDefaults, effort: ef })} />
     </div>
+    <${WfStageMatrix} extras=${extras} stageCfg=${stageCfg}
+      baseModel=${(wfDefaults && wfDefaults.model) || ""} baseEffort=${(wfDefaults && wfDefaults.effort) || ""}
+      stages=${(wfDefaults && wfDefaults.stages) || {}}
+      onChange=${(stages) => onWfDefaults({ ...wfDefaults, stages })} />
 
     <h3 style="margin-top:18px">Installed tools
       <button style="margin-left:auto" disabled=${loading} onClick=${onRefresh}
@@ -819,16 +824,26 @@ const ALERT_TYPES = {
 
 // loadWfDefaults reads the persisted New Workflow model/effort defaults,
 // dropping anything malformed (a hand-edited key or a retired effort name
-// must not ride into a create request).
+// must not ride into a create request). stages holds the per-stage
+// overrides, keyed by the fixed stage names.
 function loadWfDefaults() {
   try {
     const d = JSON.parse(localStorage.getItem("hal.wfDefaults")) || {};
+    const stages = {};
+    for (const s of STAGES) {
+      const e = (d.stages || {})[s];
+      if (!e) continue;
+      const model = typeof e.model === "string" ? e.model : "";
+      const effort = WF_EFFORTS.includes(e.effort) ? e.effort : "";
+      if (model || effort) stages[s] = { model, effort };
+    }
     return {
       model: typeof d.model === "string" ? d.model : "",
       effort: WF_EFFORTS.includes(d.effort) ? d.effort : "",
+      stages,
     };
   } catch {
-    return { model: "", effort: "" };
+    return { model: "", effort: "", stages: {} };
   }
 }
 

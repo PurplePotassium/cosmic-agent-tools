@@ -4,6 +4,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -48,10 +49,11 @@ func (s *Store) CreateWorkflow(ctx context.Context, wf domain.Workflow) error {
 	now := toMillis(wf.Created)
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO workflows(id, title, brief, stage, status, error, base_sha,
-			kind, auto_approve, bundle_agent, bundle_model, bundle_effort, created, updated)
-		VALUES(?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?)`,
+			kind, auto_approve, bundle_agent, bundle_model, bundle_effort, stage_bundles, created, updated)
+		VALUES(?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?)`,
 		wf.ID, wf.Title, wf.Brief, string(wf.Stage), string(wf.Status), wf.Kind, wf.AutoApprove,
-		wf.Bundle.Agent, wf.Bundle.Model, wf.Bundle.Effort, now, now); err != nil {
+		wf.Bundle.Agent, wf.Bundle.Model, wf.Bundle.Effort, marshalStageBundles(wf.StageBundles),
+		now, now); err != nil {
 		return err
 	}
 	for _, stage := range domain.StageOrder {
@@ -73,11 +75,11 @@ func (s *Store) CreateWorkflow(ctx context.Context, wf domain.Workflow) error {
 
 func scanWorkflow(row interface{ Scan(...any) error }) (domain.Workflow, error) {
 	var wf domain.Workflow
-	var stage, status string
+	var stage, status, stageBundles string
 	var created, updated, validated int64
 	err := row.Scan(&wf.ID, &wf.Title, &wf.Brief, &stage, &status, &wf.Error,
 		&wf.BaseSHA, &wf.Kind, &wf.AutoApprove, &validated, &wf.ValidatedBy,
-		&wf.Bundle.Agent, &wf.Bundle.Model, &wf.Bundle.Effort,
+		&wf.Bundle.Agent, &wf.Bundle.Model, &wf.Bundle.Effort, &stageBundles,
 		&created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return wf, ErrNotFound
@@ -87,14 +89,42 @@ func scanWorkflow(row interface{ Scan(...any) error }) (domain.Workflow, error) 
 	}
 	wf.Stage = domain.WorkflowStage(stage)
 	wf.Status = domain.WorkflowStatus(status)
+	wf.StageBundles = unmarshalStageBundles(stageBundles)
 	wf.Validated = fromMillis(validated)
 	wf.Created = fromMillis(created)
 	wf.Updated = fromMillis(updated)
 	return wf, nil
 }
 
+// marshalStageBundles serializes the per-stage override map for its TEXT
+// column; empty/zero entries are dropped so "{}" stays the no-override shape.
+func marshalStageBundles(m map[domain.WorkflowStage]domain.Bundle) string {
+	clean := map[domain.WorkflowStage]domain.Bundle{}
+	for stage, b := range m {
+		if !b.IsZero() {
+			clean[stage] = b
+		}
+	}
+	out, err := json.Marshal(clean)
+	if err != nil {
+		return "{}"
+	}
+	return string(out)
+}
+
+func unmarshalStageBundles(s string) map[domain.WorkflowStage]domain.Bundle {
+	if s == "" || s == "{}" {
+		return nil
+	}
+	var m map[domain.WorkflowStage]domain.Bundle
+	if err := json.Unmarshal([]byte(s), &m); err != nil || len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
 const workflowCols = `id, title, brief, stage, status, error, base_sha, kind, auto_approve,
-	validated, validated_by, bundle_agent, bundle_model, bundle_effort, created, updated`
+	validated, validated_by, bundle_agent, bundle_model, bundle_effort, stage_bundles, created, updated`
 
 // GetWorkflow reads one workflow.
 func (s *Store) GetWorkflow(ctx context.Context, id string) (domain.Workflow, error) {
@@ -164,11 +194,12 @@ func (s *Store) SetWorkflowBaseSHA(ctx context.Context, id, sha string) error {
 	return oneRow(res, err)
 }
 
-// SetWorkflowBundle updates the per-workflow model override.
-func (s *Store) SetWorkflowBundle(ctx context.Context, id string, b domain.Bundle) error {
+// SetWorkflowBundle updates the per-workflow model override: the all-stages
+// base bundle plus the per-stage override map.
+func (s *Store) SetWorkflowBundle(ctx context.Context, id string, b domain.Bundle, stages map[domain.WorkflowStage]domain.Bundle) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE workflows SET bundle_agent = ?, bundle_model = ?, bundle_effort = ?, updated = ? WHERE id = ?`,
-		b.Agent, b.Model, b.Effort, toMillis(time.Now()), id)
+		`UPDATE workflows SET bundle_agent = ?, bundle_model = ?, bundle_effort = ?, stage_bundles = ?, updated = ? WHERE id = ?`,
+		b.Agent, b.Model, b.Effort, marshalStageBundles(stages), toMillis(time.Now()), id)
 	return oneRow(res, err)
 }
 

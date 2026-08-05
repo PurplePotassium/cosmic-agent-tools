@@ -97,6 +97,56 @@ export function stageDefaultInfo(stageCfg) {
   };
 }
 
+// cleanStageBundles keeps only per-stage entries with something actually set
+// — the shape sent to the server and counted for the intake chip.
+export function cleanStageBundles(stages) {
+  const out = {};
+  for (const [s, b] of Object.entries(stages || {})) {
+    const model = (b && b.model) || "";
+    const effort = (b && b.effort) || "";
+    if (model || effort) out[s] = { model, effort };
+  }
+  return out;
+}
+
+// WfStageMatrix renders one model/effort row per stage — the per-flow
+// overrides that beat the base pair for exactly that stage. Blank options
+// name what the stage inherits (the base pick, else the [workflow.stages]
+// config default). ladder defaults to the task stages; a validation run's
+// popover passes ["validate"].
+export function WfStageMatrix({ extras, stageCfg, ladder, baseModel, baseEffort, stages, onChange }) {
+  const models = claudeModels(extras);
+  const set = (stage, patch) => {
+    const cur = (stages || {})[stage] || { model: "", effort: "" };
+    onChange({ ...(stages || {}), [stage]: { ...cur, ...patch } });
+  };
+  return html`<div class="stage-matrix">
+    ${(ladder || STAGES).map((s) => {
+      const b = (stages || {})[s] || {};
+      const cfg = (stageCfg || {})[s] || {};
+      const inheritModel = baseModel || cfg.Model || DEFAULT_CLAUDE_MODEL;
+      const inheritEffort = baseEffort || cfg.Effort || "";
+      const offList = b.model && !models.includes(b.model);
+      return html`<div class="stage-matrix-row" key=${s}>
+        <span class="stage-matrix-name">${s}</span>
+        <select class="model" value=${b.model || ""}
+          title=${`model for the ${s} stage ('' = inherit ${inheritModel})`}
+          onChange=${(e) => set(s, { model: e.target.value })}>
+          <option value="">model (${shortModel(inheritModel)})</option>
+          ${offList && html`<option value=${b.model}>${b.model}</option>`}
+          ${models.map((m) => html`<option value=${m}>${m}</option>`)}
+        </select>
+        <select value=${b.effort || ""}
+          title=${`effort for the ${s} stage ('' = inherit ${inheritEffort || "default"})`}
+          onChange=${(e) => set(s, { effort: e.target.value })}>
+          <option value="">effort (${inheritEffort || "default"})</option>
+          ${WF_EFFORTS.filter(Boolean).map((ef) => html`<option value=${ef}>${ef}</option>`)}
+        </select>
+      </div>`;
+    })}
+  </div>`;
+}
+
 // WfBundlePicker is the claude model/effort pair every workflow surface
 // shares (intake advanced row, per-workflow override popover, settings).
 export function WfBundlePicker({ extras, stageCfg, model, effort, onModel, onEffort }) {
@@ -153,6 +203,8 @@ export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreat
   const [busy, setBusy] = useState(false);
   const model = (defaults && defaults.model) || "";
   const effort = (defaults && defaults.effort) || "";
+  const stageBundles = cleanStageBundles(defaults && defaults.stages);
+  const overrideCount = Object.keys(stageBundles).length;
 
   const start = async () => {
     if (!text.trim() || busy) return;
@@ -161,6 +213,7 @@ export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreat
       const body = { text: text.trim(), autoApprove };
       if (startStage) body.startStage = startStage;
       if (model || effort) body.bundle = { agent: "claude", model: model || undefined, effort: effort || undefined };
+      if (overrideCount > 0) body.stageBundles = stageBundles;
       const wf = await api.createWorkflow(body);
       setText(""); setStartStage(""); setAutoApprove(true);
       onCreated && onCreated(wf);
@@ -184,19 +237,24 @@ export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreat
           onChange=${(e) => setAutoApprove(e.target.checked)} />
         auto-approve ready stages
       </label>
-      ${!adv && (model || effort) && html`<span class="chip"
+      ${!adv && (model || effort || overrideCount > 0) && html`<span class="chip"
         title="saved model/effort defaults — every new workflow uses them (edit here or in Settings → tools & models)">
-        ${[shortModel(model), effort].filter(Boolean).join(" · ")}</span>`}
+        ${[shortModel(model), effort, overrideCount > 0 ? `${overrideCount} per-stage` : ""].filter(Boolean).join(" · ")}</span>`}
     </div>
-    ${adv && html`<div class="bundle-editor">
-      <select value=${startStage} onChange=${(e) => setStartStage(e.target.value)}
-        title="Start at a later stage: every earlier stage is stub-skipped (its artifact records the skip and downstream stages treat its open questions as implementer's choice).">
-        <option value="">start at refine</option>
-        ${STAGES.map((s) => html`<option value=${s}>start at ${s}</option>`)}
-      </select>
-      <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg} model=${model} effort=${effort}
-        onModel=${(m) => onDefaults && onDefaults({ model: m, effort })}
-        onEffort=${(ef) => onDefaults && onDefaults({ model, effort: ef })} />
+    ${adv && html`<div>
+      <div class="bundle-editor">
+        <select value=${startStage} onChange=${(e) => setStartStage(e.target.value)}
+          title="Start at a later stage: every earlier stage is stub-skipped (its artifact records the skip and downstream stages treat its open questions as implementer's choice).">
+          <option value="">start at refine</option>
+          ${STAGES.map((s) => html`<option value=${s}>start at ${s}</option>`)}
+        </select>
+        <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg} model=${model} effort=${effort}
+          onModel=${(m) => onDefaults && onDefaults({ ...defaults, model: m })}
+          onEffort=${(ef) => onDefaults && onDefaults({ ...defaults, effort: ef })} />
+      </div>
+      <${WfStageMatrix} extras=${extras} stageCfg=${stageCfg}
+        baseModel=${model} baseEffort=${effort} stages=${(defaults && defaults.stages) || {}}
+        onChange=${(stages) => onDefaults && onDefaults({ ...defaults, stages })} />
     </div>`}
   </div>`;
 }
@@ -490,25 +548,35 @@ function ArtifactPane({ id, wf, stages, refreshTick, onApprove, onReject, onSkip
 }
 
 // BundlePopover: the per-workflow model/effort override (agent is always the
-// interactive claude driver).
+// interactive claude driver) — the all-stages base pair plus per-stage rows
+// that beat it for their stage.
 function BundlePopover({ wf, extras, stageCfg, onClose }) {
   const b = wf.Bundle || {};
   const [model, setModel] = useState(b.model || "");
   const [effort, setEffort] = useState(b.effort || "");
+  const [stages, setStages] = useState(() => ({ ...(wf.StageBundles || {}) }));
   const apply = async () => {
     try {
-      const body = model || effort ? { agent: "claude", model: model || undefined, effort: effort || undefined } : {};
+      const clean = cleanStageBundles(stages);
+      const any = model || effort || Object.keys(clean).length > 0;
+      const body = any
+        ? { agent: "claude", model: model || undefined, effort: effort || undefined, stages: clean }
+        : {};
       await api.setWorkflowBundle(wf.ID, body);
       onClose(true);
     } catch (e) {
       alert(e.message);
     }
   };
-  return html`<div class="bundle-editor">
-    <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg} model=${model} effort=${effort}
-      onModel=${setModel} onEffort=${setEffort} />
-    <button class="primary" onClick=${apply}>apply</button>
-    <button onClick=${() => onClose(false)}>✕</button>
+  return html`<div>
+    <div class="bundle-editor">
+      <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg} model=${model} effort=${effort}
+        onModel=${setModel} onEffort=${setEffort} />
+      <button class="primary" onClick=${apply}>apply</button>
+      <button onClick=${() => onClose(false)}>✕</button>
+    </div>
+    <${WfStageMatrix} extras=${extras} stageCfg=${stageCfg} ladder=${stagesFor(wf)}
+      baseModel=${model} baseEffort=${effort} stages=${stages} onChange=${setStages} />
   </div>`;
 }
 

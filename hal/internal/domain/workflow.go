@@ -142,9 +142,13 @@ type Workflow struct {
 	ValidatedBy string
 	// Bundle is the per-workflow model/effort override ("" fields = stage
 	// defaults). Agent is always the interactive driver.
-	Bundle  Bundle
-	Created time.Time
-	Updated time.Time
+	Bundle Bundle
+	// StageBundles overrides model/effort for individual stages, beating
+	// Bundle for that stage (which in turn beats the config's per-stage
+	// defaults). Nil/absent entries mean "no override for that stage".
+	StageBundles map[WorkflowStage]Bundle
+	Created      time.Time
+	Updated      time.Time
 }
 
 // WorkflowStageState is one stage's per-workflow record.

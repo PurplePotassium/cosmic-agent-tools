@@ -266,3 +266,60 @@ func TestPruneWorkflows(t *testing.T) {
 		t.Fatalf("active messages must be untouched: %d", len(msgs))
 	}
 }
+
+// TestWorkflowStageBundlesRoundTrip proves the per-stage model/effort
+// override map survives create → get and SetWorkflowBundle, and that zero
+// entries never persist.
+func TestWorkflowStageBundlesRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	wf := domain.Workflow{
+		ID:     NewWorkflowID("per stage", time.Now()),
+		Title:  "per stage",
+		Stage:  domain.StageRefine,
+		Status: domain.WorkflowAwaitingUser,
+		Bundle: domain.Bundle{Agent: "claude", Model: "claude-fable-5"},
+		StageBundles: map[domain.WorkflowStage]domain.Bundle{
+			domain.StageResearch: {Model: "claude-haiku-4-5-20251001", Effort: "low"},
+			domain.StagePlan:     {Effort: "max"},
+			domain.StageDesign:   {}, // zero — must be dropped
+		},
+		Created: time.Now(),
+	}
+	if err := s.CreateWorkflow(ctx, wf); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetWorkflow(ctx, wf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.StageBundles) != 2 {
+		t.Fatalf("stage bundles: %+v", got.StageBundles)
+	}
+	if b := got.StageBundles[domain.StageResearch]; b.Model != "claude-haiku-4-5-20251001" || b.Effort != "low" {
+		t.Fatalf("research bundle: %+v", b)
+	}
+	if b := got.StageBundles[domain.StagePlan]; b.Effort != "max" {
+		t.Fatalf("plan bundle: %+v", b)
+	}
+
+	// SetWorkflowBundle replaces both the base and the per-stage map.
+	if err := s.SetWorkflowBundle(ctx, wf.ID, domain.Bundle{Model: "claude-sonnet-5"},
+		map[domain.WorkflowStage]domain.Bundle{domain.StageImplement: {Model: "claude-opus-4-8"}}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetWorkflow(ctx, wf.ID)
+	if got.Bundle.Model != "claude-sonnet-5" || len(got.StageBundles) != 1 ||
+		got.StageBundles[domain.StageImplement].Model != "claude-opus-4-8" {
+		t.Fatalf("after set: %+v", got)
+	}
+
+	// An empty update clears every override.
+	if err := s.SetWorkflowBundle(ctx, wf.ID, domain.Bundle{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetWorkflow(ctx, wf.ID)
+	if !got.Bundle.IsZero() || got.StageBundles != nil {
+		t.Fatalf("after clear: %+v", got)
+	}
+}
