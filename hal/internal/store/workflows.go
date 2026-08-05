@@ -48,9 +48,9 @@ func (s *Store) CreateWorkflow(ctx context.Context, wf domain.Workflow) error {
 	now := toMillis(wf.Created)
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO workflows(id, title, brief, stage, status, error, base_sha,
-			skip_validate, bundle_agent, bundle_model, bundle_effort, created, updated)
-		VALUES(?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?)`,
-		wf.ID, wf.Title, wf.Brief, string(wf.Stage), string(wf.Status), wf.SkipValidate,
+			kind, auto_approve, bundle_agent, bundle_model, bundle_effort, created, updated)
+		VALUES(?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?)`,
+		wf.ID, wf.Title, wf.Brief, string(wf.Stage), string(wf.Status), wf.Kind, wf.AutoApprove,
 		wf.Bundle.Agent, wf.Bundle.Model, wf.Bundle.Effort, now, now); err != nil {
 		return err
 	}
@@ -74,9 +74,10 @@ func (s *Store) CreateWorkflow(ctx context.Context, wf domain.Workflow) error {
 func scanWorkflow(row interface{ Scan(...any) error }) (domain.Workflow, error) {
 	var wf domain.Workflow
 	var stage, status string
-	var created, updated int64
+	var created, updated, validated int64
 	err := row.Scan(&wf.ID, &wf.Title, &wf.Brief, &stage, &status, &wf.Error,
-		&wf.BaseSHA, &wf.SkipValidate, &wf.Bundle.Agent, &wf.Bundle.Model, &wf.Bundle.Effort,
+		&wf.BaseSHA, &wf.Kind, &wf.AutoApprove, &validated, &wf.ValidatedBy,
+		&wf.Bundle.Agent, &wf.Bundle.Model, &wf.Bundle.Effort,
 		&created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return wf, ErrNotFound
@@ -86,13 +87,14 @@ func scanWorkflow(row interface{ Scan(...any) error }) (domain.Workflow, error) 
 	}
 	wf.Stage = domain.WorkflowStage(stage)
 	wf.Status = domain.WorkflowStatus(status)
+	wf.Validated = fromMillis(validated)
 	wf.Created = fromMillis(created)
 	wf.Updated = fromMillis(updated)
 	return wf, nil
 }
 
-const workflowCols = `id, title, brief, stage, status, error, base_sha, skip_validate,
-	bundle_agent, bundle_model, bundle_effort, created, updated`
+const workflowCols = `id, title, brief, stage, status, error, base_sha, kind, auto_approve,
+	validated, validated_by, bundle_agent, bundle_model, bundle_effort, created, updated`
 
 // GetWorkflow reads one workflow.
 func (s *Store) GetWorkflow(ctx context.Context, id string) (domain.Workflow, error) {
@@ -167,6 +169,102 @@ func (s *Store) SetWorkflowBundle(ctx context.Context, id string, b domain.Bundl
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE workflows SET bundle_agent = ?, bundle_model = ?, bundle_effort = ?, updated = ? WHERE id = ?`,
 		b.Agent, b.Model, b.Effort, toMillis(time.Now()), id)
+	return oneRow(res, err)
+}
+
+// ---- validation runs ----
+
+// ListValidationPending returns the task workflows a validation run must
+// cover: completed, implement approved (not skipped — a skipped implement
+// changed nothing), and not yet validated. Oldest first, so a run reads
+// changelogs in landing order.
+func (s *Store) ListValidationPending(ctx context.Context) ([]domain.Workflow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+workflowCols+` FROM workflows w
+		WHERE w.kind = '' AND w.status = 'completed' AND w.validated = 0
+		AND EXISTS (SELECT 1 FROM wf_stages s WHERE s.workflow_id = w.id
+			AND s.stage = 'implement' AND s.status = 'approved')
+		ORDER BY w.created, w.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Workflow
+	for rows.Next() {
+		wf, err := scanWorkflow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, wf)
+	}
+	return out, rows.Err()
+}
+
+// ActiveValidationRun returns the live validation run, if any (ErrNotFound
+// otherwise) — at most one runs at a time.
+func (s *Store) ActiveValidationRun(ctx context.Context) (domain.Workflow, error) {
+	return scanWorkflow(s.db.QueryRowContext(ctx, `
+		SELECT `+workflowCols+` FROM workflows
+		WHERE kind = ? AND status NOT IN ('completed', 'abandoned')
+		ORDER BY created DESC LIMIT 1`, domain.KindValidation))
+}
+
+// CountTurnRunning counts workflows with an agent turn in flight — the
+// "no ongoing stages" input to the auto-validate trigger.
+func (s *Store) CountTurnRunning(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM workflows WHERE status = ?`,
+		string(domain.WorkflowTurnRunning)).Scan(&n)
+	return n, err
+}
+
+// SetValidationTargets records which task workflows a validation run covers.
+func (s *Store) SetValidationTargets(ctx context.Context, runID string, targetIDs []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM wf_validation_targets WHERE run_id = ?`, runID); err != nil {
+		return err
+	}
+	for _, id := range targetIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO wf_validation_targets(run_id, target_id) VALUES(?, ?)`, runID, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ValidationTargets returns the target workflow ids a run covers, in the
+// order they were recorded.
+func (s *Store) ValidationTargets(ctx context.Context, runID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT target_id FROM wf_validation_targets WHERE run_id = ? ORDER BY target_id`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// MarkValidated stamps a task workflow as covered by a validation run.
+func (s *Store) MarkValidated(ctx context.Context, id, runID string) error {
+	now := toMillis(time.Now())
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE workflows SET validated = ?, validated_by = ?, updated = ? WHERE id = ?`,
+		now, runID, now, id)
 	return oneRow(res, err)
 }
 

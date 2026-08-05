@@ -160,6 +160,9 @@ func TestWorkflowLifecycleOverHTTP(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &wf); err != nil {
 		t.Fatal(err)
 	}
+	if !wf.AutoApprove {
+		t.Fatal("omitted autoApprove must default to true")
+	}
 	f.waitWorkflowStatus(t, wf.ID, domain.WorkflowTurnRunning)
 
 	// A chat message during a turn without interrupt is a 409.
@@ -256,41 +259,88 @@ func TestWorkflowLifecycleOverHTTP(t *testing.T) {
 	f.waitWorkflowStatus(t, wf.ID, domain.WorkflowAbandoned)
 }
 
-// The intake validate checkbox rides the create body: omitted means the
-// default (validate runs); only an explicit false turns it off.
-func TestCreateWorkflowValidateFlag(t *testing.T) {
+func TestWorkflowAutoApproveCanBeDisabledOverHTTP(t *testing.T) {
+	f := newWorkflowTestServer(t)
+	close(f.runner.block)
+	rec := f.do(t, "POST", "/api/v1/workflows",
+		`{"title":"manual review","text":"check every stage","autoApprove":false}`)
+	if rec.Code != 200 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var wf domain.Workflow
+	if err := json.Unmarshal(rec.Body.Bytes(), &wf); err != nil {
+		t.Fatal(err)
+	}
+	if wf.AutoApprove {
+		t.Fatal("explicit autoApprove=false was not honored")
+	}
+	f.waitWorkflowStatus(t, wf.ID, domain.WorkflowAwaitingUser)
+	stored, err := f.a.Store.GetWorkflow(context.Background(), wf.ID)
+	if err != nil || stored.AutoApprove {
+		t.Fatalf("stored auto-approval = %v (%v), want false", stored.AutoApprove, err)
+	}
+}
+
+// The validation surface: the auto toggle persists, the trigger opens a
+// (single) validation run, and the view model reports it.
+func TestValidationEndpoints(t *testing.T) {
 	f := newWorkflowTestServer(t)
 	close(f.runner.block) // opening turns settle instantly
 
-	for _, tc := range []struct {
-		name string
-		body string
-		want bool
-	}{
-		{"omitted", `{"title":"a","text":"x"}`, false},
-		{"checked", `{"title":"b","text":"x","validate":true}`, false},
-		{"unchecked", `{"title":"c","text":"x","validate":false}`, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := f.do(t, "POST", "/api/v1/workflows", tc.body)
-			if rec.Code != 200 {
-				t.Fatalf("create: %d %s", rec.Code, rec.Body)
-			}
-			var wf domain.Workflow
-			if err := json.Unmarshal(rec.Body.Bytes(), &wf); err != nil {
-				t.Fatal(err)
-			}
-			if wf.SkipValidate != tc.want {
-				t.Fatalf("SkipValidate = %v, want %v", wf.SkipValidate, tc.want)
-			}
-			// And it survives the round trip through the store.
-			got, err := f.a.Store.GetWorkflow(context.Background(), wf.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.SkipValidate != tc.want {
-				t.Fatalf("persisted SkipValidate = %v, want %v", got.SkipValidate, tc.want)
-			}
-		})
+	// Default view: auto-validate on, nothing pending, no run.
+	rec := f.do(t, "GET", "/api/v1/validation", "")
+	if rec.Code != 200 {
+		t.Fatalf("get validation: %d %s", rec.Code, rec.Body)
+	}
+	var view struct {
+		AutoValidate bool              `json:"autoValidate"`
+		Pending      []domain.Workflow `json:"pending"`
+		Active       *domain.Workflow  `json:"active"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if !view.AutoValidate || len(view.Pending) != 0 || view.Active != nil {
+		t.Fatalf("default view: %+v", view)
+	}
+
+	// The toggle persists.
+	if rec = f.do(t, "PUT", "/api/v1/validation/auto", `{"on":false}`); rec.Code != 200 {
+		t.Fatalf("put auto: %d %s", rec.Code, rec.Body)
+	}
+	rec = f.do(t, "GET", "/api/v1/validation", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.AutoValidate {
+		t.Fatal("auto-validate must persist as off")
+	}
+
+	// Intake refuses a validate start stage (validation runs own it).
+	if rec = f.do(t, "POST", "/api/v1/workflows", `{"title":"v","text":"x","startStage":"validate"}`); rec.Code == 200 {
+		t.Fatalf("create at validate: %d, want an error", rec.Code)
+	}
+
+	// The trigger opens a run; a second trigger while it lives is a 409.
+	rec = f.do(t, "POST", "/api/v1/validation", "")
+	if rec.Code != 200 {
+		t.Fatalf("trigger: %d %s", rec.Code, rec.Body)
+	}
+	var run domain.Workflow
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Kind != domain.KindValidation || run.Stage != domain.StageValidate {
+		t.Fatalf("run: %+v", run)
+	}
+	if rec = f.do(t, "POST", "/api/v1/validation", ""); rec.Code != 409 {
+		t.Fatalf("second trigger: %d, want 409", rec.Code)
+	}
+	rec = f.do(t, "GET", "/api/v1/validation", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Active == nil || view.Active.ID != run.ID {
+		t.Fatalf("view must report the live run: %+v", view)
 	}
 }

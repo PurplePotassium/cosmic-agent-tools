@@ -84,6 +84,15 @@ export const api = {
   // Per-workflow model/effort override ({} clears back to stage defaults).
   setWorkflowBundle: (id, bundle) => req("PUT", `/api/v1/workflows/${id}/bundle`, bundle),
 
+  // ---- validation runs: the cross-workflow validate sweep ----
+  // View model: { autoValidate, pending: [workflow…], active?: workflow }.
+  validation: () => req("GET", "/api/v1/validation"),
+  // Trigger a run now (the Validate button); 409 while one is live.
+  startValidation: () => req("POST", "/api/v1/validation", {}),
+  // Persist the auto-validate-on-completion toggle (server-side, so the
+  // engine's auto-trigger sees it).
+  setAutoValidate: (on) => req("PUT", "/api/v1/validation/auto", { on }),
+
   runs: (pipeline) => req("GET", `/api/v1/runs${pipeline ? "?pipeline=" + pipeline : ""}`),
   runLog: (id) => req("GET", `/api/v1/runs/${id}/log`),
   // The self-evaluator: ask a read-only forensics agent WHY the hal did
@@ -143,7 +152,7 @@ export function subscribe(handlers) {
     "workflow.turn_started", "workflow.turn_finished", "workflow.message",
     "workflow.question", "workflow.ready", "workflow.blocked", "workflow.error",
     "workflow.approved", "workflow.rejected", "workflow.skipped", "workflow.abandoned",
-    "workflow.gate", "workflow.tree_violation", "workflow.commit",
+    "workflow.gate", "workflow.tree_violation", "workflow.commit", "workflow.validated",
     // workflow live stream (ephemeral, seq 0): coalesced assistant text +
     // one-line tool summaries for the active turn
     "workflow.delta", "workflow.tool",

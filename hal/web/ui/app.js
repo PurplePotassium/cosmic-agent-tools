@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import htm from "htm";
 import { api, subscribe, attachmentURL } from "/api.js";
 import {
-  WorkflowIntake, WorkflowList, WorkflowDetail, WfBundlePicker,
+  WorkflowIntake, WorkflowList, WorkflowDetail, WfBundlePicker, ValidationCard,
   AWAITING, CLAUDE_MODELS, WF_EFFORTS, ago,
 } from "/workflow.js";
 
@@ -23,7 +23,7 @@ const GOAL_EVAL_QUESTIONS = [
 // ---------- helpers ----------
 
 function eventTone(type) {
-  if (/approved|\.ready$|\.done$|generated|keyed|verified|normalized|commit$|\.created$/.test(type)) return "good";
+  if (/approved|validated|\.ready$|\.done$|generated|keyed|verified|normalized|commit$|\.created$/.test(type)) return "good";
   if (/failed|error|blocked|abandoned|missing|killed/.test(type)) return "bad";
   if (/skipped|rejected|violation|unknown|unverified|attempt/.test(type)) return "warn";
   return "";
@@ -48,6 +48,7 @@ function describeEvent(ev) {
     case "workflow.gate": return p.green ? "verify command green" : "verify command RED — approval gated";
     case "workflow.tree_violation": return `reverted out-of-scope changes: ${(p.paths || []).join(", ")}`.slice(0, 160);
     case "workflow.commit": return `implementation committed @ ${p.sha}`;
+    case "workflow.validated": return `validated by run ${p.run || ""} — artifacts archived to the recycle bin`;
     case "commit": return `${p.sha} ${p.subject}`;
     case "commit.failed": return `commit failed: ${p.error || ""}`.slice(0, 140);
     case "pass.started": return `art job started${p.title ? " — " + p.title : ""}`;
@@ -858,6 +859,9 @@ function App() {
   // art: the art-generation settings view (greenscreen keyers + verified agy
   // model) for the settings panel.
   const [art, setArt] = useState(null);
+  // validation: the validate card's view model — the auto toggle, pending
+  // implementations, and the live validation run (if any).
+  const [validation, setValidation] = useState(null);
   // extraModels: per-agent [agents.<agent>] extra_models from the config, so
   // the model dropdowns list the user's own additions next to the curated ids.
   const [extraModels, setExtraModels] = useState({});
@@ -894,14 +898,15 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [st, wfs, ts, inqs, artSt] = await Promise.all([
-        api.status(), api.workflows(), api.tasks(), api.inquiries(), api.art(),
+      const [st, wfs, ts, inqs, artSt, val] = await Promise.all([
+        api.status(), api.workflows(), api.tasks(), api.inquiries(), api.art(), api.validation(),
       ]);
       setStatus(st);
       setWorkflows(wfs || []);
       setTasks(ts || []);
       setInquiries(inqs || []);
       setArt(artSt || null);
+      setValidation(val || null);
     } catch { /* server briefly away */ }
   }, []);
 
@@ -1107,6 +1112,17 @@ function App() {
           <${WorkflowIntake} extras=${extraModels} stageCfg=${configView?.effective?.Workflow?.Stages}
             defaults=${wfDefaults} onDefaults=${setWfDefaults}
             onCreated=${async (wf) => { setSelected(wf.ID); await refresh(); }} />
+          <${ValidationCard} validation=${validation}
+            onValidate=${async () => {
+              try { const run = await api.startValidation(); setSelected(run.ID); } catch (e) { alert(e.message); }
+              await refresh();
+            }}
+            onToggleAuto=${async (on) => {
+              setValidation((v) => v ? { ...v, autoValidate: on } : v);
+              try { await api.setAutoValidate(on); } catch (e) { alert(e.message); }
+              await refresh();
+            }}
+            onSelect=${setSelected} />
           <${WorkflowList} workflows=${workflows} selected=${selected} onSelect=${setSelected} />
         </div>`}
         ${leftTab === "ideas" && html`<${IdeasPanel} tasks=${tasks}

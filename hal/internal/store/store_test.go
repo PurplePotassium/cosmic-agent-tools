@@ -208,10 +208,11 @@ func TestPassSessionID(t *testing.T) {
 	}
 }
 
-// TestMigrateAddsSkipValidateColumn proves a database written before the
-// intake validate checkbox opens cleanly, and that its workflows keep the
-// full ladder (skip_validate defaults to 0 = validate runs).
-func TestMigrateAddsSkipValidateColumn(t *testing.T) {
+// TestMigrateAddsValidationColumns proves a database written before the
+// validation-run era opens cleanly and its workflows scan with the grafted
+// kind/validated/validated_by columns at their defaults (a task workflow,
+// not yet validated).
+func TestMigrateAddsValidationColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	s, err := Open(path)
 	if err != nil {
@@ -244,8 +245,14 @@ func TestMigrateAddsSkipValidateColumn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan migrated workflow: %v", err)
 	}
-	if wf.SkipValidate {
-		t.Fatal("a pre-checkbox workflow must still run validate")
+	if wf.Kind != domain.KindTask {
+		t.Fatalf("a legacy workflow must scan as a task workflow, got kind %q", wf.Kind)
+	}
+	if !wf.Validated.IsZero() || wf.ValidatedBy != "" {
+		t.Fatal("a legacy workflow must scan as not yet validated")
+	}
+	if !wf.AutoApprove {
+		t.Fatal("a legacy workflow must inherit auto-approval's default-on behavior")
 	}
 }
 

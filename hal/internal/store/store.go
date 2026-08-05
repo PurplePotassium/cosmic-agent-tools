@@ -21,7 +21,6 @@ import (
 
 	"github.com/oklog/ulid/v2"
 	_ "modernc.org/sqlite"
-
 )
 
 // ErrNotFound is returned when a row does not exist.
@@ -152,7 +151,11 @@ var schema = []string{
 		status        TEXT NOT NULL,
 		error         TEXT NOT NULL DEFAULT '',
 		base_sha      TEXT NOT NULL DEFAULT '',
-		skip_validate INTEGER NOT NULL DEFAULT 0,
+		skip_validate INTEGER NOT NULL DEFAULT 0, -- retired (pre-validation-run era); kept for older binaries
+		kind          TEXT NOT NULL DEFAULT '',
+		auto_approve  INTEGER NOT NULL DEFAULT 1,
+		validated     INTEGER NOT NULL DEFAULT 0,
+		validated_by  TEXT NOT NULL DEFAULT '',
 		bundle_agent  TEXT NOT NULL DEFAULT '',
 		bundle_model  TEXT NOT NULL DEFAULT '',
 		bundle_effort TEXT NOT NULL DEFAULT '',
@@ -199,6 +202,11 @@ var schema = []string{
 		created     INTEGER NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_wf_messages ON wf_messages(workflow_id, id)`,
+	`CREATE TABLE IF NOT EXISTS wf_validation_targets (
+		run_id    TEXT NOT NULL,
+		target_id TEXT NOT NULL,
+		PRIMARY KEY (run_id, target_id)
+	)`,
 }
 
 func (s *Store) migrate() error {
@@ -228,9 +236,25 @@ func (s *Store) migrate() error {
 	if err := s.ensureColumn("passes", "personality", `TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
-	// Default 0 = run validate: workflows created before the intake
-	// checkbox existed keep the full six-stage ladder.
+	// Retired (the validate stage left the per-workflow ladder) but still
+	// grafted on so a briefly-downgraded binary keeps working.
 	if err := s.ensureColumn("workflows", "skip_validate", `INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	// Validation-run era: workflow kind ('' task | 'validation' run) and the
+	// per-task-workflow validated stamp a run's approval writes.
+	if err := s.ensureColumn("workflows", "kind", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	// Auto-approval is opt-out. Existing workflows inherit the new default,
+	// while new rows persist the intake checkbox explicitly.
+	if err := s.ensureColumn("workflows", "auto_approve", `INTEGER NOT NULL DEFAULT 1`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("workflows", "validated", `INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("workflows", "validated_by", `TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	// DO UPDATE, not DO NOTHING: the stored version must track the binary

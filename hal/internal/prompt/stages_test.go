@@ -53,11 +53,14 @@ func TestRefineIsConversationOnly(t *testing.T) {
 	}
 }
 
-func TestOnlyImplementHasFullAccess(t *testing.T) {
+// Implement and validate (the fixer sweep) have full access; every earlier
+// stage stays read-only by tool policy.
+func TestFullAccessStages(t *testing.T) {
 	for _, stage := range domain.StageOrder {
 		spec, _ := StageSpecFor(stage)
-		if want := stage == domain.StageImplement; spec.FullAccess != want {
-			t.Errorf("%s FullAccess = %v", stage, spec.FullAccess)
+		want := stage == domain.StageImplement || stage == domain.StageValidate
+		if spec.FullAccess != want {
+			t.Errorf("%s FullAccess = %v, want %v", stage, spec.FullAccess, want)
 		}
 	}
 }
@@ -69,6 +72,8 @@ func TestWorkflowContractLoadBearingLines(t *testing.T) {
 		"status file",
 		"Never run `git commit`",
 		"plain text in your reply",
+		"Do not create branches",
+		"low coordination overhead",
 	} {
 		if !strings.Contains(c, needle) {
 			t.Errorf("contract missing %q", needle)
@@ -87,7 +92,7 @@ func TestStageBodiesKeepPortedInvariants(t *testing.T) {
 		domain.StageResearch: {
 			"Document what IS",
 			"without recommendations or critique",
-			"Wait for every sub-agent",
+			"Research directly by default",
 			"codebase-locator",
 		},
 		domain.StageDesign: {
@@ -111,9 +116,11 @@ func TestStageBodiesKeepPortedInvariants(t *testing.T) {
 		},
 		domain.StageValidate: {
 			"Verdict: PASS | ISSUES FOUND",
-			"a claim, not proof",
-			"Not in the Changelog",
+			"claims, not proof",
+			"Not in the changelog",
 			"Hal-Workflow",
+			"EMPOWERED TO FIX",
+			"Issues Requiring a Decision",
 		},
 	}
 	for stage, needles := range cases {
@@ -163,11 +170,19 @@ func TestStageMechanicsSingleInput(t *testing.T) {
 		t.Errorf("implement mechanics missing plan line:\n%s", got)
 	}
 
+	// A validation run: no single input artifact — the target list is the
+	// work queue, each entry carrying its changelog and diff range.
 	val := base
 	val.Stage = domain.StageValidate
-	val.Input = StageArtifactRef{Stage: domain.StageImplement, Path: `C:\repo\.hal\workflows\wf-1\05-implementation.md`}
-	if got := StageMechanics(val); !strings.Contains(got, "YOUR INPUT — THE CHANGELOG") {
-		t.Errorf("validate mechanics missing changelog line:\n%s", got)
+	val.Targets = []ValidationTarget{
+		{ID: "wf-1", Title: "t", ChangelogAbs: `C:\repo\.hal\workflows\wf-1\05-implementation.md`, DiffRange: "abc..HEAD"},
+		{ID: "wf-2", Title: "u", ChangelogAbs: `C:\repo\.hal\workflows\wf-2\05-implementation.md`},
+	}
+	gotVal := StageMechanics(val)
+	if !strings.Contains(gotVal, "THE PENDING IMPLEMENTATIONS") ||
+		!strings.Contains(gotVal, `C:\repo\.hal\workflows\wf-2\05-implementation.md`) ||
+		!strings.Contains(gotVal, "abc..HEAD") {
+		t.Errorf("validation mechanics missing target list:\n%s", gotVal)
 	}
 	// Skip fallback: implement whose plan was skipped gets the generic label,
 	// not a wrong "THE PLAN" pointing at a design artifact.

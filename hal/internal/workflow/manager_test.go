@@ -223,10 +223,102 @@ func asking(note string) *domain.WorkflowStatusFile {
 	return &domain.WorkflowStatusFile{Phase: domain.PhaseAsking, Note: note}
 }
 
-// The full six-stage happy path: refine asks then readies; every later stage
-// readies straight away; six approvals land the workflow completed with the
-// artifacts committed.
-func TestSixStageHappyPath(t *testing.T) {
+// With auto-approval enabled, every ready stage takes the ordinary approval
+// path (including its commit) and immediately opens the next stage.
+func TestAutoApproveReadyStages(t *testing.T) {
+	art := "---\nstub: true\n---\ncontent"
+	f := newFixture(t, []scriptedTurn{
+		{state: turns.TurnDone, status: ready("01"), artifact: art},
+		{state: turns.TurnDone, status: ready("02"), artifact: art},
+		{state: turns.TurnDone, status: ready("03"), artifact: art},
+		{state: turns.TurnDone, status: ready("04"), artifact: art},
+		{state: turns.TurnDone, status: ready("05"), artifact: art},
+	})
+	ctx := context.Background()
+	if err := f.m.SetAutoValidate(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := f.m.Create(ctx, CreateReq{
+		Title: "automatic ladder", Brief: "ship it", AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.waitStatus(t, wf.ID, domain.WorkflowCompleted)
+	f.waitTurnCount(t, len(domain.TaskStageOrder))
+
+	stages, err := f.st.WorkflowStages(ctx, wf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range stages {
+		if st.Stage == domain.StageValidate {
+			continue
+		}
+		if st.Status != domain.StageApproved || !strings.Contains(st.DecisionNote, "Automatically approved") {
+			t.Fatalf("stage %s was not automatically approved: %+v", st.Stage, st)
+		}
+	}
+}
+
+// Auto-approval never guesses through a clarification request. Once the
+// operator answers, later ready stages may continue automatically.
+func TestAutoApprovePausesForClarification(t *testing.T) {
+	art := "---\nstub: true\n---\ncontent"
+	f := newFixture(t, []scriptedTurn{
+		{state: turns.TurnDone, status: asking("Which behavior?"), finalText: "Which behavior?"},
+		{state: turns.TurnDone, status: ready("01"), artifact: art},
+		{state: turns.TurnDone, status: ready("02"), artifact: art},
+		{state: turns.TurnDone, status: ready("03"), artifact: art},
+		{state: turns.TurnDone, status: ready("04"), artifact: art},
+		{state: turns.TurnDone, status: ready("05"), artifact: art},
+	})
+	ctx := context.Background()
+	if err := f.m.SetAutoValidate(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := f.m.Create(ctx, CreateReq{
+		Title: "clarify first", Brief: "change it", AutoApprove: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "clarification turn to settle", func() bool {
+		got, err := f.st.GetWorkflow(ctx, wf.ID)
+		turnRows, turnErr := f.st.ListTurns(ctx, wf.ID)
+		return err == nil && turnErr == nil && got.Status == domain.WorkflowAwaitingUser &&
+			len(turnRows) == 1 && turnRows[0].State == domain.TurnStateDone
+	})
+	got, _ := f.st.GetWorkflow(ctx, wf.ID)
+	if got.Stage != domain.StageRefine {
+		t.Fatalf("clarification advanced to %s; want refine", got.Stage)
+	}
+	if err := f.m.Message(ctx, wf.ID, "Use the existing behavior.", false); err != nil {
+		t.Fatal(err)
+	}
+	f.waitStatus(t, wf.ID, domain.WorkflowCompleted)
+}
+
+func TestAutoApproveCanBeDisabled(t *testing.T) {
+	f := newFixture(t, []scriptedTurn{
+		{state: turns.TurnDone, status: ready("01"), artifact: "ready"},
+	})
+	wf, err := f.m.Create(context.Background(), CreateReq{
+		Title: "manual gate", Brief: "review me", AutoApprove: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := f.waitStatus(t, wf.ID, domain.WorkflowAwaitingApproval)
+	if got.Stage != domain.StageRefine {
+		t.Fatalf("manual workflow advanced to %s", got.Stage)
+	}
+}
+
+// The full five-stage happy path: refine asks then readies; every later
+// stage readies straight away; five approvals land the workflow completed
+// (and queued for validation) with the artifacts committed.
+func TestFiveStageHappyPath(t *testing.T) {
 	art := "---\nstub: true\n---\ncontent"
 	f := newFixture(t, []scriptedTurn{
 		{state: turns.TurnDone, finalText: "What exactly should the boss do?", status: asking("q1")},
@@ -235,9 +327,12 @@ func TestSixStageHappyPath(t *testing.T) {
 		{state: turns.TurnDone, finalText: "Design saved.", status: ready("03"), artifact: art},
 		{state: turns.TurnDone, finalText: "Plan saved.", status: ready("04"), artifact: art},
 		{state: turns.TurnDone, finalText: "Implemented.", status: ready("05"), artifact: art},
-		{state: turns.TurnDone, finalText: "Validated: PASS.", status: ready("06"), artifact: art},
 	})
 	ctx := context.Background()
+	// Auto-validate off: this test proves the ladder alone.
+	if err := f.m.SetAutoValidate(ctx, false); err != nil {
+		t.Fatal(err)
+	}
 	wf, err := f.m.Create(ctx, CreateReq{Title: "boss fight", Brief: "make the boss harder"})
 	if err != nil {
 		t.Fatal(err)
@@ -249,8 +344,8 @@ func TestSixStageHappyPath(t *testing.T) {
 	}
 	f.waitStatus(t, wf.ID, domain.WorkflowAwaitingApproval)
 
-	// Approve every stage in order.
-	for i, stage := range domain.StageOrder {
+	// Approve every task stage in order; implement's approval completes.
+	for i, stage := range domain.TaskStageOrder {
 		got, err := f.st.GetWorkflow(ctx, wf.ID)
 		if err != nil || got.Stage != stage {
 			t.Fatalf("expected stage %s, got %+v (%v)", stage, got, err)
@@ -258,25 +353,37 @@ func TestSixStageHappyPath(t *testing.T) {
 		if err := f.m.Approve(ctx, wf.ID, stage, "lgtm"); err != nil {
 			t.Fatalf("approve %s: %v", stage, err)
 		}
-		if stage == domain.StageValidate {
+		if stage == domain.StageImplement {
 			break
 		}
-		f.waitStage(t, wf.ID, domain.StageOrder[i+1], domain.WorkflowAwaitingApproval)
+		f.waitStage(t, wf.ID, domain.TaskStageOrder[i+1], domain.WorkflowAwaitingApproval)
 	}
 	final := f.waitStatus(t, wf.ID, domain.WorkflowCompleted)
 	if final.BaseSHA == "" {
 		t.Error("base sha must be recorded at implement start")
 	}
 
-	// Stage rows all approved; artifacts recorded.
+	// Task stage rows all approved; artifacts recorded. The validate row
+	// stays pending — validation happens in cross-workflow runs.
 	stages, _ := f.st.WorkflowStages(ctx, wf.ID)
 	for _, st := range stages {
+		if st.Stage == domain.StageValidate {
+			if st.Status != domain.StagePending {
+				t.Errorf("validate row: %s, want pending (runs own it)", st.Status)
+			}
+			continue
+		}
 		if st.Status != domain.StageApproved {
 			t.Errorf("stage %s: %s", st.Stage, st.Status)
 		}
 		if st.Artifact == "" {
 			t.Errorf("stage %s missing artifact", st.Stage)
 		}
+	}
+	// The finished implementation is queued for the next validation run.
+	pending, err := f.st.ListValidationPending(ctx)
+	if err != nil || len(pending) != 1 || pending[0].ID != wf.ID {
+		t.Fatalf("validation pending = %+v (%v), want [%s]", pending, err, wf.ID)
 	}
 
 	// Approval commits carry the workflow trailers.
@@ -415,21 +522,19 @@ func TestCreateStartAtPlan(t *testing.T) {
 	}
 }
 
-// Validation turned off at intake: approving implement stub-skips validate
-// and completes the workflow — no validate turn, no verify gate.
-func TestSkipValidateEndsAtImplement(t *testing.T) {
+// Approving implement completes a task workflow — no validate stage runs
+// inside it; the workflow instead lands on the validation-pending queue.
+func TestImplementApprovalCompletes(t *testing.T) {
 	f := newFixture(t, []scriptedTurn{
 		{state: turns.TurnDone, status: ready("05"), artifact: "changelog"},
 	})
 	ctx := context.Background()
-	wf, err := f.m.Create(ctx, CreateReq{
-		Title: "x", Brief: "y", StartStage: domain.StageImplement, SkipValidate: true,
-	})
-	if err != nil {
+	if err := f.m.SetAutoValidate(ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	if !wf.SkipValidate {
-		t.Fatal("SkipValidate must survive intake")
+	wf, err := f.m.Create(ctx, CreateReq{Title: "x", Brief: "y", StartStage: domain.StageImplement})
+	if err != nil {
+		t.Fatal(err)
 	}
 	f.waitStatus(t, wf.ID, domain.WorkflowAwaitingApproval)
 	if err := f.m.Approve(ctx, wf.ID, domain.StageImplement, ""); err != nil {
@@ -437,43 +542,142 @@ func TestSkipValidateEndsAtImplement(t *testing.T) {
 	}
 	f.waitStatus(t, wf.ID, domain.WorkflowCompleted)
 
-	stages, _ := f.st.WorkflowStages(ctx, wf.ID)
-	if got := stages[5].Status; got != domain.StageSkipped {
-		t.Errorf("validate stage: %s, want skipped", got)
-	}
-	stub, err := os.ReadFile(filepath.Join(f.repo, ".hal", "workflows", wf.ID, "06-validation.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(stub), "status: skipped") {
-		t.Errorf("stub: %s", stub)
-	}
-	// The whole point: no validate turn was ever dispatched.
+	// No validate turn was dispatched inside the workflow.
 	f.runner.mu.Lock()
 	dispatched := len(f.runner.specs)
 	f.runner.mu.Unlock()
 	if dispatched != 1 {
 		t.Errorf("turns dispatched = %d, want 1 (implement only)", dispatched)
 	}
+	pending, _ := f.st.ListValidationPending(ctx)
+	if len(pending) != 1 || pending[0].ID != wf.ID {
+		t.Fatalf("pending = %+v, want [%s]", pending, wf.ID)
+	}
 }
 
-// Starting AT validate is a request to validate: the unchecked box is
-// ignored rather than completing the workflow before its first turn.
-func TestSkipValidateIgnoredWhenStartingThere(t *testing.T) {
+// Intake can no longer start a workflow at validate — validation runs own
+// that stage.
+func TestCreateAtValidateRefused(t *testing.T) {
+	f := newFixture(t, nil)
+	if _, err := f.m.Create(context.Background(), CreateReq{
+		Title: "x", Brief: "y", StartStage: domain.StageValidate,
+	}); err == nil {
+		t.Fatal("creating a workflow at validate must be refused")
+	}
+}
+
+// The full validation-run lifecycle: an implemented workflow completes, a
+// run covers it, approval stamps it validated and archives its artifact
+// folder (recycle-bin seam) with the deletion committed.
+func TestValidationRunLifecycle(t *testing.T) {
+	var archived []string
 	f := newFixture(t, []scriptedTurn{
-		{state: turns.TurnDone, status: asking("validate opening")},
+		{state: turns.TurnDone, status: ready("05"), artifact: "changelog"},
+		{state: turns.TurnDone, finalText: "PASS", status: ready("06"), artifact: "report"},
+	}, func(cfg *Config) {
+		cfg.Archive = func(path string) error {
+			archived = append(archived, path)
+			return os.RemoveAll(path)
+		}
 	})
 	ctx := context.Background()
-	wf, err := f.m.Create(ctx, CreateReq{
-		Title: "x", Brief: "y", StartStage: domain.StageValidate, SkipValidate: true,
-	})
+	if err := f.m.SetAutoValidate(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := f.m.Create(ctx, CreateReq{Title: "x", Brief: "y", StartStage: domain.StageImplement})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wf.SkipValidate {
-		t.Fatal("a workflow starting at validate must not skip it")
+	f.waitStatus(t, wf.ID, domain.WorkflowAwaitingApproval)
+	if err := f.m.Approve(ctx, wf.ID, domain.StageImplement, ""); err != nil {
+		t.Fatal(err)
 	}
-	f.waitStage(t, wf.ID, domain.StageValidate, domain.WorkflowAwaitingUser)
+	f.waitStatus(t, wf.ID, domain.WorkflowCompleted)
+
+	run, err := f.m.StartValidation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Kind != domain.KindValidation || run.Stage != domain.StageValidate {
+		t.Fatalf("run: %+v", run)
+	}
+	// A second trigger while the run lives is refused.
+	if _, err := f.m.StartValidation(ctx); err == nil {
+		t.Fatal("second concurrent validation run must be refused")
+	}
+	// The opening prompt carries the target's changelog.
+	f.waitTurnCount(t, 2)
+	if p := f.spec(t, 1).Prompt; !strings.Contains(p, wf.ID) || !strings.Contains(p, "05-implementation.md") {
+		t.Fatalf("run prompt must list the pending changelog: %q", p)
+	}
+	f.waitStatus(t, run.ID, domain.WorkflowAwaitingApproval)
+	if err := f.m.Approve(ctx, run.ID, domain.StageValidate, "ship it"); err != nil {
+		t.Fatal(err)
+	}
+	f.waitStatus(t, run.ID, domain.WorkflowCompleted)
+
+	// The target is stamped validated and its folder archived + committed.
+	got, _ := f.st.GetWorkflow(ctx, wf.ID)
+	if got.Validated.IsZero() || got.ValidatedBy != run.ID {
+		t.Fatalf("target not stamped validated: %+v", got)
+	}
+	if len(archived) != 1 || !strings.Contains(archived[0], wf.ID) {
+		t.Fatalf("archived = %v, want the target's artifact dir", archived)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, ".hal", "workflows", wf.ID)); !os.IsNotExist(err) {
+		t.Fatal("target artifact dir must be gone after archiving")
+	}
+	if log := gitLog(t, f.repo); !strings.Contains(log, "archived 1 validated workflow") {
+		t.Fatalf("archive commit missing:\n%s", log)
+	}
+	// Nothing pending anymore.
+	if pending, _ := f.st.ListValidationPending(ctx); len(pending) != 0 {
+		t.Fatalf("pending after validation = %+v", pending)
+	}
+}
+
+// Auto-validate: implement approval on an otherwise-idle engine opens a
+// validation run by itself (the toggle defaults to on).
+func TestAutoValidateTrigger(t *testing.T) {
+	f := newFixture(t, []scriptedTurn{
+		{state: turns.TurnDone, status: ready("05"), artifact: "changelog"},
+		{state: turns.TurnDone, status: asking("run opening")},
+	})
+	ctx := context.Background()
+	wf, err := f.m.Create(ctx, CreateReq{Title: "x", Brief: "y", StartStage: domain.StageImplement})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.waitStatus(t, wf.ID, domain.WorkflowAwaitingApproval)
+	if err := f.m.Approve(ctx, wf.ID, domain.StageImplement, ""); err != nil {
+		t.Fatal(err)
+	}
+	f.waitStatus(t, wf.ID, domain.WorkflowCompleted)
+	waitFor(t, "auto validation run", func() bool {
+		_, err := f.st.ActiveValidationRun(ctx)
+		return err == nil
+	})
+	f.waitTurnCount(t, 2)
+}
+
+// Auto-validate off: implement approval completes without opening a run.
+func TestAutoValidateOff(t *testing.T) {
+	f := newFixture(t, []scriptedTurn{
+		{state: turns.TurnDone, status: ready("05"), artifact: "changelog"},
+	})
+	ctx := context.Background()
+	if err := f.m.SetAutoValidate(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	wf, _ := f.m.Create(ctx, CreateReq{Title: "x", Brief: "y", StartStage: domain.StageImplement})
+	f.waitStatus(t, wf.ID, domain.WorkflowAwaitingApproval)
+	if err := f.m.Approve(ctx, wf.ID, domain.StageImplement, ""); err != nil {
+		t.Fatal(err)
+	}
+	f.waitStatus(t, wf.ID, domain.WorkflowCompleted)
+	if _, err := f.st.ActiveValidationRun(ctx); err == nil {
+		t.Fatal("no validation run must open when the toggle is off")
+	}
 }
 
 // The implement mismatch protocol lands the workflow in blocked.
@@ -595,7 +799,8 @@ func TestValidateGateRed(t *testing.T) {
 		{state: turns.TurnDone, finalText: "report written", status: ready("06"), artifact: "report"},
 	}, func(cfg *Config) { cfg.Verify = "exit 1" })
 	ctx := context.Background()
-	wf, err := f.m.Create(ctx, CreateReq{Title: "x", Brief: "y", StartStage: domain.StageValidate})
+	// Nothing pending: the run still executes as a health check.
+	wf, err := f.m.StartValidation(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,12 +13,13 @@ import (
 func newTestWorkflow(t *testing.T, s *Store, title string) domain.Workflow {
 	t.Helper()
 	wf := domain.Workflow{
-		ID:      NewWorkflowID(title, time.Now()),
-		Title:   title,
-		Brief:   "the ask",
-		Stage:   domain.StageRefine,
-		Status:  domain.WorkflowAwaitingUser,
-		Created: time.Now(),
+		ID:          NewWorkflowID(title, time.Now()),
+		Title:       title,
+		Brief:       "the ask",
+		Stage:       domain.StageRefine,
+		Status:      domain.WorkflowAwaitingUser,
+		AutoApprove: true,
+		Created:     time.Now(),
 	}
 	if err := s.CreateWorkflow(context.Background(), wf); err != nil {
 		t.Fatal(err)
@@ -50,7 +51,7 @@ func TestWorkflowCRUDAndStageLadder(t *testing.T) {
 	wf := newTestWorkflow(t, s, "test workflow")
 
 	got, err := s.GetWorkflow(ctx, wf.ID)
-	if err != nil || got.Title != "test workflow" || got.Stage != domain.StageRefine {
+	if err != nil || got.Title != "test workflow" || got.Stage != domain.StageRefine || !got.AutoApprove {
 		t.Fatalf("get: %+v, %v", got, err)
 	}
 

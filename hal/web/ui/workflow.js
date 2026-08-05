@@ -1,6 +1,7 @@
-// Workflow UI: the intake form, the workflow list with its stage stepper,
-// and the detail view (chat pane + artifact pane + approval bar). One live
-// Claude conversation per workflow, six human-gated stages.
+// Workflow UI: the intake form, the validation card, the workflow list with
+// its stage stepper, and the detail view (chat pane + artifact pane +
+// approval bar). One live Claude conversation per workflow — five
+// human-gated stages for a task, one validate stage for a validation run.
 import { h, Fragment } from "preact";
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import htm from "htm";
@@ -9,7 +10,19 @@ import { renderMarkdown, countCheckboxes } from "/markdown.js";
 
 const html = htm.bind(h);
 
-export const STAGES = ["refine", "research", "design", "plan", "implement", "validate"];
+// STAGES is the task ladder. Validation is not a per-workflow stage anymore:
+// a validation run (Kind === "validation") lives entirely in "validate".
+export const STAGES = ["refine", "research", "design", "plan", "implement"];
+export const VALIDATE = "validate";
+
+// isValidation: is this workflow a validation run (vs a task workflow)?
+export const isValidation = (w) => w && w.Kind === "validation";
+
+// stagesFor: the stage list a workflow's tabs/steppers render.
+const stagesFor = (w) => (isValidation(w) ? [VALIDATE] : STAGES);
+
+// timeSet: a Go time.Time JSON value that isn't the zero value.
+const timeSet = (iso) => !!iso && !iso.startsWith("0001-");
 
 // Statuses where the ball is in the operator's court — the title-badge /
 // chime set.
@@ -105,35 +118,38 @@ export function WfBundlePicker({ extras, stageCfg, model, effort, onModel, onEff
   <//>`;
 }
 
-// StageStepper: six segments — ✓ approved · ⊘ skipped · ● active (pulsing) ·
+// StageStepper: five segments — ✓ approved · ⊘ skipped · ● active (pulsing) ·
 // ○ pending. With stage rows (the detail view) the truth is exact; from a
-// bare list row, stages before the current one read as done.
-export function StageStepper({ stage, stages }) {
-  const cur = STAGES.indexOf(stage);
+// bare list row, stages before the current one read as done. names overrides
+// the ladder (a validation run renders its single validate segment).
+export function StageStepper({ stage, stages, names }) {
+  const ladder = names || STAGES;
+  const cur = ladder.indexOf(stage);
   return html`<span class="stepper">
-    ${STAGES.map((name, i) => {
+    ${ladder.map((name, i) => {
       const row = (stages || []).find((s) => s.Stage === name);
       const st = row ? row.Status : i < cur ? "approved" : i === cur ? "active" : "pending";
       let cls = "pending", sym = "○";
       if (st === "approved") { cls = "ok"; sym = "✓"; }
       else if (st === "skipped") { cls = "skip"; sym = "⊘"; }
       else if (st === "active") { cls = "active"; sym = "●"; }
-      return html`<span key=${name} class=${"step " + cls} title=${`${i + 1}/6 ${name}: ${st}`}>${sym}</span>`;
+      return html`<span key=${name} class=${"step " + cls} title=${`${i + 1}/${ladder.length} ${name}: ${st}`}>${sym}</span>`;
     })}
   </span>`;
 }
 
 // WorkflowIntake starts a new workflow from a raw ask. The advanced row
-// picks a later start stage (earlier stages get stub artifacts), whether the
-// ladder ends with validate, and the model/effort the workflow launches with.
-// model/effort are the persisted workflow defaults owned by App (the same
-// setting edited under Settings → tools & models) — picking here saves the
-// choice for next time.
+// picks a later start stage (earlier stages get stub artifacts) and the
+// model/effort the workflow launches with. model/effort are the persisted
+// workflow defaults owned by App (the same setting edited under Settings →
+// tools & models) — picking here saves the choice for next time. The ladder
+// ends at implement; validation happens in cross-workflow validation runs
+// (see ValidationCard).
 export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreated }) {
   const [text, setText] = useState("");
   const [adv, setAdv] = useState(false);
   const [startStage, setStartStage] = useState("");
-  const [validate, setValidate] = useState(true);
+  const [autoApprove, setAutoApprove] = useState(true);
   const [busy, setBusy] = useState(false);
   const model = (defaults && defaults.model) || "";
   const effort = (defaults && defaults.effort) || "";
@@ -142,12 +158,11 @@ export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreat
     if (!text.trim() || busy) return;
     setBusy(true);
     try {
-      const body = { text: text.trim() };
+      const body = { text: text.trim(), autoApprove };
       if (startStage) body.startStage = startStage;
-      if (!validate) body.validate = false;
       if (model || effort) body.bundle = { agent: "claude", model: model || undefined, effort: effort || undefined };
       const wf = await api.createWorkflow(body);
-      setText(""); setStartStage(""); setValidate(true);
+      setText(""); setStartStage(""); setAutoApprove(true);
       onCreated && onCreated(wf);
     } catch (e) {
       alert(e.message);
@@ -160,11 +175,15 @@ export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreat
     <textarea rows="3" placeholder="What should we build / fix / understand?"
       value=${text} onInput=${(e) => setText(e.target.value)}
       onKeyDown=${(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); } }}></textarea>
-    <div class="row" style="display:flex; gap:6px; margin-top:6px; align-items:center;">
+    <div class="row" style="display:flex; gap:6px; margin-top:6px; align-items:center; flex-wrap:wrap;">
       <button class="primary" disabled=${busy || !text.trim()} onClick=${start}>${busy ? "starting…" : "Start"}</button>
-      <button onClick=${() => setAdv((v) => !v)} title="start stage, validate, model/effort override">${adv ? "▾ advanced" : "▸ advanced"}</button>
-      ${!adv && !validate && startStage !== "validate" && html`<span class="chip off"
-        title="the validate stage is turned off — this workflow completes when you approve implement">no validate</span>`}
+      <button onClick=${() => setAdv((v) => !v)} title="start stage, model/effort override">${adv ? "▾ advanced" : "▸ advanced"}</button>
+      <label class="muted" style="display:flex; gap:4px; align-items:center; font-size:.8rem"
+        title="automatically commit and continue whenever a stage is ready; questions, blockers, errors, missing artifacts, and red validation gates still pause for you">
+        <input type="checkbox" checked=${autoApprove}
+          onChange=${(e) => setAutoApprove(e.target.checked)} />
+        auto-approve ready stages
+      </label>
       ${!adv && (model || effort) && html`<span class="chip"
         title="saved model/effort defaults — every new workflow uses them (edit here or in Settings → tools & models)">
         ${[shortModel(model), effort].filter(Boolean).join(" · ")}</span>`}
@@ -175,19 +194,43 @@ export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreat
         <option value="">start at refine</option>
         ${STAGES.map((s) => html`<option value=${s}>start at ${s}</option>`)}
       </select>
-      <label class="muted" style="display:flex; gap:4px; align-items:center; font-size:.8rem"
-        title=${startStage === "validate"
-          ? "the workflow starts at validate — it cannot also skip it"
-          : "run the validate stage (independent check of the implement changelog plus the verify command). Unchecked: approving implement stub-skips validate and completes the workflow."}>
-        <input type="checkbox" checked=${validate || startStage === "validate"}
-          disabled=${startStage === "validate"}
-          onChange=${(e) => setValidate(e.target.checked)} />
-        validate
-      </label>
       <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg} model=${model} effort=${effort}
         onModel=${(m) => onDefaults && onDefaults({ model: m, effort })}
         onEffort=${(ef) => onDefaults && onDefaults({ model, effort: ef })} />
     </div>`}
+  </div>`;
+}
+
+// ValidationCard is the validate trigger surface: how many implementations
+// await validation, the persisted auto-validate-on-completion toggle, and
+// the manual Validate button. A live run is linked, not duplicated — one
+// runs at a time.
+export function ValidationCard({ validation, onValidate, onToggleAuto, onSelect }) {
+  if (!validation) return null;
+  const pending = validation.pending || [];
+  const active = validation.active;
+  return html`<div class="card validation-card">
+    <div class="row" style="display:flex; gap:8px; align-items:center;">
+      <button class="primary" disabled=${!!active}
+        title=${active
+          ? "a validation run is already live"
+          : pending.length > 0
+            ? `validate the ${pending.length} implemented workflow(s) awaiting validation (plus the verify command and the agent-play smoke test)`
+            : "nothing is pending — runs a health check of the verify command and the agent-play smoke test"}
+        onClick=${onValidate}>Validate</button>
+      <span class="muted" style="font-size:.8rem"
+        title=${pending.map((w) => w.Title).join("\n") || ""}>
+        ${pending.length > 0 ? `${pending.length} awaiting validation` : "nothing awaiting validation"}</span>
+      ${active && html`<button class="linkish" title="open the live validation run"
+        onClick=${() => onSelect && onSelect(active.ID)}>run live →</button>`}
+      <span class="spacer"></span>
+      <label class="muted" style="display:flex; gap:4px; align-items:center; font-size:.8rem"
+        title="when an implement approval lands and no other stage is executing, start a validation run automatically">
+        <input type="checkbox" checked=${!!validation.autoValidate}
+          onChange=${(e) => onToggleAuto && onToggleAuto(e.target.checked)} />
+        auto-validate on completion
+      </label>
+    </div>
   </div>`;
 }
 
@@ -200,8 +243,14 @@ function WorkflowCard({ w, selected, onSelect }) {
       <${StatusBadge} status=${w.Status} />
     </div>
     <div class="wf-card-sub">
-      <${StageStepper} stage=${w.Stage} />
+      ${isValidation(w)
+        ? html`<span class="chip" title="a validation run — sweeps every implemented-but-unvalidated workflow">validation run</span>`
+        : html`<${StageStepper} stage=${w.Stage} />`}
       <span class="muted">${w.Stage}</span>
+      ${!isValidation(w) && timeSet(w.Validated) && html`<span class="chip ok"
+        title=${"validated by run " + (w.ValidatedBy || "")}>validated</span>`}
+      ${w.AutoApprove && html`<span class="chip"
+        title="ready stages auto-approve; clarification and failures still pause">auto-approve</span>`}
       ${waiting && html`<span class="chip waiting" title="how long this has been waiting on you">waiting ${agoShort(w.Updated)}</span>`}
       <span class="spacer"></span>
       <span class="muted" style="font-size:.72rem">${ago(w.Updated)}</span>
@@ -391,9 +440,11 @@ function ArtifactPane({ id, wf, stages, refreshTick, onApprove, onReject, onSkip
 
   const progress = tab === "plan" && art ? countCheckboxes(art.content) : null;
 
+  const ladder = stagesFor(wf);
+
   return html`<div class="artifact-pane">
     <div class="artifact-tabs">
-      ${STAGES.map((name, i) => {
+      ${ladder.map((name, i) => {
         const row = rowFor(name);
         const skipped = row && row.Status === "skipped";
         return html`<button key=${name}
@@ -407,7 +458,7 @@ function ArtifactPane({ id, wf, stages, refreshTick, onApprove, onReject, onSkip
       <span class="mono muted" style="font-size:.72rem; overflow:hidden; text-overflow:ellipsis;">${art ? art.path : ""}</span>
       ${progress && progress.total > 0 && html`<span class="chip progress">${progress.done}/${progress.total} done</span>`}
       <span class="spacer"></span>
-      ${tab === "implement" && html`<button class="linkish" onClick=${async () => {
+      ${(tab === "implement" || tab === VALIDATE) && html`<button class="linkish" onClick=${async () => {
         if (diff !== null) { setDiff(null); return; }
         try { setDiff((await api.workflowDiff(id)).stat || "(no changes)"); } catch (e) { alert(e.message); }
       }}>${diff !== null ? "hide diff" : "diff"}</button>`}
@@ -540,7 +591,8 @@ export function WorkflowDetail({ id, extras, stageCfg, live, onClose }) {
   const wf = detail.workflow;
   const stages = detail.stages || [];
   const cost = (detail.turns || []).reduce((sum, t) => sum + (t.CostUSD || 0), 0);
-  const stageN = STAGES.indexOf(wf.Stage) + 1;
+  const ladder = stagesFor(wf);
+  const stageN = ladder.indexOf(wf.Stage) + 1;
 
   const act = (fn) => async (...args) => {
     try { await fn(...args); } catch (e) { alert(e.message); }
@@ -551,11 +603,15 @@ export function WorkflowDetail({ id, extras, stageCfg, live, onClose }) {
     <div class="wf-detail-head">
       <button class="linkish" title="back to the feed" onClick=${onClose}>←</button>
       <span class="wf-title" title=${wf.Brief}>${wf.Title}</span>
-      <span class="muted">stage ${stageN}/6 · ${wf.Stage}</span>
-      <${StageStepper} stage=${wf.Stage} stages=${stages} />
+      ${isValidation(wf)
+        ? html`<span class="muted" title="a validation run — sweeps every implemented-but-unvalidated workflow">validation run</span>`
+        : html`<span class="muted">stage ${stageN}/${ladder.length} · ${wf.Stage}</span>`}
+      <${StageStepper} stage=${wf.Stage} stages=${stages} names=${ladder} />
       <${StatusBadge} status=${wf.Status} />
-      ${wf.SkipValidate && html`<span class="chip off"
-        title="validate was turned off at intake — approving implement stub-skips it and completes the workflow">no validate</span>`}
+      ${!isValidation(wf) && timeSet(wf.Validated) && html`<span class="chip ok"
+        title=${"validated by run " + (wf.ValidatedBy || "")}>validated</span>`}
+      ${wf.AutoApprove && html`<span class="chip"
+        title="ready stages auto-approve; clarification and failures still pause">auto-approve</span>`}
       ${cost > 0 && html`<span class="chip" title="total cost of this workflow's turns so far">$${cost.toFixed(2)}</span>`}
       <span class="spacer"></span>
       <button title="per-workflow model/effort override" onClick=${() => setEditBundle((v) => !v)}>⚙</button>

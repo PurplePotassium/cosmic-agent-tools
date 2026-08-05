@@ -87,7 +87,8 @@ func usage() {
 Hal drives coding-agent workflows (claude = Claude Code, agy = Gemini
 CLI for image generation) against the git repo it is invoked in. Each
 workflow is a live conversation that moves through fixed, human-approved
-stages (refine → research → design → plan → implement → validate); the
+stages (refine → research → design → plan → implement); validation runs
+sweep completed implementations on demand or automatically. The
 dashboard is where you create workflows, chat, review artifacts, and approve
 stage handoffs. Configuration lives in .hal/config.toml — created with
 the default settings on first launch (`+"`hal init`"+` scaffolds it too,

@@ -155,9 +155,10 @@ func waitDetail(t *testing.T, client *http.Client, base, token, id string, timeo
 	return last
 }
 
-// fullRunScenario scripts one workflow through all six stages: refine asks a
-// question first (turn 1), then every stage lands its artifact and reports
-// ready. Raw string: the \n escapes belong to the JSON, not to Go.
+// fullRunScenario scripts one workflow through the five task stages (refine
+// asks a question first, then every stage lands its artifact and reports
+// ready) plus the auto-opened validation run's single turn. Raw string: the
+// \n escapes belong to the JSON, not to Go.
 const fullRunScenario = `{"behavior":"interactive","turns":[
 {"deltas":["Let me think about the ask… "],"final":"Before I write the research question: what exactly should the widget do?","status":{"phase":"asking","note":"clarify scope"}},
 {"final":"Refined. The research question artifact is written.","artifact":"# Research Question\n\nWhat is the smallest widget that satisfies the ask?\n","status":{"phase":"ready","note":"question ready"}},
@@ -165,7 +166,7 @@ const fullRunScenario = `{"behavior":"interactive","turns":[
 {"final":"Design written.","artifact":"# Design\n\nApproach A wins.\n","status":{"phase":"ready","note":"design ready"}},
 {"final":"Plan written.","artifact":"# Plan\n\n- [ ] step one\n- [ ] step two\n","status":{"phase":"ready","note":"plan ready"}},
 {"final":"Implementation done.","artifact":"# Implementation\n\n- [x] step one\n- [x] step two\n","status":{"phase":"ready","note":"implemented"}},
-{"final":"Validation done.","artifact":"# Validation\n\nAll checks green.\n","status":{"phase":"ready","note":"validated"}}
+{"final":"Validation done: PASS.","artifact":"# Validation Report\n\nVerdict: PASS\n","status":{"phase":"ready","note":"validated"}}
 ]}`
 
 // interactiveRig scaffolds a rig whose workflow turns run the scripted fake
@@ -193,23 +194,35 @@ verify = "git log -1 --oneline"
 	r.env = append(r.env,
 		"HAL_WORKFLOW_AGENT=fake",
 		"HAL_FAKE_TURNS_DIR="+turnsDir,
+		// Validated artifact folders are hard-deleted in tests — never sent
+		// to the developer's real recycle bin.
+		"HAL_WORKFLOW_ARCHIVE=delete",
 	)
 	return r
 }
 
-// TestWorkflowFullRun drives one workflow refine → validate → completed over
-// REST: question turn, answer, ready+artifact per stage, approval per stage,
-// then asserts the stage rows, the artifact files, the approval commits (with
-// Hal-Workflow trailers), and the persisted message history.
+// validationView mirrors GET /api/v1/validation.
+type validationView struct {
+	AutoValidate bool `json:"autoValidate"`
+	Pending      []wfRow
+	Active       *wfRow
+}
+
+// TestWorkflowFullRun drives one workflow refine → implement → completed
+// over REST, then the auto-opened validation run through approval: question
+// turn, answer, ready+artifact per stage, approval per stage, the run's
+// verify gate, the validated stamp, and the archived artifact folder.
 func TestWorkflowFullRun(t *testing.T) {
 	r := interactiveRig(t, fullRunScenario)
 	base, token, stop := startUp(t, r)
 	defer stop()
 	client := &http.Client{Timeout: 10 * time.Second}
 
+	// autoApprove off: this test exercises the MANUAL approval gates (the
+	// auto-approve ladder has its own unit coverage).
 	var wf wfRow
 	mustReq(t, client, "POST", base+"/api/v1/workflows", token,
-		map[string]any{"title": "Widget", "text": "Build the widget.\n\nKeep it small."}, &wf)
+		map[string]any{"title": "Widget", "text": "Build the widget.\n\nKeep it small.", "autoApprove": false}, &wf)
 	if wf.ID == "" || wf.Stage != "refine" {
 		t.Fatalf("created workflow = %+v", wf)
 	}
@@ -239,8 +252,9 @@ func TestWorkflowFullRun(t *testing.T) {
 		t.Fatalf("approve of a non-current stage: code=%d, want 409", code)
 	}
 
-	// Approve each stage; every next stage runs one ready+artifact turn.
-	order := []string{"refine", "research", "design", "plan", "implement", "validate"}
+	// Approve each task stage; every next stage runs one ready+artifact
+	// turn. Implement's approval completes the workflow.
+	order := []string{"refine", "research", "design", "plan", "implement"}
 	for i, stage := range order {
 		mustReq(t, client, "POST", base+"/api/v1/workflows/"+wf.ID+"/approve", token,
 			map[string]any{"stage": stage, "note": "looks good"}, nil)
@@ -256,21 +270,26 @@ func TestWorkflowFullRun(t *testing.T) {
 		})
 	}
 
-	// Six approved stage rows.
+	// Five approved task stage rows; the validate row stays pending (the
+	// validation run owns that stage).
 	mustReq(t, client, "GET", base+"/api/v1/workflows/"+wf.ID, token, nil, &d)
 	if len(d.Stages) != 6 {
 		t.Fatalf("stage rows = %d, want 6", len(d.Stages))
 	}
 	for _, st := range d.Stages {
-		if st.Status != "approved" {
-			t.Fatalf("stage %s = %s, want approved", st.Stage, st.Status)
+		want := "approved"
+		if st.Stage == "validate" {
+			want = "pending"
+		}
+		if st.Status != want {
+			t.Fatalf("stage %s = %s, want %s", st.Stage, st.Status, want)
 		}
 	}
 
-	// Artifact files on disk under .hal/workflows/<id>/.
+	// Task artifact files on disk under .hal/workflows/<id>/.
 	for _, name := range []string{
 		"01-question.md", "02-research.md", "03-design.md",
-		"04-plan.md", "05-implementation.md", "06-validation.md",
+		"04-plan.md", "05-implementation.md",
 	} {
 		p := filepath.Join(r.repo, ".hal", "workflows", wf.ID, name)
 		if info, err := os.Stat(p); err != nil || info.Size() == 0 {
@@ -278,35 +297,100 @@ func TestWorkflowFullRun(t *testing.T) {
 		}
 	}
 
-	// Approval commits with the Hal-Workflow trailer — one per stage.
-	log := r.git("log", "--format=%B")
-	if got := strings.Count(log, "Hal-Workflow: "+wf.ID); got < 6 {
-		t.Fatalf("Hal-Workflow trailers = %d, want >= 6\n%s", got, log)
+	// Auto-validate (default on) opens a validation run once implement's
+	// approval lands on the otherwise-idle engine.
+	var run wfRow
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		var vv validationView
+		mustReq(t, client, "GET", base+"/api/v1/validation", token, nil, &vv)
+		if vv.Active != nil {
+			run = *vv.Active
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("auto validation run never opened: %+v", vv)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	if !strings.Contains(log, "refine approved") || !strings.Contains(log, "validate approved") {
+	// A manual trigger while the run lives is refused.
+	if code, _ := wfReq(t, client, "POST", base+"/api/v1/validation", token, nil); code != 409 {
+		t.Fatalf("second validation trigger: code=%d, want 409", code)
+	}
+	waitDetail(t, client, base, token, run.ID, 60*time.Second, "validation run ready", func(d wfDetail) bool {
+		return d.Workflow.Status == "awaiting-approval" && d.Workflow.Stage == "validate"
+	})
+
+	// The run's chat carries the verify gate message.
+	var runMsgs []wfMsg
+	mustReq(t, client, "GET", base+"/api/v1/workflows/"+run.ID+"/messages?limit=500", token, nil, &runMsgs)
+	haveGate := false
+	for _, m := range runMsgs {
+		if m.Kind == "gate" && strings.Contains(m.Content, "VERIFY COMMAND") {
+			haveGate = true
+		}
+	}
+	if !haveGate {
+		t.Fatalf("run message replay missing the gate row:\n%+v", runMsgs)
+	}
+
+	// Approving the run completes it, stamps the target validated, and
+	// archives the target's artifact folder (deletion committed).
+	mustReq(t, client, "POST", base+"/api/v1/workflows/"+run.ID+"/approve", token,
+		map[string]any{"stage": "validate", "note": "ship it"}, nil)
+	waitDetail(t, client, base, token, run.ID, 60*time.Second, "run completed", func(d wfDetail) bool {
+		return d.Workflow.Status == "completed"
+	})
+	waitDeadline := time.Now().Add(30 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(r.repo, ".hal", "workflows", wf.ID)); os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(waitDeadline) {
+			t.Fatal("validated artifact folder must be archived away")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	var vv validationView
+	mustReq(t, client, "GET", base+"/api/v1/validation", token, nil, &vv)
+	if len(vv.Pending) != 0 || vv.Active != nil {
+		t.Fatalf("validation view after approval: %+v", vv)
+	}
+
+	// Approval commits with the Hal-Workflow trailer — one per task stage,
+	// plus the run's report approval and the archive commit.
+	log := r.git("log", "--format=%B")
+	if got := strings.Count(log, "Hal-Workflow: "+wf.ID); got < 5 {
+		t.Fatalf("Hal-Workflow trailers = %d, want >= 5\n%s", got, log)
+	}
+	if !strings.Contains(log, "refine approved") || !strings.Contains(log, "plan approved") {
 		t.Fatalf("approval commit subjects missing:\n%s", log)
+	}
+	// Full-access turns (implement, the run's validate) commit the whole
+	// tree per turn, so their approvals find a clean tree — the run's
+	// approval record is the archive commit, carrying its trailer.
+	if !strings.Contains(log, "validate turn") || !strings.Contains(log, "archived 1 validated workflow") {
+		t.Fatalf("validation run commits missing:\n%s", log)
 	}
 
 	// The message replay carries the whole conversation: the operator's
-	// answer, assistant rows, the validate gate, and the approvals.
+	// answer, assistant rows, and the approvals.
 	var msgs []wfMsg
 	mustReq(t, client, "GET", base+"/api/v1/workflows/"+wf.ID+"/messages?limit=500", token, nil, &msgs)
-	var haveUser, haveAssistant, haveGate, haveApproval bool
+	var haveUser, haveAssistant, haveApproval bool
 	for _, m := range msgs {
 		switch {
 		case m.Role == "user" && strings.Contains(m.Content, "frobnicate"):
 			haveUser = true
 		case m.Role == "assistant" && strings.Contains(m.Content, "research question"):
 			haveAssistant = true
-		case m.Kind == "gate" && strings.Contains(m.Content, "VERIFY COMMAND"):
-			haveGate = true
 		case m.Kind == "approval":
 			haveApproval = true
 		}
 	}
-	if !haveUser || !haveAssistant || !haveGate || !haveApproval {
-		t.Fatalf("message replay incomplete: user=%v assistant=%v gate=%v approval=%v (%d messages)",
-			haveUser, haveAssistant, haveGate, haveApproval, len(msgs))
+	if !haveUser || !haveAssistant || !haveApproval {
+		t.Fatalf("message replay incomplete: user=%v assistant=%v approval=%v (%d messages)",
+			haveUser, haveAssistant, haveApproval, len(msgs))
 	}
 
 	// The GET /workflows list surfaces the terminal row with ?all=1.

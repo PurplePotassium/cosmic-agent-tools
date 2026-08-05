@@ -85,11 +85,11 @@ got partway):
 ## Finishing
 
 When ALL phases are implemented and verified, write the implementation
-CHANGELOG artifact to your stage's artifact path (MECHANICS). The validate
-stage reads ONLY this changelog — not the plan, not the earlier artifacts —
-so it must carry everything validation needs: every file you touched, every
-check command to run, every manual step. A change you leave out is invisible
-to validation. Then set the status file to `ready` and reply with one short
+CHANGELOG artifact to your stage's artifact path (MECHANICS). A later
+validation run reads ONLY this changelog — not the plan, not the earlier
+artifacts — so it must carry everything validation needs: every file you
+touched, every check command to run, every manual step. A change you leave
+out is invisible to validation. Then set the status file to `ready` and reply with one short
 line — the operator reviews the checked-off plan, the changelog, and the
 diff.
 
@@ -112,8 +112,8 @@ generated: [ISO-8601 UTC]
 [Each deviation and why — "none" if faithful]
 
 ## Verification Checks
-[Every automated check the validate stage must run — carried from the plan's
-Automated Verification items, including the VERIFY COMMAND]
+[Every automated check the validation run must execute — carried from the
+plan's Automated Verification items, including the VERIFY COMMAND]
 - [command] — [what passing means]
 
 ## Manual Testing Steps
@@ -121,7 +121,7 @@ Automated Verification items, including the VERIFY COMMAND]
 1. [step]
 
 ## Notes for Validation
-[Anything the validate stage should scrutinize]
+[Anything the validation run should scrutinize]
 ```
 
 Remember: you're implementing a solution, not just checking boxes. Keep the

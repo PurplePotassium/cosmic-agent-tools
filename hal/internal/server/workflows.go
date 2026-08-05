@@ -29,8 +29,11 @@ func (s *Server) workflowRoutes(mux *http.ServeMux, guardRead, guard func(http.H
 	mux.HandleFunc("GET /api/v1/workflows/{id}/turns/{turn}/log", guardRead(s.getWorkflowTurnLog))
 	mux.HandleFunc("GET /api/v1/workflows/{id}/artifacts/{stage}", guardRead(s.getWorkflowArtifact))
 	mux.HandleFunc("GET /api/v1/workflows/{id}/diff", guardRead(s.getWorkflowDiff))
+	mux.HandleFunc("GET /api/v1/validation", guardRead(s.getValidation))
 
 	mux.HandleFunc("POST /api/v1/workflows", guard(s.postWorkflow))
+	mux.HandleFunc("POST /api/v1/validation", guard(s.postValidation))
+	mux.HandleFunc("PUT /api/v1/validation/auto", guard(s.putValidationAuto))
 	mux.HandleFunc("POST /api/v1/workflows/{id}/messages", guard(s.postWorkflowMessage))
 	mux.HandleFunc("POST /api/v1/workflows/{id}/interrupt", guard(s.postWorkflowInterrupt))
 	mux.HandleFunc("POST /api/v1/workflows/{id}/approve", guard(s.postWorkflowApprove))
@@ -149,9 +152,8 @@ func (s *Server) postWorkflow(w http.ResponseWriter, r *http.Request) {
 		Title      string `json:"title"`
 		Text       string `json:"text"`
 		StartStage string `json:"startStage"`
-		// Validate is the intake checkbox: omitted (nil) means the default,
-		// which is to run validate. Only an explicit false skips it.
-		Validate    *bool         `json:"validate"`
+		// Omitted means on: older API clients inherit auto-advance.
+		AutoApprove *bool         `json:"autoApprove"`
 		FromTaskID  string        `json:"fromTaskId"`
 		Bundle      domain.Bundle `json:"bundle"`
 		Attachments []string      `json:"attachments"`
@@ -160,13 +162,14 @@ func (s *Server) postWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
+	autoApprove := body.AutoApprove == nil || *body.AutoApprove
 	req := workflow.CreateReq{
-		Title:        strings.TrimSpace(body.Title),
-		Brief:        body.Text,
-		StartStage:   domain.WorkflowStage(body.StartStage),
-		SkipValidate: body.Validate != nil && !*body.Validate,
-		Bundle:       body.Bundle,
-		Attachments:  body.Attachments,
+		Title:       strings.TrimSpace(body.Title),
+		Brief:       body.Text,
+		StartStage:  domain.WorkflowStage(body.StartStage),
+		AutoApprove: autoApprove,
+		Bundle:      body.Bundle,
+		Attachments: body.Attachments,
 	}
 	// Promoting an idea: the task's title/detail seed the workflow, and the
 	// task row is closed with a pointer at it.
@@ -195,6 +198,44 @@ func (s *Server) postWorkflow(w http.ResponseWriter, r *http.Request) {
 		_ = s.App.Store.CompleteTask(r.Context(), body.FromTaskID, "", "promoted to workflow "+wf.ID)
 	}
 	writeJSON(w, wf)
+}
+
+// getValidation returns the validation card's view model: the auto toggle,
+// pending implementations, and the live run (if any).
+func (s *Server) getValidation(w http.ResponseWriter, r *http.Request) {
+	st, err := s.App.ValidationState(r.Context())
+	if err != nil {
+		httpErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, st)
+}
+
+// postValidation triggers a validation run (the Validate button). 409 when
+// one is already live.
+func (s *Server) postValidation(w http.ResponseWriter, r *http.Request) {
+	run, err := s.App.WorkflowManager().StartValidation(r.Context())
+	if err != nil {
+		wfErr(w, err)
+		return
+	}
+	writeJSON(w, run)
+}
+
+// putValidationAuto persists the auto-validate-on-completion toggle.
+func (s *Server) putValidationAuto(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.App.WorkflowManager().SetAutoValidate(r.Context(), body.On); err != nil {
+		httpErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"on": body.On})
 }
 
 func (s *Server) postWorkflowMessage(w http.ResponseWriter, r *http.Request) {

@@ -131,8 +131,14 @@ code, .mono { font-family: ui-monospace, Consolas, monospace; }
 .chip.stuck { color: var(--red); border-color: #6e2b2b; }
 .chip.waiting { color: var(--amber); border-color: #5c4a1d; }
 .chip.progress { color: var(--green); border-color: #1d5c33; }
-/* a guardrail the operator turned off (e.g. no validate) */
+/* a guardrail the operator turned off */
 .chip.off { color: var(--amber); border-color: #5c4a1d; }
+/* a good, settled state (e.g. validated) */
+.chip.ok { color: var(--green); border-color: #1d5c33; }
+
+/* ---- the validation card ---- */
+
+.validation-card { padding: 8px 12px; }
 
 /* ---- workflow list ---- */
 

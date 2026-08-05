@@ -2,12 +2,16 @@ package domain
 
 import "time"
 
-// This file holds the interactive-workflow entities: a Workflow moves
-// through six fixed human-gated stages (refine → research → design → plan →
-// implement → validate), each a live conversation whose approved markdown
-// artifact is the handoff to the next stage.
+// This file holds the interactive-workflow entities: a task Workflow moves
+// through five fixed human-gated stages (refine → research → design → plan →
+// implement), each a live conversation whose approved markdown artifact is
+// the handoff to the next stage. Validation is no longer a per-workflow
+// stage: a validation RUN is a special workflow (Kind == KindValidation)
+// whose single live stage is validate — it sweeps every implemented-but-
+// unvalidated workflow at once, runs the verify command and the agent-play
+// smoke test, and is empowered to fix obvious issues it finds.
 
-// WorkflowStage is one of the six fixed stages.
+// WorkflowStage is one of the fixed stages.
 type WorkflowStage string
 
 const (
@@ -19,10 +23,24 @@ const (
 	StageValidate  WorkflowStage = "validate"
 )
 
-// StageOrder is the fixed stage sequence.
+// StageOrder is the fixed stage sequence. Task workflows climb it only as
+// far as implement; the validate rung belongs to validation runs.
 var StageOrder = []WorkflowStage{
 	StageRefine, StageResearch, StageDesign, StagePlan, StageImplement, StageValidate,
 }
+
+// TaskStageOrder is the ladder a task workflow climbs — everything but
+// validate, which runs as a cross-workflow validation run instead.
+var TaskStageOrder = StageOrder[:len(StageOrder)-1]
+
+// Workflow kinds.
+const (
+	// KindTask ("" for historical rows): a normal unit of work.
+	KindTask = ""
+	// KindValidation: a validation run — one validate-stage conversation
+	// sweeping every implemented-but-unvalidated task workflow.
+	KindValidation = "validation"
+)
 
 // ValidWorkflowStage reports whether s names a stage.
 func ValidWorkflowStage(s string) bool {
@@ -34,11 +52,12 @@ func ValidWorkflowStage(s string) bool {
 	return false
 }
 
-// NextStage returns the stage after s (ok=false at validate).
-func NextStage(s WorkflowStage) (WorkflowStage, bool) {
-	for i, st := range StageOrder {
-		if st == s && i+1 < len(StageOrder) {
-			return StageOrder[i+1], true
+// NextTaskStage returns the task-ladder stage after s (ok=false at
+// implement, the task ladder's last rung).
+func NextTaskStage(s WorkflowStage) (WorkflowStage, bool) {
+	for i, st := range TaskStageOrder {
+		if st == s && i+1 < len(TaskStageOrder) {
+			return TaskStageOrder[i+1], true
 		}
 	}
 	return "", false
@@ -71,7 +90,8 @@ const (
 	// WorkflowError: a turn failed (auth, timeout, crash). Any user message
 	// retries via resume.
 	WorkflowError WorkflowStatus = "error"
-	// WorkflowCompleted: validate approved.
+	// WorkflowCompleted: the ladder finished — implement approved/skipped
+	// for a task workflow, validate approved/skipped for a validation run.
 	WorkflowCompleted WorkflowStatus = "completed"
 	// WorkflowAbandoned: operator gave up; artifacts left on disk.
 	WorkflowAbandoned WorkflowStatus = "abandoned"
@@ -109,12 +129,17 @@ type Workflow struct {
 	Status WorkflowStatus
 	Error  string // last failure detail (Status == error)
 	// BaseSHA is trunk's tip when implement started — the diff base for
-	// validate and the dashboard.
+	// validation runs and the dashboard.
 	BaseSHA string
-	// SkipValidate: intake left the validate box unchecked. Approving
-	// implement stub-skips validate and completes the workflow — no
-	// validate turn, no verify gate.
-	SkipValidate bool
+	// Kind: "" = task workflow, KindValidation = a validation run.
+	Kind string
+	// AutoApprove advances a ready stage through the normal approval path.
+	// Asking/blocked/error states and failed validation gates always stop.
+	AutoApprove bool
+	// Validated: when a validation run covered this (task) workflow's
+	// implementation; zero until then. ValidatedBy is that run's workflow id.
+	Validated   time.Time
+	ValidatedBy string
 	// Bundle is the per-workflow model/effort override ("" fields = stage
 	// defaults). Agent is always the interactive driver.
 	Bundle  Bundle

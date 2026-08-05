@@ -113,7 +113,7 @@ func cmdInit(args []string) int {
 		writeIfAbsent(filepath.Join(agentsDir, name), content)
 	}
 
-	// The validate stage ends with a quick agent_play playthrough when the
+	// A validation run includes a quick agent_play playthrough when the
 	// repo carries the agent_play toolkit, driven by the `smoke` entry in
 	// agent_play.config.json — the configured level select / setup for one
 	// representative path. Seed an example entry so games adopt the
@@ -128,8 +128,8 @@ func cmdInit(args []string) int {
 			writeIfAbsent(apCfg, scaffoldAgentPlayConfig)
 			smokeSeeded = true
 		} else if err == nil && !strings.Contains(string(b), `"smoke"`) {
-			smokeHint = "note: " + apCfg + " has no \"smoke\" entry — the validate stage\n" +
-				"reads it for its quick agent playthrough. Merge in, adjusted to your game:\n" +
+			smokeHint = "note: " + apCfg + " has no \"smoke\" entry — validation runs\n" +
+				"read it for their quick agent playthrough. Merge in, adjusted to your game:\n" +
 				scaffoldSmokeEntry + "\n"
 		}
 	}
@@ -156,11 +156,11 @@ func cmdInit(args []string) int {
 }
 
 // scaffoldSmokeEntry is the example `smoke` entry for the agent_play
-// toolkit's config — the level select / setup the validate stage plays as
+// toolkit's config — the level select / setup a validation run plays as
 // its smoke test. A standalone fragment so the scaffolded file and the
 // "merge this in" hint cannot drift apart.
 const scaffoldSmokeEntry = `  "smoke": {
-    "_comment": "Read by hal's validate stage: level select / setup for a quick agent playthrough of ONE common path covering the game's major features. Edit level/seed/path for your game; keep steps small.",
+    "_comment": "Read by hal's validation runs: level select / setup for a quick agent playthrough of ONE common path covering the game's major features. Edit level/seed/path for your game; keep steps small.",
     "level": "level_1",
     "seed": 123,
     "steps": 40,
@@ -186,7 +186,8 @@ func scaffoldConfig(name string, game bool) string {
 # EVERY key is optional: an empty file works. Uncomment what you need.
 # Workflows are driven from the dashboard: each one is a live conversation
 # moving through fixed, operator-approved stages
-# (refine -> research -> design -> plan -> implement -> validate).
+# (refine -> research -> design -> plan -> implement); validation runs
+# sweep completed implementations afterwards.
 
 [project]
 name = "` + name + `"

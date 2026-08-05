@@ -14,15 +14,16 @@ limits. Extract: the refined question, the research areas, clarifications,
 edge cases, and any `Files Provided by User` (read those fully too, before
 spawning sub-agents).
 
-### 2. Spawn parallel sub-agents
+### 2. Investigate efficiently
 
-Based on the research areas and edge cases, spawn parallel sub-agents:
+Research directly by default. Use a sub-agent
+only when a clearly independent research area is large enough to benefit,
+and use the smallest number needed. Useful roles are:
 
 - **codebase-locator** — find where relevant files and components live
 - **codebase-analyzer** — understand how specific code works
 - **codebase-pattern-finder** — find examples of existing patterns
-- **web-search-researcher** — only if the question explicitly requests web
-  research; include the links in the final report
+- **web-search-researcher** — only if the question explicitly requests web research; include the links in the final report
 
 Start with locator agents to find what exists, then dispatch analyzer agents
 on the most promising findings. Run independent agents in parallel. Tell
@@ -34,9 +35,12 @@ the workflow artifact root (MECHANICS) — earlier `02-research.md` files are
 supplementary historical context. Live codebase findings are the primary
 source of truth.
 
-### 3. Wait for ALL sub-agents, then synthesize
+Sub-agents are read-only researchers in the same checkout. They must not
+create branches or worktrees or edit repository files.
 
-Wait for every sub-agent before writing. Then compile all findings, connect
+### 3. Synthesize
+
+If you used sub-agents, wait for them before writing. Then compile all findings, connect
 them across components, address each research area from the question file,
 and **explicitly check each edge case listed there**. Note anything that
 remains unresolved.
@@ -95,5 +99,5 @@ topic: "[refined question topic]"
 - **Document what IS — describe current state without recommendations,
   critique, or suggestions.** Design opinions belong to the design stage.
 - Keep yourself focused on synthesis; sub-agents do the deep reading.
-- Always wait for all sub-agents before synthesizing.
+- Prefer direct reading. If sub-agents were used, wait for all of them before synthesizing.
 - Always read referenced files fully before spawning sub-agents.

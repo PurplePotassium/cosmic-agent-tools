@@ -21,6 +21,7 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/export"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/gitx"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/prompt"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/recycle"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/statedir"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/store"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/turns"
@@ -70,6 +71,11 @@ type Config struct {
 
 	ExportDir           string
 	ExportHumanReadable bool
+
+	// Archive sends a path to the OS recycle bin — a validation run's
+	// approval archives each validated workflow's artifact folder with it.
+	// nil = internal/recycle (the test seam).
+	Archive func(path string) error
 }
 
 // Manager drives every live workflow: one goroutine-with-inbox per active
@@ -154,14 +160,12 @@ func (m *Manager) Run(ctx context.Context) error {
 
 // CreateReq is a new workflow request.
 type CreateReq struct {
-	Title      string
-	Brief      string
-	StartStage domain.WorkflowStage // "" = refine; later stages stub-skip predecessors
-	// SkipValidate: intake unchecked "validate" — the ladder ends at
-	// implement (validate is stub-skipped on its approval).
-	SkipValidate bool
-	Bundle       domain.Bundle
-	Attachments  []string // absolute paths passed into the opening prompt
+	Title       string
+	Brief       string
+	StartStage  domain.WorkflowStage // "" = refine; later stages stub-skip predecessors
+	AutoApprove bool                 // ready stages advance; asking/blocked/error states stop
+	Bundle      domain.Bundle
+	Attachments []string // absolute paths passed into the opening prompt
 }
 
 // Create mints the workflow, stub-skips pre-start stages, and fires the
@@ -178,20 +182,21 @@ func (m *Manager) Create(ctx context.Context, req CreateReq) (domain.Workflow, e
 	if start == "" {
 		start = domain.StageRefine
 	}
+	if start == domain.StageValidate {
+		return domain.Workflow{}, fmt.Errorf("workflow: validate is not a task stage — use the Validate trigger, which sweeps every unvalidated implementation")
+	}
 	if domain.StageIndex(start) < 0 {
 		return domain.Workflow{}, fmt.Errorf("workflow: unknown start stage %q", start)
 	}
 	wf := domain.Workflow{
-		ID:     store.NewWorkflowID(title, time.Now()),
-		Title:  title,
-		Brief:  strings.TrimSpace(req.Brief),
-		Stage:  start,
-		Status: domain.WorkflowAwaitingUser,
-		// Starting AT validate is a request to validate: the unchecked box
-		// would otherwise complete the workflow before its first turn.
-		SkipValidate: req.SkipValidate && start != domain.StageValidate,
-		Bundle:       req.Bundle,
-		Created:      time.Now().UTC(),
+		ID:          store.NewWorkflowID(title, time.Now()),
+		Title:       title,
+		Brief:       strings.TrimSpace(req.Brief),
+		Stage:       start,
+		Status:      domain.WorkflowAwaitingUser,
+		AutoApprove: req.AutoApprove,
+		Bundle:      req.Bundle,
+		Created:     time.Now().UTC(),
 	}
 	if err := os.MkdirAll(m.artifactDirAbs(wf.ID), 0o755); err != nil {
 		return domain.Workflow{}, err
@@ -201,7 +206,7 @@ func (m *Manager) Create(ctx context.Context, req CreateReq) (domain.Workflow, e
 	}
 	// Stub-skip everything before the start stage (three clicks saved: the
 	// trivial-task path starts straight at plan).
-	for _, stage := range domain.StageOrder {
+	for _, stage := range domain.TaskStageOrder {
 		if stage == start {
 			break
 		}
@@ -271,7 +276,8 @@ func (m *Manager) Interrupt(ctx context.Context, id string) error {
 }
 
 // Approve approves the CURRENT stage's artifact: commit, advance, open the
-// next stage (or complete the workflow after validate).
+// next stage (or complete the workflow — after implement for tasks, after
+// validate for validation runs).
 func (m *Manager) Approve(ctx context.Context, id string, stage domain.WorkflowStage, note string) error {
 	return m.decide(ctx, id, stage, "approve", note)
 }
@@ -464,9 +470,20 @@ func (m *Manager) settleDecision(ctx context.Context, id string, s *session, sta
 		m.publish(ctx, "workflow.approved", id, map[string]any{"stage": string(stage), "commit": sha})
 	}
 
-	next, completed := Advance(stage)
+	next, completed := Advance(wf.Kind, stage)
 	if completed {
+		// An approved validation run settles its targets (validated stamp +
+		// artifact-folder archive) before the run itself completes.
+		if wf.Kind == domain.KindValidation && decision == domain.StageApproved {
+			m.finalizeValidation(ctx, wf)
+		}
 		m.complete(ctx, id)
+		// The implementation just landed: if auto-validate is on and the
+		// engine is otherwise idle, open a validation run right away.
+		if wf.Kind != domain.KindValidation && stage == domain.StageImplement && decision == domain.StageApproved {
+			m.notice(ctx, id, "Implementation queued for validation — the next validation run will check it.")
+			m.maybeAutoValidate(ctx)
+		}
 		return
 	}
 	if err := m.st.AdvanceWorkflowStage(ctx, id, next); err != nil {
@@ -476,39 +493,180 @@ func (m *Manager) settleDecision(ctx context.Context, id string, s *session, sta
 	// awaiting-approval must not linger on the new stage (the approve
 	// button would light up for an artifact that doesn't exist yet).
 	_ = m.st.SetWorkflowStatus(ctx, id, domain.WorkflowAwaitingUser, "")
-	// Validation turned off at intake: stub-skip validate rather than open
-	// it, so implement's approval ends the workflow. A failed stub leaves
-	// validate active and awaiting the operator — skip it by hand or message
-	// the agent to run it after all.
-	if next == domain.StageValidate && wf.SkipValidate {
-		if err := m.writeSkipStub(ctx, wf, next, "validation was turned off at intake"); err != nil {
-			m.notice(ctx, id, fmt.Sprintf("validate skip failed: %v", err))
-			m.publishStatus(ctx, id)
-			return
-		}
-		m.publish(ctx, "workflow.skipped", id, map[string]any{"stage": string(next)})
-		m.complete(ctx, id)
-		return
-	}
 	if next == domain.StageImplement {
 		m.recordBaseSHA(ctx, id)
 	}
 	m.publish(ctx, "workflow.stage_started", id, map[string]any{"stage": string(next)})
 	m.appendMessage(ctx, domain.WorkflowMessage{
 		WorkflowID: id, Stage: next, Role: domain.RoleSystem, Kind: domain.MsgStageOpen,
-		Content: fmt.Sprintf("Stage %d/%d: %s.", domain.StageIndex(next)+1, len(domain.StageOrder), next),
+		Content: fmt.Sprintf("Stage %d/%d: %s.", domain.StageIndex(next)+1, len(domain.TaskStageOrder), next),
 	})
 	m.runTurn(ctx, id, s, turnRequest{opening: true})
 }
 
-// complete settles the workflow as done: the ladder is finished (validate
-// approved, or skipped because intake turned validation off).
+// complete settles the workflow as done: the ladder is finished (implement
+// decided for task workflows, validate decided for validation runs).
 func (m *Manager) complete(ctx context.Context, id string) {
 	_ = m.st.SetWorkflowStatus(ctx, id, domain.WorkflowCompleted, "")
 	m.appendMessage(ctx, domain.WorkflowMessage{
 		WorkflowID: id, Role: domain.RoleSystem, Kind: domain.MsgNotice, Content: "Workflow completed.",
 	})
 	m.publishStatus(ctx, id)
+}
+
+// ---- validation runs ----
+
+// kvAutoValidate is the persisted dashboard toggle: run validation
+// automatically when an implement approval lands and the engine is idle.
+// "" (unset) = on.
+const kvAutoValidate = "workflow.autovalidate"
+
+// AutoValidate reads the auto-validate-on-completion toggle (default on).
+func (m *Manager) AutoValidate(ctx context.Context) bool {
+	v, err := m.st.GetKV(ctx, kvAutoValidate)
+	if err != nil {
+		return true
+	}
+	return v != "0"
+}
+
+// SetAutoValidate persists the toggle.
+func (m *Manager) SetAutoValidate(ctx context.Context, on bool) error {
+	v := "0"
+	if on {
+		v = "1"
+	}
+	return m.st.SetKV(ctx, kvAutoValidate, v)
+}
+
+// maybeAutoValidate opens a validation run if the toggle is on, nothing else
+// is executing, something is pending, and no run is already live. Failures
+// are silent by design — the operator can always trigger by hand.
+func (m *Manager) maybeAutoValidate(ctx context.Context) {
+	if !m.AutoValidate(ctx) {
+		return
+	}
+	if n, err := m.st.CountTurnRunning(ctx); err != nil || n > 0 {
+		return
+	}
+	if pending, err := m.st.ListValidationPending(ctx); err != nil || len(pending) == 0 {
+		return
+	}
+	_, _ = m.StartValidation(ctx)
+}
+
+// StartValidation opens a validation run: one validate-stage conversation
+// covering every implemented-but-unvalidated task workflow (its targets).
+// With nothing pending it still runs — as a health check of the verify
+// command and the agent-play smoke harness. Only one run lives at a time.
+func (m *Manager) StartValidation(ctx context.Context) (domain.Workflow, error) {
+	if run, err := m.st.ActiveValidationRun(ctx); err == nil {
+		return run, fmt.Errorf("workflow: validation run %s is already live", run.ID)
+	}
+	pending, err := m.st.ListValidationPending(ctx)
+	if err != nil {
+		return domain.Workflow{}, err
+	}
+	title := fmt.Sprintf("Validation run (%d pending)", len(pending))
+	// A validation batch inherits the strictest target: one workflow that
+	// opted out keeps the run's final approval manual. Empty health-check
+	// runs use the product default (on).
+	autoApprove := true
+	for _, target := range pending {
+		if !target.AutoApprove {
+			autoApprove = false
+			break
+		}
+	}
+	wf := domain.Workflow{
+		ID:          store.NewWorkflowID("validation", time.Now()),
+		Title:       title,
+		Stage:       domain.StageValidate,
+		Status:      domain.WorkflowAwaitingUser,
+		Kind:        domain.KindValidation,
+		AutoApprove: autoApprove,
+		Created:     time.Now().UTC(),
+	}
+	if err := os.MkdirAll(m.artifactDirAbs(wf.ID), 0o755); err != nil {
+		return domain.Workflow{}, err
+	}
+	if err := m.st.CreateWorkflow(ctx, wf); err != nil {
+		return domain.Workflow{}, err
+	}
+	// The run's diff base: the oldest pending implementation's base (they're
+	// sorted oldest-first), so base..HEAD spans every covered change.
+	base := ""
+	ids := make([]string, 0, len(pending))
+	for _, p := range pending {
+		ids = append(ids, p.ID)
+		if base == "" && p.BaseSHA != "" {
+			base = p.BaseSHA
+		}
+	}
+	if base == "" {
+		if sha, err := gitx.RevParse(ctx, m.cfg.RepoDir, "HEAD"); err == nil {
+			base = sha
+		}
+	}
+	if base != "" {
+		_ = m.st.SetWorkflowBaseSHA(ctx, wf.ID, base)
+		wf.BaseSHA = base
+	}
+	if err := m.st.SetValidationTargets(ctx, wf.ID, ids); err != nil {
+		return domain.Workflow{}, err
+	}
+	m.publish(ctx, "workflow.created", wf.ID, map[string]any{"title": wf.Title, "stage": string(domain.StageValidate), "kind": wf.Kind})
+	m.appendMessage(ctx, domain.WorkflowMessage{
+		WorkflowID: wf.ID, Stage: domain.StageValidate, Role: domain.RoleSystem, Kind: domain.MsgStageOpen,
+		Content: fmt.Sprintf("Validation run started — %d implementation(s) pending.", len(pending)),
+	})
+	if err := m.enqueue(wf.ID, sessionMsg{kind: "open"}); err != nil {
+		return wf, err
+	}
+	return wf, nil
+}
+
+// finalizeValidation settles an approved run's targets: each is stamped
+// validated and its artifact folder is archived — sent to the OS recycle
+// bin, its deletion committed (the folder survives in git history and the
+// bin; the working tree stays tidy).
+func (m *Manager) finalizeValidation(ctx context.Context, wf domain.Workflow) {
+	targets, err := m.st.ValidationTargets(ctx, wf.ID)
+	if err != nil || len(targets) == 0 {
+		return
+	}
+	archive := m.cfg.Archive
+	if archive == nil {
+		archive = recycle.Dispose
+	}
+	var archived []string
+	for _, id := range targets {
+		if err := m.st.MarkValidated(ctx, id, wf.ID); err != nil {
+			continue
+		}
+		m.publish(ctx, "workflow.validated", id, map[string]any{"run": wf.ID})
+		dir := m.artifactDirAbs(id)
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		if err := archive(dir); err != nil {
+			m.notice(ctx, wf.ID, fmt.Sprintf("archive of %s failed: %v (left in place)", id, err))
+			continue
+		}
+		archived = append(archived, m.artifactDirRel(id))
+	}
+	if len(archived) > 0 {
+		subject := commitSubject(wf, fmt.Sprintf("archived %d validated workflow(s)", len(archived)))
+		msg := gitx.BuildCommitMessage(subject, strings.Join(archived, "\n"), [][2]string{
+			{"Hal-Workflow", wf.ID}, {"Hal-Stage", string(domain.StageValidate)},
+		})
+		if _, err := gitx.CommitPaths(ctx, m.cfg.RepoDir, msg, archived...); err != nil {
+			m.notice(ctx, wf.ID, fmt.Sprintf("archive commit failed: %v", err))
+		}
+	}
+	m.notice(ctx, wf.ID, fmt.Sprintf(
+		"Validated %d implementation(s); %d artifact folder(s) archived to the recycle bin.",
+		len(targets), len(archived)))
 }
 
 // commitStage commits the workflow's artifact directory — never the rest of
@@ -547,9 +705,9 @@ func (m *Manager) writeSkipStub(ctx context.Context, wf domain.Workflow, stage d
 		// The common trivial-task path: the raw ask IS the question.
 		body = fmt.Sprintf("# Research Question (unrefined)\n\nThe operator skipped refinement; their ask, verbatim:\n\n%s\n", wf.Brief)
 	} else if stage == domain.StageValidate {
-		// Last rung: there is no downstream reader — this stub is the
-		// record that nothing checked the change.
-		body = fmt.Sprintf("# Validation (skipped)\n\nThis stage never ran (%s): the implement changelog was not checked\nagainst the plan and the verify command did not run.\n", why)
+		// A skipped validation run: its pending implementations stay queued
+		// for the next run — this stub only records that this one never ran.
+		body = fmt.Sprintf("# Validation run (skipped)\n\nThis validation run never executed (%s). The implementations it would\nhave covered remain queued for the next run.\n", why)
 	} else {
 		body = fmt.Sprintf("# %s (skipped by operator)\n\nThe operator skipped this stage. Downstream stages work directly from the\nnewest non-skipped ancestor; treat questions this stage would have settled\nas implementer's choice, preferring the codebase's existing patterns.\n", stage)
 	}
@@ -615,7 +773,7 @@ func (m *Manager) runTurn(ctx context.Context, id string, s *session, req turnRe
 	// later turns ride the resumed session with the raw message.
 	var turnPrompt string
 	if resume == "" {
-		turnPrompt, err = m.openingPrompt(wf, stages, req)
+		turnPrompt, err = m.openingPrompt(ctx, wf, stages, req)
 		if err != nil {
 			m.failWorkflow(ctx, id, fmt.Sprintf("prompt compose: %v", err))
 			return
@@ -780,11 +938,12 @@ func (m *Manager) settleTurn(ctx context.Context, id string, s *session, wf doma
 		_ = m.st.SetStageArtifact(ctx, id, stage, m.artifactRel(id, spec.Artifact))
 	}
 
-	// Implement turns commit the whole tree (recovery property: a killed
-	// turn never strands work).
-	if stage == domain.StageImplement && res.State != turns.TurnInterrupted {
+	// Full-access turns (implement, and validate runs fixing what they
+	// find) commit the whole tree (recovery property: a killed turn never
+	// strands work).
+	if spec.FullAccess && res.State != turns.TurnInterrupted {
 		if dirty, _ := gitx.IsDirty(ctx, m.cfg.RepoDir); dirty {
-			subject := commitSubject(wf, fmt.Sprintf("implement turn %d", turnID))
+			subject := commitSubject(wf, fmt.Sprintf("%s turn %d", stage, turnID))
 			msg := gitx.BuildCommitMessage(subject, report.Note, [][2]string{
 				{"Hal-Workflow", id}, {"Hal-Stage", string(stage)},
 			})
@@ -826,6 +985,20 @@ func (m *Manager) settleTurn(ctx context.Context, id string, s *session, wf doma
 	}
 
 	m.setStatus(ctx, id, status, errDetail, report.Note)
+	// Auto-approval deliberately keys off the settled state, not prose: only
+	// a valid ready report with an artifact (and, for validate, a green gate)
+	// reaches AwaitingApproval. Asking, blocked, errors, and missing artifacts
+	// therefore always return control to the user.
+	if status == domain.WorkflowAwaitingApproval && wf.AutoApprove {
+		// Queue rather than deciding inline: runTurn still owns its semaphore
+		// (and possibly implementMu) until it returns. The session inbox keeps
+		// the ordinary approval serialized after those resources are released.
+		m.enqueueSelf(s, sessionMsg{
+			kind:  "approve",
+			stage: stage,
+			text:  "Automatically approved: stage completed without clarification questions.",
+		})
+	}
 }
 
 func gateMessage(green bool, output string) string {
@@ -955,7 +1128,7 @@ func (m *Manager) turnSink(ctx context.Context, id string, stage domain.Workflow
 
 // ---- prompt assembly ----
 
-func (m *Manager) openingPrompt(wf domain.Workflow, stages []domain.WorkflowStageState, req turnRequest) (string, error) {
+func (m *Manager) openingPrompt(ctx context.Context, wf domain.Workflow, stages []domain.WorkflowStageState, req turnRequest) (string, error) {
 	stage := wf.Stage
 	spec, err := prompt.StageSpecFor(stage)
 	if err != nil {
@@ -986,6 +1159,30 @@ func (m *Manager) openingPrompt(wf domain.Workflow, stages []domain.WorkflowStag
 	if stage == domain.StageValidate && wf.BaseSHA != "" {
 		diffRange = wf.BaseSHA + "..HEAD"
 	}
+	// A validation run's input is the target list — every pending
+	// implementation's changelog — not a single ancestor artifact.
+	var targets []prompt.ValidationTarget
+	if wf.Kind == domain.KindValidation {
+		ids, err := m.st.ValidationTargets(ctx, wf.ID)
+		if err != nil {
+			return "", err
+		}
+		for _, tid := range ids {
+			twf, err := m.st.GetWorkflow(ctx, tid)
+			if err != nil {
+				continue
+			}
+			t := prompt.ValidationTarget{ID: tid, Title: twf.Title}
+			if abs, _, err := m.ArtifactPath(tid, domain.StageImplement); err == nil {
+				t.ChangelogAbs = abs
+			}
+			if twf.BaseSHA != "" {
+				t.DiffRange = twf.BaseSHA + "..HEAD"
+			}
+			targets = append(targets, t)
+		}
+		input = prompt.StageArtifactRef{}
+	}
 	mech := prompt.StageMechanics(prompt.StageMechanicsInputs{
 		WorkflowID:   wf.ID,
 		Title:        wf.Title,
@@ -1000,6 +1197,7 @@ func (m *Manager) openingPrompt(wf domain.Workflow, stages []domain.WorkflowStag
 		VerifyDir:    m.cfg.VerifyDir,
 		DiffRange:    diffRange,
 		Input:        input,
+		Targets:      targets,
 	})
 	brief := wf.Brief
 	if !req.opening || stage != domain.StageRefine {
@@ -1009,13 +1207,17 @@ func (m *Manager) openingPrompt(wf domain.Workflow, stages []domain.WorkflowStag
 	if req.attachments != "" {
 		attachments = strings.Split(req.attachments, "\n")
 	}
+	tail := prompt.StageOpenTail(stage, brief, attachments)
+	if wf.Kind == domain.KindValidation {
+		tail = prompt.ValidationOpenTail(len(targets), brief)
+	}
 	_, full, err := prompt.ComposeStage(stage, prompt.StageInputs{
 		Contract:        m.fragment("stages/workflow-contract.md"),
 		Mechanics:       mech,
 		Goal:            readTrim(m.cfg.GoalPath),
 		ProjectFragment: m.fragment("project.md"),
 		StageBody:       m.fragment("stages/" + string(stage) + ".md"),
-		Tail:            prompt.StageOpenTail(stage, brief, attachments),
+		Tail:            tail,
 	})
 	return full, err
 }
@@ -1047,7 +1249,7 @@ func (m *Manager) bundleFor(wf domain.Workflow, stage domain.WorkflowStage) doma
 	return b
 }
 
-func (m *Manager) artifactDirRel(id string) string  { return path.Join(m.cfg.ArtifactRoot, id) }
+func (m *Manager) artifactDirRel(id string) string { return path.Join(m.cfg.ArtifactRoot, id) }
 func (m *Manager) artifactDirAbs(id string) string {
 	return filepath.Join(m.cfg.RepoDir, filepath.FromSlash(m.artifactDirRel(id)))
 }

@@ -1,15 +1,20 @@
 # Hal
 
-Operator-gated coding-agent workflows for any git repository, with a live
-dashboard.
+coding-agent workflows for any git repository, with a live dashboard.
 
 One self-contained binary. Point it at a repo and each unit of work becomes a
-**workflow**: a live Claude Code conversation that moves through six fixed,
-human-approved stages — **refine → research → design → plan → implement →
-validate**. The agent asks questions, you steer it in chat, each stage
-produces a reviewable markdown artifact, and nothing advances until you
-approve (or skip) the stage. The approved artifacts are committed with the
-work, so every decision trail is project history.
+**workflow**: a live Claude Code conversation that moves through five fixed,
+reviewable stages — **refine → research → design → plan → implement**.
+The agent asks questions, you steer it in chat, and each stage produces a
+markdown artifact. The default-on **auto-approve ready stages** checkbox
+commits and advances completed stages automatically; clarification questions,
+blockers, errors, missing artifacts, and red validation gates still pause for
+you. Turn it off to review and approve (or skip) every stage manually. Approved
+artifacts are committed with the work, so every
+decision trail is project history. Validation is a separate **validation
+run**: one validate conversation that sweeps every implemented-but-
+unvalidated workflow at once — triggered by the dashboard's Validate button
+or automatically when an implementation lands and the engine is idle.
 
 ```
 cd your-repo
@@ -66,7 +71,7 @@ hal version
 
 ## The workflow model
 
-Every workflow is one live conversation with fixed, human-gated checkpoints:
+Every workflow is one live conversation with fixed, interruptible checkpoints:
 
 1. **refine** — the agent interprets your raw ask conversationally (no repo
    access) and distills it into a research question (`01-question.md`).
@@ -74,15 +79,34 @@ Every workflow is one live conversation with fixed, human-gated checkpoints:
    `02-research.md`.
 3. **design** — approaches + tradeoffs + a recommendation → `03-design.md`.
 4. **plan** — a checkbox implementation plan → `04-plan.md`.
-5. **implement** — the only stage with write access to the repo; checks the
-   plan off in place and writes a changelog of every change (plus the checks
-   validation must run) → `05-implementation.md`.
-6. **validate** — verifies the changelog's claims against the code and runs
-   your `verify` command → `06-validation.md`. A red verify gates approval.
+5. **implement** — the only task stage with write access to the repo; checks
+   the plan off in place and writes a changelog of every change (plus the
+   checks validation must run) → `05-implementation.md`. Approving it
+   completes the workflow and queues the implementation for validation.
 
 Each stage reads exactly ONE input artifact — its predecessor's output
-(skips resolve to the newest non-skipped ancestor). Validate works from the
-implement changelog alone, so it never re-reads the earlier artifacts.
+(skips resolve to the newest non-skipped ancestor).
+
+**Validation runs.** Validate is no longer a per-workflow stage. A
+validation run is a single validate conversation that covers EVERY completed,
+implemented workflow no run has checked yet. It verifies each changelog's
+claims against the code, runs your `verify` command (a red verify gates
+approval) and the `agent_play/` smoke test, and — with full write access —
+**auto-fixes issues whose solution is obvious** (in the implementations, the
+agent-play harness, the smoke scenario, or the verify wiring); anything
+needing a real decision lands in the report instead. A run triggers when:
+
+- you click **Validate** on the dashboard (always allowed — with nothing
+  pending it runs as a health check of the verify command and the smoke
+  harness), or
+- an implement approval completes a workflow while no other stage is
+  executing and **auto-validate on completion** (the persisted checkbox
+  beside the Validate button, on by default) is checked.
+
+Approving a run's report stamps every covered workflow validated and
+**archives its `.hal/workflows/<id>/` folder to the OS recycle bin**, with
+the deletion committed — the artifacts stay recoverable in git history and
+the bin while the working tree stays tidy.
 
 Mechanics that keep this honest:
 
@@ -96,15 +120,17 @@ Mechanics that keep this honest:
   dashboard: approve (commits the artifact and opens the next stage), request
   changes (your feedback becomes the next turn), or skip (a stub artifact
   records the skip). Intake can also start at a later stage — everything
-  before it is stub-skipped — and clear its **validate** checkbox (on by
-  default): the ladder then ends at implement, whose approval stub-skips
-  validate and completes the workflow without running the verify gate.
+  before it is stub-skipped. With **auto-approve ready stages** checked (the
+  default), the engine uses that same approval path as soon as the agent
+  reports a final artifact; it never auto-advances an `asking`, `blocked`, or
+  `error` state, a missing artifact, or a red validation gate.
 - **Artifacts live in the repo** under `.hal/workflows/<id>/`, editable
   from the dashboard (conflict-checked) or your editor.
-- **Tool scoping + tree check.** Non-implement stages run with a read-only
-  tool surface, and any file they change outside their artifact folder is
-  reverted after the turn (`workflow.tree_violation`). Implement turns commit
-  the whole tree after each turn so a killed turn never strands work.
+- **Tool scoping + tree check.** Stages before implement run with a
+  read-only tool surface, and any file they change outside their artifact
+  folder is reverted after the turn (`workflow.tree_violation`). Implement
+  and validation-run turns have write access and commit the whole tree after
+  each turn so a killed turn never strands work.
 - **Statuses.** `turn-running` → agent working; `awaiting-user` → it asked
   you something; `awaiting-approval` → artifact ready for review; `blocked` →
   the implement plan/reality mismatch hard-stop; `error` → the turn failed
@@ -128,7 +154,7 @@ built-ins → user-global (`%APPDATA%\hal\config.toml`) → repo file →
 [project]
 name   = "space-game"
 trunk  = "main"              # the branch workflows work on (checked at start; default: current)
-verify = "npm test"          # THE GATE. exit 0 = pass. validate approval is gated on it.
+verify = "npm test"          # THE GATE. exit 0 = pass. validation-run approval is gated on it.
 # verify_dir = "client"      # where verify runs (default: repo root)
 
 [safety]
@@ -238,7 +264,7 @@ sub-agent definitions the research/design prompts call by name.
 
 In a repo that carries the `agent_play/` toolkit, `hal init` additionally
 seeds `agent_play/agent_play.config.json` with an example `smoke` entry —
-the level select / setup the validate stage plays as its quick agent
+the level select / setup a validation run plays as its quick agent
 playthrough. An existing toolkit config is never touched (even with
 `--force`); if it lacks a `smoke` entry, init prints the entry to merge.
 
@@ -281,8 +307,8 @@ inquiry runs at a time; route it with `[types.inquiry]`.
 
 ## ⚠️ Unattended execution
 
-Implement and validate turns run with Claude Code's permission bypass by
-default (`[safety] skip_permissions = true`); set it to `false` for
+Implement and validation-run turns run with Claude Code's permission bypass
+by default (`[safety] skip_permissions = true`); set it to `false` for
 acceptEdits mode plus an explicit tool allowlist instead. The earlier stages
 are read-only by tool policy, backed by the engine's post-turn tree check.
 Agents can still edit, run, and delete files during implement — **only run
@@ -324,8 +350,9 @@ The `e2e` suite is the orchestrator-level proof: it builds `cmd/hal`,
 scaffolds throwaway git repos with `.hal/` configs, boots `hal up`
 with workflow turns routed to the scripted fake agent
 (`HAL_WORKFLOW_AGENT=fake`), and drives a full workflow refine →
-validate → completed over REST — approvals, artifacts, commit trailers,
-message history, and the interject path. It is hermetic — temp state dirs,
+implement → completed plus the auto-opened validation run over REST —
+approvals, artifacts, commit trailers, message history, the archive step,
+and the interject path. It is hermetic — temp state dirs,
 temp git identity, no real agents — so it's safe to run while a live
 hal instance is using this machine.
 

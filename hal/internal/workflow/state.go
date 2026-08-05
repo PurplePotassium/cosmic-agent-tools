@@ -1,6 +1,7 @@
 // Package workflow implements the interactive human-gated workflow engine:
 // a pure state machine (this file) and the Manager that drives one live
-// conversation per workflow through the six fixed stages.
+// conversation per workflow through the fixed stages — five for a task
+// workflow, the single validate stage for a validation run.
 package workflow
 
 import (
@@ -100,9 +101,13 @@ func CanAct(wf domain.Workflow, action string, artifactExists bool) error {
 }
 
 // Advance returns the workflow's state after approving/skipping the current
-// stage: the next stage, or completed after validate.
-func Advance(current domain.WorkflowStage) (next domain.WorkflowStage, completed bool) {
-	if n, ok := domain.NextStage(current); ok {
+// stage: the next task-ladder stage, or completed after implement (task
+// workflows) / validate (validation runs, whose only stage it is).
+func Advance(kind string, current domain.WorkflowStage) (next domain.WorkflowStage, completed bool) {
+	if kind == domain.KindValidation {
+		return current, true
+	}
+	if n, ok := domain.NextTaskStage(current); ok {
 		return n, false
 	}
 	return current, true

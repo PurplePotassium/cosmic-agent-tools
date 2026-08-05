@@ -58,7 +58,7 @@ func (a *App) workflowConfig() workflow.Config {
 	for name, b := range cfg.Workflow.Stages {
 		stages[domain.WorkflowStage(name)] = domain.Bundle{Agent: "claude", Model: b.Model, Effort: b.Effort}
 	}
-	return workflow.Config{
+	wcfg := workflow.Config{
 		RepoDir:             a.RepoDir,
 		Trunk:               cfg.Project.Trunk,
 		StateDir:            a.StateDir,
@@ -75,6 +75,12 @@ func (a *App) workflowConfig() workflow.Config {
 		ExportDir:           cfg.Export.Dir,
 		ExportHumanReadable: cfg.Export.HumanReadable,
 	}
+	// Test seam (e2e): validated artifact folders are hard-deleted instead
+	// of landing in the developer's real recycle bin.
+	if os.Getenv("HAL_WORKFLOW_ARCHIVE") == "delete" {
+		wcfg.Archive = os.RemoveAll
+	}
+	return wcfg
 }
 
 func (a *App) verifyDirAbs(rel string) string {
@@ -225,6 +231,29 @@ func (a *App) WriteWorkflowArtifact(ctx context.Context, id string, stage domain
 
 // ErrArtifactConflict: the artifact changed under the editor.
 var ErrArtifactConflict = fmt.Errorf("artifact changed on disk since it was loaded — reload and reapply your edit")
+
+// ValidationStatus is the dashboard's validation card view model: the
+// persisted auto-validate toggle, the implementations waiting for a run,
+// and the live run if one exists.
+type ValidationStatus struct {
+	AutoValidate bool              `json:"autoValidate"`
+	Pending      []domain.Workflow `json:"pending"`
+	Active       *domain.Workflow  `json:"active,omitempty"`
+}
+
+// ValidationState assembles the validation card's view model.
+func (a *App) ValidationState(ctx context.Context) (ValidationStatus, error) {
+	st := ValidationStatus{AutoValidate: a.WorkflowManager().AutoValidate(ctx)}
+	pending, err := a.Store.ListValidationPending(ctx)
+	if err != nil {
+		return st, err
+	}
+	st.Pending = pending
+	if run, err := a.Store.ActiveValidationRun(ctx); err == nil {
+		st.Active = &run
+	}
+	return st, nil
+}
 
 // WorkflowDiff returns the implement diffstat (base..HEAD).
 func (a *App) WorkflowDiff(ctx context.Context, id string) (string, error) {

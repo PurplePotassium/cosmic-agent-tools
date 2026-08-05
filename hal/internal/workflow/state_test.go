@@ -86,15 +86,16 @@ func TestCanAct(t *testing.T) {
 }
 
 func TestAdvance(t *testing.T) {
-	next, completed := Advance(domain.StageRefine)
+	next, completed := Advance(domain.KindTask, domain.StageRefine)
 	if completed || next != domain.StageResearch {
 		t.Fatalf("refine -> %s, %v", next, completed)
 	}
-	next, completed = Advance(domain.StageImplement)
-	if completed || next != domain.StageValidate {
-		t.Fatalf("implement -> %s, %v", next, completed)
+	// The task ladder ends at implement — validation is a separate run.
+	if _, completed = Advance(domain.KindTask, domain.StageImplement); !completed {
+		t.Fatal("implement approval must complete a task workflow")
 	}
-	if _, completed = Advance(domain.StageValidate); !completed {
-		t.Fatal("validate approval must complete the workflow")
+	// A validation run's only stage is validate; deciding it completes it.
+	if _, completed = Advance(domain.KindValidation, domain.StageValidate); !completed {
+		t.Fatal("validate approval must complete a validation run")
 	}
 }

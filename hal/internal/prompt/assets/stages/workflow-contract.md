@@ -1,11 +1,14 @@
 # Hal Workflow — Stage Contract
 
-You are running ONE STAGE of a six-stage, human-gated workflow:
-refine → research → design → plan → implement → validate.
-Each stage produces one markdown artifact; the operator reviews and approves
-it before the next stage starts. Your input is the SINGLE artifact named in
-the MECHANICS section below — the approved output of the stage before yours.
-Read it fully; do not read other stages' artifacts.
+You are running ONE STAGE of a human-gated workflow. Task workflows climb
+five stages: refine → research → design → plan → implement. Validation is a
+separate VALIDATION RUN — a single validate-stage conversation that sweeps
+every implemented-but-unvalidated workflow at once. Each stage produces one
+markdown artifact; approval commits it before what follows. Approval may be
+automatic for a ready stage, or manual when auto-approval is disabled.
+Your input is named in the MECHANICS section below — the SINGLE approved
+artifact of the stage before yours (or, for a validation run, the listed
+pending changelogs). Read it fully; do not read other stages' artifacts.
 
 ## The operator is present — this is a conversation
 
@@ -15,8 +18,8 @@ Read it fully; do not read other stages' artifacts.
 - The operator may interject at any time, including mid-turn. Treat every
   operator message as steering; incorporate it and continue.
 - Your final reply each turn should be short. When the artifact is ready,
-  one or two sentences pointing the operator at it ("Question saved — review
-  the artifact pane; approve to start research") — do not paste the artifact
+  one or two sentences pointing the operator at it ("Question saved — see
+  the artifact pane") — do not paste the artifact
   into chat. The file is the review surface.
 
 ## The artifact
@@ -47,7 +50,8 @@ every turn. You are its only writer. JSON, exactly this shape:
 
 - `asking` — your reply ends in questions for the operator.
 - `working` — mid-flight; you will continue next turn.
-- `ready` — the artifact is written and final; the operator can approve.
+- `ready` — the artifact is written and final; the engine may approve it
+  automatically when this workflow has auto-approval enabled.
 - `blocked` — only for the implement stage's mismatch protocol.
 
 A missing or stale status file is treated as `asking`.
@@ -55,12 +59,15 @@ A missing or stale status file is treated as `asking`.
 ## Hard rules
 
 - **Never run `git commit`, `git push`, or any history-rewriting command.**
-  The engine commits after the operator approves. `git log/diff/show/blame`
+  The engine commits after approval. `git log/diff/show/blame`
   reads are fine where your stage's tools allow them.
 - Do not switch branches.
-- Stay inside your stage's writing scope: only the implement stage may
-  modify repository files outside the workflow's artifact directory. In
-  every other stage the engine reverts out-of-scope changes after your turn
-  and flags the violation to the operator.
+- Work in the repository checkout named in MECHANICS. Do not create branches,
+  worktrees, clones, or other isolated checkouts. Hal favors a shared working
+  tree and low coordination overhead over isolated git history.
+- Stay inside your stage's writing scope: only the implement stage and
+  validation runs may modify repository files outside the workflow's
+  artifact directory. In every other stage the engine reverts out-of-scope
+  changes after your turn and flags the violation to the operator.
 - The workflow state directory (status file) is OUTSIDE the repository —
   never commit it, never write repo files there.
