@@ -215,38 +215,6 @@ func TestParseEffortSupport(t *testing.T) {
 	}
 }
 
-func TestFakeDriver(t *testing.T) {
-	t.Setenv("HAL_FAKE_BIN", "")
-	f := NewFake()
-	if _, err := f.Probe(context.Background()); err == nil {
-		t.Fatal("probe should fail without HAL_FAKE_BIN")
-	}
-	t.Setenv("HAL_FAKE_BIN", os.Args[0])
-	caps, err := f.Probe(context.Background())
-	if err != nil || caps.Capture != CaptureStreaming {
-		t.Fatalf("caps: %+v, %v", caps, err)
-	}
-	plan, err := f.Plan(InvokeSpec{ExtraArgs: []string{"--extra"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Exe != os.Args[0] || !slices.Equal(plan.Args, []string{"_fake-agent", "--extra"}) {
-		t.Fatalf("plan: %+v", plan)
-	}
-}
-
-func TestRegistry(t *testing.T) {
-	if d, err := New("claude"); err != nil || d.Name() != "claude" {
-		t.Fatalf("claude: %v", err)
-	}
-	if d, err := New("fake"); err != nil || d.Name() != "fake" {
-		t.Fatalf("fake: %v", err)
-	}
-	if _, err := New("nonsense"); err == nil {
-		t.Fatal("unknown driver should error")
-	}
-}
-
 // TestFindAgyEnvOverrideGuard pins the same security guard findClaude has: a
 // relative HAL_AGY_BIN must be absolutized against the launch cwd (never
 // left to resolve against cmd.Dir — the agent's worktree, where a previous

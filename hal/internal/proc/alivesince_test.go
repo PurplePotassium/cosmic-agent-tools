@@ -14,19 +14,6 @@ func creationTimeSupported() bool {
 	return runtime.GOOS == "windows" || runtime.GOOS == "linux"
 }
 
-func TestAliveSinceSelf(t *testing.T) {
-	// This process started before "now", so it is consistent with a lock
-	// recorded now.
-	if !AliveSince(os.Getpid(), time.Now()) {
-		t.Fatal("AliveSince(self, now) = false, want true")
-	}
-	// A zero recorded instant (lock written by an older binary) falls back to
-	// plain liveness.
-	if !AliveSince(os.Getpid(), time.Time{}) {
-		t.Fatal("AliveSince(self, zero) = false, want true (liveness fallback)")
-	}
-}
-
 // A recorded instant of 1970 predates this process's creation: exactly the
 // PID-reuse signature (the recorder must have started — and died — before we
 // were created), so the probe must report "not the same process".

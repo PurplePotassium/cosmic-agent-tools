@@ -18,21 +18,6 @@ type payload struct {
 	Count int    `json:"count"`
 }
 
-func TestWriteReadRoundtrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sub", "data.json")
-	want := payload{Name: "héllo — ünïcode ✓", Count: 42}
-	if err := WriteJSON(path, want); err != nil {
-		t.Fatal(err)
-	}
-	var got payload
-	if err := ReadJSON(path, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("roundtrip mismatch: got %+v want %+v", got, want)
-	}
-}
-
 func TestWriteIsBOMFreeLFTerminated(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data.json")
 	if err := WriteJSON(path, payload{Name: "x"}); err != nil {

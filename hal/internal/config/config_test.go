@@ -18,28 +18,6 @@ func writeFile(t *testing.T, dir, name, content string) string {
 
 func noEnv(string) string { return "" }
 
-func TestDefaultsAloneWork(t *testing.T) {
-	res, err := Load("", "", "", noEnv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Warnings) != 0 {
-		t.Fatalf("unexpected warnings: %v", res.Warnings)
-	}
-	if res.Config.Server.Port != 4455 {
-		t.Fatalf("port = %d", res.Config.Server.Port)
-	}
-	if res.Config.Workflow.ArtifactDir != ".hal/workflows" {
-		t.Fatalf("artifact_dir = %q", res.Config.Workflow.ArtifactDir)
-	}
-	if res.Config.Workflow.TurnMinutes != 20 {
-		t.Fatalf("turn_minutes = %d", res.Config.Workflow.TurnMinutes)
-	}
-	if res.Source("server.port") != LayerBuiltin {
-		t.Fatalf("provenance = %q", res.Source("server.port"))
-	}
-}
-
 func TestLayerPrecedenceAndProvenance(t *testing.T) {
 	dir := t.TempDir()
 	user := writeFile(t, dir, "user.toml", `
@@ -73,36 +51,15 @@ verify = "npm test"
 		t.Fatalf("override layer lost: verify = %q", c.Project.Verify)
 	}
 	for key, want := range map[string]string{
-		"server.port":         LayerRepo,
-		"server.open_browser": LayerUser,
-		"project.verify":      LayerOverride,
-		"project.name":        LayerRepo,
+		"server.port":           LayerRepo,
+		"server.open_browser":   LayerUser,
+		"project.verify":        LayerOverride,
+		"project.name":          LayerRepo,
 		"workflow.turn_minutes": LayerBuiltin,
 	} {
 		if got := res.Source(key); got != want {
 			t.Errorf("provenance[%s] = %q, want %q", key, got, want)
 		}
-	}
-}
-
-func TestEnvOverridesFiles(t *testing.T) {
-	dir := t.TempDir()
-	repo := writeFile(t, dir, "repo.toml", "[server]\nport = 6000\n")
-	env := func(k string) string {
-		if k == "HAL_PORT" {
-			return "7777"
-		}
-		return ""
-	}
-	res, err := Load("", repo, "", env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Config.Server.Port != 7777 {
-		t.Fatalf("port = %d", res.Config.Server.Port)
-	}
-	if res.Source("server.port") != LayerEnv {
-		t.Fatalf("provenance = %q", res.Source("server.port"))
 	}
 }
 

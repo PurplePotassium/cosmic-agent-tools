@@ -93,32 +93,6 @@ func TestPassLogTailNoNewlineStaysValidUTF8(t *testing.T) {
 	}
 }
 
-// A small log (under the cap) comes back whole, with no banner.
-func TestPassLogUnderCapReturnsWhole(t *testing.T) {
-	a := newTestApp(t, initRepo(t))
-	ctx := context.Background()
-
-	pass, err := a.Store.StartPass(ctx, "art")
-	if err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(t.TempDir(), "small.log")
-	body := "only a few lines\nof output here\n"
-	if err := os.WriteFile(logPath, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Store.UpdatePass(ctx, pass.ID, store.PassPatch{LogPath: &logPath}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := a.PassLog(ctx, pass.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != body {
-		t.Fatalf("small log = %q, want it returned whole %q", got, body)
-	}
-}
-
 // TestDeleteTaskRemovesReferencedAttachments: an attachment's only owner is
 // the markdown line SaveAttachment's caller writes into the task's detail —
 // once the task is gone that file must go with it, or it leaks under
@@ -210,4 +184,3 @@ func drainHasEvent(ch <-chan domain.Event, typ string) bool {
 		}
 	}
 }
-

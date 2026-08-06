@@ -32,6 +32,11 @@ func TestMain(m *testing.M) {
 		fmt.Println(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"thinking..."}},"session_id":"99999999-0000-0000-0000-000000000000"}`)
 		time.Sleep(60 * time.Second)
 		os.Exit(0)
+	case "oversized":
+		fmt.Println(strings.Repeat("x", 2*maxOutputLine))
+		fmt.Println(`{"type":"system","subtype":"init","session_id":"88888888-0000-0000-0000-000000000000"}`)
+		fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"finished after oversized output","session_id":"88888888-0000-0000-0000-000000000000","total_cost_usd":0.01,"num_turns":1}`)
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -70,9 +75,9 @@ func replayEnv(name string) []string {
 // collectSink gathers events thread-safely and closes signal on the first
 // text delta (the "the turn is visibly streaming" moment).
 type collectSink struct {
-	mu     sync.Mutex
-	events []driver.StreamEvent
-	once   sync.Once
+	mu         sync.Mutex
+	events     []driver.StreamEvent
+	once       sync.Once
 	firstDelta chan struct{}
 }
 
@@ -103,9 +108,9 @@ func TestRunnerDone(t *testing.T) {
 	sink := newCollectSink()
 	logPath := filepath.Join(t.TempDir(), "turn-000001.log")
 	res, err := ProcRunner{}.Run(context.Background(), stubDriver{}, TurnSpec{
-		Prompt:  "hello",
-		WorkDir: t.TempDir(),
-		LogPath: logPath,
+		Prompt:   "hello",
+		WorkDir:  t.TempDir(),
+		LogPath:  logPath,
 		ExtraEnv: replayEnv("success.ndjson"),
 	}, sink.sink)
 	if err != nil {
@@ -225,6 +230,30 @@ func TestRunnerTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 25*time.Second {
 		t.Fatalf("timeout took %v — KillTree/WaitDelay regression", elapsed)
+	}
+}
+
+// An oversized tool-output line is discarded without stopping the pipe drain:
+// the child must stay unblocked and its later result event must still settle
+// the turn successfully.
+func TestRunnerContinuesAfterOversizedLine(t *testing.T) {
+	res, err := ProcRunner{}.Run(context.Background(), stubDriver{}, TurnSpec{
+		Prompt:   "emit a large tool result",
+		WorkDir:  t.TempDir(),
+		Timeout:  3 * time.Second,
+		ExtraEnv: []string{"HAL_TURNS_ROLE=oversized"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.State != TurnDone {
+		t.Fatalf("state: %s (%+v)", res.State, res)
+	}
+	if res.FinalText != "finished after oversized output" {
+		t.Fatalf("final text: %q", res.FinalText)
+	}
+	if len(res.Tail) != 3 || !strings.Contains(res.Tail[0], "exceeded 1 MiB") {
+		t.Fatalf("tail should contain one truncation marker followed by init/result: %q", res.Tail)
 	}
 }
 

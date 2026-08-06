@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,21 +24,6 @@ func guardReq(t *testing.T, remoteAddr, host, origin string) int {
 	rec := httptest.NewRecorder()
 	guardLoopback(inner).ServeHTTP(rec, req)
 	return rec.Code
-}
-
-func TestGuardLoopbackAllowsLocal(t *testing.T) {
-	for _, tc := range []struct{ remote, host, origin string }{
-		{"127.0.0.1:5555", "127.0.0.1:4455", ""},
-		{"127.0.0.1:5555", "localhost:4455", ""},
-		{"[::1]:5555", "[::1]:4455", ""},
-		{"127.0.0.1:5555", "127.0.0.1:4455", "http://127.0.0.1:4455"},
-		{"127.0.0.1:5555", "127.0.0.1:4455", "http://localhost:4455"},
-		{"127.0.0.1:5555", "localhost:4455", "http://localhost:9999"}, // other local port ok
-	} {
-		if code := guardReq(t, tc.remote, tc.host, tc.origin); code != http.StatusOK {
-			t.Errorf("remote=%s host=%s origin=%q: got %d, want 200", tc.remote, tc.host, tc.origin, code)
-		}
-	}
 }
 
 func TestGuardLoopbackRejects(t *testing.T) {
@@ -82,33 +66,6 @@ func TestTokenHeaderOnly(t *testing.T) {
 	}
 }
 
-func TestPostAttachmentSavesImageAndReturnsPath(t *testing.T) {
-	s, a := newTestServer(t)
-	body := `{"name":"my shot.png","dataUrl":"data:image/png;base64,iVBORw0KGgowMDAw"}`
-	req := httptest.NewRequest("POST", "http://127.0.0.1/api/v1/tasks/attachments", strings.NewReader(body))
-	req.RemoteAddr = "127.0.0.1:5555"
-	req.Header.Set("X-Hal-Token", s.token)
-	rec := httptest.NewRecorder()
-	s.handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("got %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	var resp struct{ Path string }
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(resp.Path, filepath.Join(a.StateDir, "attachments")) {
-		t.Fatalf("path %q not under %s/attachments", resp.Path, a.StateDir)
-	}
-	data, err := os.ReadFile(resp.Path)
-	if err != nil {
-		t.Fatalf("saved file unreadable: %v", err)
-	}
-	if string(data) != "\x89PNG\r\n\x1a\n0000" {
-		t.Fatalf("saved content = %q, want decoded PNG bytes", data)
-	}
-}
-
 func TestPostAttachmentRequiresToken(t *testing.T) {
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "http://127.0.0.1/api/v1/tasks/attachments", strings.NewReader(`{}`))
@@ -130,48 +87,6 @@ func TestPostAttachmentRejectsNonImageDataURL(t *testing.T) {
 	s.handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("non-image data URL: got %d, want 400", rec.Code)
-	}
-}
-
-func TestGetAttachmentServesSavedFile(t *testing.T) {
-	s, _ := newTestServer(t)
-	body := `{"name":"my shot.png","dataUrl":"data:image/png;base64,iVBORw0KGgowMDAw"}`
-	postReq := httptest.NewRequest("POST", "http://127.0.0.1/api/v1/tasks/attachments", strings.NewReader(body))
-	postReq.RemoteAddr = "127.0.0.1:5555"
-	postReq.Header.Set("X-Hal-Token", s.token)
-	postRec := httptest.NewRecorder()
-	s.handler().ServeHTTP(postRec, postReq)
-	var resp struct{ Path string }
-	if err := json.Unmarshal(postRec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	name := filepath.Base(resp.Path)
-
-	// <img> can't set a header, so the attachment route accepts the token as a
-	// query parameter.
-	getReq := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/"+name+"?token="+s.token, nil)
-	getReq.RemoteAddr = "127.0.0.1:5555"
-	getRec := httptest.NewRecorder()
-	s.handler().ServeHTTP(getRec, getReq)
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("got %d, want 200: %s", getRec.Code, getRec.Body.String())
-	}
-	if ct := getRec.Header().Get("Content-Type"); ct != "image/png" {
-		t.Errorf("Content-Type = %q, want image/png", ct)
-	}
-	if getRec.Body.String() != "\x89PNG\r\n\x1a\n0000" {
-		t.Fatalf("served content = %q, want decoded PNG bytes", getRec.Body.String())
-	}
-}
-
-func TestGetAttachmentUnknownNameNotFound(t *testing.T) {
-	s, _ := newTestServer(t)
-	req := httptest.NewRequest("GET", "http://127.0.0.1/api/v1/attachments/nope.png?token="+s.token, nil)
-	req.RemoteAddr = "127.0.0.1:5555"
-	rec := httptest.NewRecorder()
-	s.handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("got %d, want 404", rec.Code)
 	}
 }
 

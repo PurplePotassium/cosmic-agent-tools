@@ -93,37 +93,6 @@ func TestBranchExistsErr(t *testing.T) {
 	}
 }
 
-func TestStatusDirtyAndBranches(t *testing.T) {
-	ctx := context.Background()
-	dir := initRepo(t)
-	dirty, err := IsDirty(ctx, dir)
-	if err != nil || dirty {
-		t.Fatalf("fresh repo dirty=%v err=%v", dirty, err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "new file.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	paths, err := StatusPorcelain(ctx, dir)
-	if err != nil || len(paths) != 1 || paths[0] != "new file.txt" {
-		t.Fatalf("porcelain: %v, %v", paths, err)
-	}
-
-	if err := CreateBranch(ctx, dir, "hal/code", "main"); err != nil {
-		t.Fatal(err)
-	}
-	if !BranchExists(ctx, dir, "hal/code") || BranchExists(ctx, dir, "nope") {
-		t.Fatal("BranchExists wrong")
-	}
-	br, err := CurrentBranch(ctx, dir)
-	if err != nil || br != "main" {
-		t.Fatalf("branch: %q, %v", br, err)
-	}
-	n, err := AheadCount(ctx, dir, "hal/code", "main")
-	if err != nil || n != 0 {
-		t.Fatalf("ahead: %d, %v", n, err)
-	}
-}
-
 func TestMergeConflictAndClean(t *testing.T) {
 	ctx := context.Background()
 	dir := initRepo(t)

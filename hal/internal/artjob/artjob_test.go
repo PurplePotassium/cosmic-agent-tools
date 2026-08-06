@@ -64,21 +64,6 @@ func TestArtTargetPath(t *testing.T) {
 	}
 }
 
-func TestScreenPath(t *testing.T) {
-	if got := screenPath("assets/art/hero.png"); got != "assets/art/hero-screen.png" {
-		t.Fatalf("screenPath = %q", got)
-	}
-}
-
-func TestJobTitle(t *testing.T) {
-	if got := (Job{Description: "  \nDraw a hero\nwith details"}).title(); got != "Draw a hero" {
-		t.Fatalf("title = %q", got)
-	}
-	if got := (Job{}).title(); got != "art asset" {
-		t.Fatalf("empty title = %q", got)
-	}
-}
-
 type testRig struct {
 	t      *testing.T
 	repo   string

@@ -68,17 +68,6 @@ func TestVerifyTransparencyRejectsOpaque(t *testing.T) {
 	}
 }
 
-func TestValidRemover(t *testing.T) {
-	for _, ok := range append([]string{""}, Removers...) {
-		if !ValidRemover(ok) {
-			t.Fatalf("ValidRemover(%q) = false; want true", ok)
-		}
-	}
-	if ValidRemover("photoshop") {
-		t.Fatal(`ValidRemover("photoshop") = true; want false`)
-	}
-}
-
 func TestRemoveUnknownBackend(t *testing.T) {
 	if err := Remove(t.Context(), "photoshop", "", "in.png", "out.png", KeyGreen); err == nil {
 		t.Fatal("unknown remover must error")

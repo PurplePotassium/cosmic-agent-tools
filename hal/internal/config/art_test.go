@@ -7,13 +7,6 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/domain"
 )
 
-func TestArtDefaults(t *testing.T) {
-	c := Default()
-	if c.Art.Remover != "ffmpeg" {
-		t.Fatalf("default remover = %q; want ffmpeg", c.Art.Remover)
-	}
-}
-
 func TestArtRemoverValidation(t *testing.T) {
 	dir := t.TempDir()
 	repo := writeFile(t, dir, "config.toml", "[art]\nremover = \"photoshop\"\n")

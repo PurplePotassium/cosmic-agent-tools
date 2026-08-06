@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -112,6 +113,7 @@ type fixture struct {
 	runner *scriptedRunner
 	repo   string
 	cancel context.CancelFunc
+	done   chan struct{} // closed when the run loop returns
 }
 
 func newFixture(t *testing.T, steps []scriptedTurn, opts ...func(*Config)) *fixture {
@@ -136,13 +138,47 @@ func newFixture(t *testing.T, steps []scriptedTurn, opts ...func(*Config)) *fixt
 	m := New(st, bus.New(st), interactiveStub{}, runner, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go func() { _ = m.Run(ctx) }()
+	done := make(chan struct{})
+	go func() { defer close(done); _ = m.Run(ctx) }()
 	waitFor(t, "manager running", func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return m.runCtx != nil
 	})
-	return &fixture{m: m, st: st, runner: runner, repo: repo, cancel: cancel}
+	return &fixture{m: m, st: st, runner: runner, repo: repo, cancel: cancel, done: done}
+}
+
+// halt models the dashboard's "stop turns" button: cancel the engine context
+// and wait for the run loop to unwind (app.EngineControl.Halt).
+func (f *fixture) halt(t *testing.T) {
+	t.Helper()
+	f.cancel()
+	select {
+	case <-f.done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for the run loop to stop")
+	}
+}
+
+// relaunch brings the run loop back up against the SAME Manager, exactly as
+// EngineControl does after a halt.
+func (f *fixture) relaunch(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	f.cancel, f.done = cancel, make(chan struct{})
+	go func() { defer close(f.done); _ = f.m.Run(ctx) }()
+	waitFor(t, "manager running again", func() bool {
+		f.m.mu.Lock()
+		defer f.m.mu.Unlock()
+		return f.m.runCtx != nil && f.m.runCtx.Err() == nil
+	})
+}
+
+func (f *fixture) sessionCount() int {
+	f.m.mu.Lock()
+	defer f.m.mu.Unlock()
+	return len(f.m.sessions)
 }
 
 func gitInit(t *testing.T, dir string) {
@@ -789,6 +825,66 @@ func TestAbandon(t *testing.T) {
 	f.waitStatus(t, wf.ID, domain.WorkflowAbandoned)
 	if err := f.m.Message(ctx, wf.ID, "hello?", false); err == nil {
 		t.Fatal("terminal workflow must refuse messages")
+	}
+}
+
+// A halt must not strand the session: the loop forgets itself on the way out,
+// so the relaunched engine builds a fresh one and the operator's next message
+// actually runs a turn. Before this, enqueue reused the dead session and every
+// later message queued into an inbox nobody was reading — the workflow looked
+// alive in the dashboard and answered nothing, forever.
+func TestHaltRelaunchResumesMessages(t *testing.T) {
+	f := newFixture(t, []scriptedTurn{
+		{state: turns.TurnDone, finalText: "a question", status: asking("q")},
+		{state: turns.TurnDone, finalText: "answered", status: asking("q2")},
+	})
+	ctx := context.Background()
+	wf, err := f.m.Create(ctx, CreateReq{Title: "x", Brief: "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.waitTurnCount(t, 1)
+	f.waitStatus(t, wf.ID, domain.WorkflowAwaitingUser)
+	waitFor(t, "session registered", func() bool { return f.sessionCount() == 1 })
+
+	f.halt(t)
+	if n := f.sessionCount(); n != 0 {
+		t.Fatalf("halt left %d session(s) behind — a relaunched engine would reuse a dead inbox", n)
+	}
+
+	f.relaunch(t)
+	if err := f.m.Message(ctx, wf.ID, "carry on", false); err != nil {
+		t.Fatal(err)
+	}
+	f.waitTurnCount(t, 2)
+	if spec := f.spec(t, 1); spec.Prompt != "carry on" {
+		t.Fatalf("resumed turn prompt = %q", spec.Prompt)
+	}
+}
+
+// A message that lands while the engine is down bounces — and leaves nothing
+// in the transcript, so the operator never sees a message no turn will answer.
+func TestMessageRejectedWhileEngineStopped(t *testing.T) {
+	f := newFixture(t, []scriptedTurn{
+		{state: turns.TurnDone, finalText: "a question", status: asking("q")},
+	})
+	ctx := context.Background()
+	wf, err := f.m.Create(ctx, CreateReq{Title: "x", Brief: "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.waitTurnCount(t, 1)
+	f.waitStatus(t, wf.ID, domain.WorkflowAwaitingUser)
+	before, _ := f.st.ListMessages(ctx, wf.ID, 0, 0)
+
+	f.halt(t)
+	err = f.m.Message(ctx, wf.ID, "are you there?", false)
+	if !errors.Is(err, errEngineStopping) {
+		t.Fatalf("message during a halt: err = %v, want errEngineStopping", err)
+	}
+	after, _ := f.st.ListMessages(ctx, wf.ID, 0, 0)
+	if len(after) != len(before) {
+		t.Fatalf("undeliverable message was persisted anyway (%d → %d)", len(before), len(after))
 	}
 }
 

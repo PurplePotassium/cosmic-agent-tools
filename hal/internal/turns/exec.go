@@ -8,7 +8,9 @@ package turns
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -77,10 +79,7 @@ func Exec(ctx context.Context, spec ExecSpec) (ExecResult, error) {
 		cmd.Stderr = pw
 		go func() {
 			defer close(drained)
-			sc := bufio.NewScanner(pr)
-			sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-			for sc.Scan() {
-				line := sc.Text()
+			emit := func(line string) {
 				if spec.LogFile != nil {
 					fmt.Fprintln(spec.LogFile, line)
 				}
@@ -89,18 +88,8 @@ func Exec(ctx context.Context, spec ExecSpec) (ExecResult, error) {
 					spec.OnLine(line)
 				}
 			}
-			if err := sc.Err(); err != nil {
-				// An over-long line (> the 1MB buffer cap) ends the scan
-				// early — the rest of the run goes blind. Say so instead of
-				// silently presenting a truncated log/tail.
-				marker := fmt.Sprintf("(hal: output capture truncated: %v)", err)
-				if spec.LogFile != nil {
-					fmt.Fprintln(spec.LogFile, marker)
-				}
-				drainedTail = appendTail(drainedTail, marker)
-				if spec.OnLine != nil {
-					spec.OnLine(marker)
-				}
+			if err := drainOutputLines(pr, emit); err != nil {
+				emit(fmt.Sprintf("(hal: output capture stopped: %v)", err))
 			}
 		}()
 	} else {
@@ -146,6 +135,53 @@ func Exec(ctx context.Context, spec ExecSpec) (ExecResult, error) {
 		res.ExitCode = -1
 	}
 	return res, nil
+}
+
+const maxOutputLine = 1024 * 1024
+
+// drainOutputLines reads a child pipe without ever letting an oversized line
+// stop the drain. Agent output is line-oriented NDJSON, but a tool result can
+// put arbitrarily large content on one line. Retaining that whole line would
+// make capture memory unbounded; stopping at a Scanner token limit would leave
+// the pipe unread and wedge the child. Keep at most maxOutputLine bytes,
+// discard the rest through the newline, emit one marker, then resume with the
+// next line so a later authoritative result event can still settle the turn.
+func drainOutputLines(r io.Reader, emit func(string)) error {
+	br := bufio.NewReaderSize(r, 64*1024)
+	line := make([]byte, 0, 64*1024)
+	oversized := false
+
+	for {
+		fragment, isPrefix, err := br.ReadLine()
+		if !oversized {
+			if len(line)+len(fragment) <= maxOutputLine {
+				line = append(line, fragment...)
+			} else {
+				line = line[:0]
+				oversized = true
+			}
+		}
+
+		if !isPrefix {
+			switch {
+			case oversized:
+				emit("(hal: output line exceeded 1 MiB and was discarded)")
+			case len(line) > 0 || err == nil:
+				// err == nil distinguishes a real empty line from EOF with no
+				// remaining bytes, matching bufio.Scanner's line semantics.
+				emit(string(line))
+			}
+			line = line[:0]
+			oversized = false
+		}
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+	}
 }
 
 func appendTail(tail []string, line string) []string {

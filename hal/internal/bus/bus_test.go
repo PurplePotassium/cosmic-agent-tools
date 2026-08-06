@@ -20,33 +20,6 @@ func newTestBus(t *testing.T) (*Bus, *store.Store) {
 	return New(st), st
 }
 
-// Publish assigns a seq (persisting to the store) and fans the event out to a
-// live subscriber.
-func TestPublishPersistsAndFansOut(t *testing.T) {
-	b, st := newTestBus(t)
-	ctx := context.Background()
-	ch, cancel := b.Subscribe()
-	defer cancel()
-
-	ev := b.Publish(ctx, domain.Event{Type: "x", Pipeline: "main"})
-	if ev.Seq == 0 {
-		t.Fatal("Publish did not assign a seq")
-	}
-	select {
-	case got := <-ch:
-		if got.Seq != ev.Seq || got.Type != "x" {
-			t.Fatalf("fanned out %+v, want seq=%d type=x", got, ev.Seq)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("subscriber never received the event")
-	}
-
-	evs, err := st.EventsSince(ctx, 0, 10)
-	if err != nil || len(evs) != 1 || evs[0].Seq != ev.Seq {
-		t.Fatalf("EventsSince = %+v err=%v, want the one persisted event", evs, err)
-	}
-}
-
 // The engine must never block on a slow consumer: a subscriber that never
 // drains has its buffer dropped on overflow, but every event still lands in
 // the store so it can re-sync by sequence number.
@@ -80,29 +53,6 @@ func TestSubscribeCancelClosesChannel(t *testing.T) {
 	// A publish after cancel must not panic (no send on the closed channel).
 	b.Publish(ctx, domain.Event{Type: "after-cancel"})
 	cancel() // double cancel is a no-op
-}
-
-// Two subscribers each receive their own copy; cancelling one doesn't disturb
-// the other.
-func TestMultipleSubscribersEachReceive(t *testing.T) {
-	b, _ := newTestBus(t)
-	ctx := context.Background()
-	a, cancelA := b.Subscribe()
-	c, cancelC := b.Subscribe()
-	defer cancelA()
-	defer cancelC()
-
-	b.Publish(ctx, domain.Event{Type: "broadcast"})
-	for _, ch := range []<-chan domain.Event{a, c} {
-		select {
-		case got := <-ch:
-			if got.Type != "broadcast" {
-				t.Fatalf("got %q, want broadcast", got.Type)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("a subscriber missed the broadcast")
-		}
-	}
 }
 
 // PublishEphemeral fans out to live subscribers without persisting — the

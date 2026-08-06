@@ -244,6 +244,11 @@ func (m *Manager) Message(ctx context.Context, id, text string, interrupt bool) 
 	if text == "" {
 		return fmt.Errorf("workflow: empty message")
 	}
+	// Check the engine BEFORE recording anything: a halted engine must reject
+	// the message rather than persist one it cannot deliver.
+	if err := m.awaitEngine(); err != nil {
+		return err
+	}
 	wf, err := m.st.GetWorkflow(ctx, id)
 	if err != nil {
 		return err
@@ -261,7 +266,7 @@ func (m *Manager) Message(ctx context.Context, id, text string, interrupt bool) 
 	m.appendMessage(ctx, domain.WorkflowMessage{
 		WorkflowID: id, Stage: wf.Stage, Role: domain.RoleUser, Kind: kind, Content: text,
 	})
-	return m.enqueue(id, sessionMsg{kind: "user", text: text})
+	return m.deliver(ctx, id, sessionMsg{kind: "user", text: text})
 }
 
 var errTurnInFlight = fmt.Errorf("a turn is in flight — interrupt it or wait")
@@ -307,7 +312,7 @@ func (m *Manager) Reject(ctx context.Context, id string, stage domain.WorkflowSt
 		WorkflowID: id, Stage: stage, Role: domain.RoleUser, Kind: domain.MsgRejection, Content: feedback,
 	})
 	m.publish(ctx, "workflow.rejected", id, map[string]any{"stage": string(stage)})
-	return m.enqueue(id, sessionMsg{kind: "reject", text: feedback})
+	return m.deliver(ctx, id, sessionMsg{kind: "reject", text: feedback})
 }
 
 // Skip skips the CURRENT stage with an engine-written stub artifact.
@@ -352,18 +357,18 @@ func (m *Manager) decide(ctx context.Context, id string, stage domain.WorkflowSt
 // ---- session plumbing ----
 
 func (m *Manager) enqueue(id string, msg sessionMsg) error {
-	// The engine lock, crash cleanup, and startup probes run between server
-	// start and Run — give the engine a beat instead of bouncing the
-	// operator's very first action.
-	select {
-	case <-m.ready:
-	case <-time.After(15 * time.Second):
-		return fmt.Errorf("workflow: engine not running")
+	if err := m.awaitEngine(); err != nil {
+		return err
 	}
 	m.mu.Lock()
-	if m.runCtx == nil {
+	// The liveness check and the session lookup share one critical section.
+	// A session found under a live runCtx is guaranteed to have a live
+	// goroutine behind it: Run waits for every sessionLoop before returning,
+	// and each loop forgets itself on the way out, so a replaced runCtx
+	// implies the previous engine's sessions were already reaped.
+	if err := m.liveLocked(); err != nil {
 		m.mu.Unlock()
-		return fmt.Errorf("workflow: engine not running")
+		return err
 	}
 	s, ok := m.sessions[id]
 	if !ok {
@@ -381,6 +386,52 @@ func (m *Manager) enqueue(id string, msg sessionMsg) error {
 	}
 }
 
+var (
+	errEngineDown = fmt.Errorf("workflow: engine not running")
+	// A halt (the dashboard's "stop turns") cancels the run context and
+	// relaunches the loop. Actions that land inside that window must bounce
+	// loudly: silently accepting them is how an operator ends up staring at a
+	// message nothing will ever answer.
+	errEngineStopping = fmt.Errorf("workflow: the engine is restarting after a stop — send this again in a moment")
+)
+
+// awaitEngine gives a starting engine a beat, then reports whether the run
+// loop is live. The engine lock, crash cleanup, and startup probes run between
+// server start and Run, so the operator's very first action waits rather than
+// bouncing.
+func (m *Manager) awaitEngine() error {
+	select {
+	case <-m.ready:
+	case <-time.After(15 * time.Second):
+		return errEngineDown
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.liveLocked()
+}
+
+// liveLocked reports engine liveness; the caller holds m.mu.
+func (m *Manager) liveLocked() error {
+	switch {
+	case m.runCtx == nil:
+		return errEngineDown
+	case m.runCtx.Err() != nil:
+		return errEngineStopping
+	}
+	return nil
+}
+
+// deliver enqueues a session message the caller has ALREADY recorded in the
+// transcript. A failed delivery leaves a notice, so the transcript never shows
+// an operator message that no turn will ever pick up.
+func (m *Manager) deliver(ctx context.Context, id string, msg sessionMsg) error {
+	err := m.enqueue(id, msg)
+	if err != nil {
+		m.notice(ctx, id, fmt.Sprintf("Not delivered to the agent: %v", err))
+	}
+	return err
+}
+
 func (m *Manager) cancelTurn(id string) {
 	m.mu.Lock()
 	s := m.sessions[id]
@@ -396,18 +447,32 @@ func (m *Manager) cancelTurn(id string) {
 
 func (m *Manager) sessionLoop(ctx context.Context, id string, s *session) {
 	defer m.wg.Done()
+	// Forget the session on EVERY exit, not just abandon. A halt cancels the
+	// engine context and relaunches the loop against the same Manager: a
+	// session left behind here would be reused by enqueue after the relaunch,
+	// and messages would queue into an inbox whose goroutine is long dead.
+	// Registered after wg.Done so the map is clean before Run's wg.Wait
+	// returns.
+	defer m.forgetSession(id, s)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg := <-s.inbox:
 			if done := m.dispatch(ctx, id, s, msg); done {
-				m.mu.Lock()
-				delete(m.sessions, id)
-				m.mu.Unlock()
 				return
 			}
 		}
+	}
+}
+
+// forgetSession drops s from the session map — but only while it is still the
+// live entry for id, never a successor a relaunched engine has since created.
+func (m *Manager) forgetSession(id string, s *session) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessions[id] == s {
+		delete(m.sessions, id)
 	}
 }
 
