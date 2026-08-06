@@ -14,6 +14,7 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/bus"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/prompt"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/statedir"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/store"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/turns"
@@ -818,6 +819,55 @@ func TestValidateGateRed(t *testing.T) {
 	got := f.waitStatus(t, wf.ID, domain.WorkflowAwaitingUser)
 	if got.Status != domain.WorkflowAwaitingUser {
 		t.Fatalf("status: %s", got.Status)
+	}
+}
+
+// TestStageFragmentOverride pins the per-repo stage-prompt lookup: the
+// numbered filename `hal init` seeds wins, the bare stage name still works
+// for hand-rolled overrides predating the seeding, and an absent file falls
+// back to the built-in text.
+func TestStageFragmentOverride(t *testing.T) {
+	prompts := t.TempDir()
+	m := New(nil, nil, nil, nil, Config{PromptsDir: prompts})
+	stages := filepath.Join(prompts, "stages")
+	if err := os.MkdirAll(stages, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(stages, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := m.stageFragment(domain.StageImplement); got != "" {
+		t.Fatalf("no override file should read empty (built-in fallback); got %q", got)
+	}
+	write("implement.md", "legacy body")
+	if got := m.stageFragment(domain.StageImplement); got != "legacy body" {
+		t.Fatalf("bare stage name: %q", got)
+	}
+	write("05-implement.md", "seeded body")
+	if got := m.stageFragment(domain.StageImplement); got != "seeded body" {
+		t.Fatalf("seeded numbered name must win: %q", got)
+	}
+	// An emptied seeded file is not an override — the built-in text stands.
+	write("05-implement.md", "   \n")
+	if got := m.stageFragment(domain.StageImplement); got != "legacy body" {
+		t.Fatalf("empty seeded file: %q", got)
+	}
+
+	// Every stage's seeded filename must be a live lookup key, or `hal init`
+	// would write files no turn ever reads.
+	for _, st := range domain.StageOrder {
+		asset, err := prompt.StageAsset(st)
+		if err != nil {
+			t.Fatalf("%s: %v", st, err)
+		}
+		write(asset, "override-"+string(st))
+		if got := m.stageFragment(st); got != "override-"+string(st) {
+			t.Fatalf("%s (%s): %q", st, asset, got)
+		}
 	}
 }
 

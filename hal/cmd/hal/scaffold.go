@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/config"
@@ -101,6 +102,20 @@ func cmdInit(args []string) int {
 	writeIfAbsent(config.RepoConfigFile(root), scaffoldConfig(filepath.Base(root), *game))
 	writeIfAbsent(config.GoalFile(root), scaffoldGoal)
 
+	// The stage instructions themselves: seeded as editable copies so each
+	// repo starts from the built-in prompts and tunes them in place. Every
+	// turn composes from the seeded file when it exists; delete one to fall
+	// back to the binary's version.
+	stagesDir := filepath.Join(config.PromptsDir(root), "stages")
+	if err := os.MkdirAll(stagesDir, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	stageAssets := prompt.StageAssets()
+	for _, name := range sortedKeys(stageAssets) {
+		writeIfAbsent(filepath.Join(stagesDir, name), stageAssets[name])
+	}
+
 	// The workflow stage prompts call these sub-agents by name (locator /
 	// analyzer / pattern-finder split); .claude/agents/ is the claude CLI's
 	// native discovery path, so seeding them needs no engine plumbing.
@@ -109,8 +124,9 @@ func cmdInit(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
 	}
-	for name, content := range prompt.AgentAssets() {
-		writeIfAbsent(filepath.Join(agentsDir, name), content)
+	agentAssets := prompt.AgentAssets()
+	for _, name := range sortedKeys(agentAssets) {
+		writeIfAbsent(filepath.Join(agentsDir, name), agentAssets[name])
 	}
 
 	// A validation run includes a quick agent_play playthrough when the
@@ -147,12 +163,24 @@ func cmdInit(args []string) int {
 	n := 0
 	step := func(s string) { n++; fmt.Printf("  %d. %s\n", n, s) }
 	step("Edit .hal/GOAL.md — the north star every workflow reads first.")
+	step("(Optional) tune .hal/prompts/stages/*.md — this repo's stage instructions; delete one to fall back to the built-in.")
 	step("(Optional) set project.verify in .hal/config.toml to your test command.")
 	if smokeSeeded {
 		step("Point the smoke entry in agent_play/agent_play.config.json at your game's representative path.")
 	}
 	step("hal            # opens the dashboard; workflows are driven from it")
 	return 0
+}
+
+// sortedKeys returns a map's keys in order — seeded files must be reported
+// in a stable order, not Go's randomized map order.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // scaffoldSmokeEntry is the example `smoke` entry for the agent_play
@@ -188,6 +216,11 @@ func scaffoldConfig(name string, game bool) string {
 # moving through fixed, operator-approved stages
 # (refine -> research -> design -> plan -> implement); validation runs
 # sweep completed implementations afterwards.
+#
+# The stage instructions themselves are plain markdown in
+# .hal/prompts/stages/ (01-refine.md ... 06-validate.md, plus the shared
+# workflow-contract.md) — seeded by "hal init" and yours to edit; a deleted
+# file falls back to the version built into the binary.
 
 [project]
 name = "` + name + `"

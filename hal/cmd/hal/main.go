@@ -97,7 +97,7 @@ along with GOAL.md).
 usage: hal [command] [flags]
 
   up       start the server + workflow engine in the foreground (default)
-  init     scaffold .hal/ (config.toml + GOAL.md + .claude/agents)
+  init     scaffold .hal/ (config.toml + GOAL.md + prompts/stages + .claude/agents)
   task     ideas inbox: add, list, rm
   status   one-shot snapshot (--json for machines)
   stop     gracefully stop the running server (--force kills a hung engine)

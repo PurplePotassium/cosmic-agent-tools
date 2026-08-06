@@ -38,7 +38,7 @@ function describeEvent(ev) {
     case "workflow.turn_started": return `turn ${p.n} started (${p.stage})`;
     case "workflow.turn_finished": return `turn finished: ${p.state}${p.costUsd ? ` — $${p.costUsd.toFixed(2)}` : ""}`;
     case "workflow.question": return `waiting on you${p.note ? " — " + p.note : ""}`;
-    case "workflow.ready": return `ready for review${p.note ? " — " + p.note : ""}`;
+    case "workflow.ready": return `${p.auto ? "ready (auto-approving)" : "ready for review"}${p.note ? " — " + p.note : ""}`;
     case "workflow.blocked": return `BLOCKED${p.note ? " — " + p.note : ""}`;
     case "workflow.error": return `turn error: ${p.reason || ""}`.slice(0, 160);
     case "workflow.approved": return `${p.stage} approved${p.commit ? " @ " + p.commit : ""}`;
@@ -79,15 +79,15 @@ function describeEvent(ev) {
   }
 }
 
-// playChime emits a short rising two-note blip via the Web Audio API. It's
+// playChime emits a short two-note blip via the Web Audio API. It's
 // synthesized, not a fetched asset, so the dashboard stays a single
-// self-contained bundle (nothing to embed or serve). freqs picks the flavor:
-// the default rise for "ready for review", a lower pair for "the agent is
-// waiting on your answer". Browsers gate audio behind a user gesture, so the
-// AudioContext is created/resumed lazily — the first successful play is the
+// self-contained bundle (nothing to embed or serve). freqs picks the flavor;
+// opts.peak and opts.step scale the loudness and pacing so an FYI can be
+// audibly smaller than a summons. Browsers gate audio behind a user gesture, so
+// the AudioContext is created/resumed lazily — the first successful play is the
 // operator toggling sound on, which is itself a gesture.
 let audioCtx = null;
-function playChime(freqs = [660, 880]) { // E5 → A5
+function playChime(freqs = [660, 880], { peak = 0.14, step = 0.11 } = {}) { // E5 → A5
   try {
     const Ctor = window.AudioContext || window.webkitAudioContext;
     if (!Ctor) return;
@@ -99,15 +99,29 @@ function playChime(freqs = [660, 880]) { // E5 → A5
       const gain = audioCtx.createGain();
       osc.type = "sine";
       osc.frequency.value = freq;
-      const t = now + i * 0.11;
+      const t = now + i * step;
       gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.14, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(peak, t + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
       osc.connect(gain).connect(audioCtx.destination);
       osc.start(t);
       osc.stop(t + 0.2);
     });
   } catch { /* audio unavailable — stay silent */ }
+}
+
+// CHIMES maps a signal to its sound. The two approval flavors are deliberately
+// different shapes, not just different pitches: a gate you must open rises and
+// lands loud, while one that opened itself is a quiet, quick tick you can let
+// pass without looking up.
+const CHIMES = {
+  attention: [[523, 415], { }],                       // C5 → G#4: "your move"
+  approval:  [[660, 880], { }],                       // E5 → A5 rising: "review time"
+  auto:      [[880, 660], { peak: 0.05, step: 0.07 }], // soft quick fall: "approved for you"
+};
+function playSignal(name) {
+  const [freqs, opts] = CHIMES[name] || CHIMES.approval;
+  playChime(freqs, opts);
 }
 
 // ---------- components ----------
@@ -129,7 +143,7 @@ function TopBar({ status, connected, turnsRunning, soundOn, onSettings, onHalt, 
       title="Settings — chroma keyers, installed tools and models, transcript export, paths">⚙ settings</button>
     <button class=${"sound" + (soundOn ? " active" : "")} onClick=${onToggleSound}
       title=${soundOn
-        ? "Sound on — a chime plays when a workflow needs you. Click to mute."
+        ? "Sound on — a chime plays when a workflow needs you, and a quieter one when a stage was auto-approved. Click to mute."
         : "Sound off — click to play a chime whenever a workflow needs you."}>${soundOn ? "🔔" : "🔕"}</button>
     <button class="danger" onClick=${onHalt}
       title="Kill every in-flight turn now — workflows drop to waiting-on-you and resume on your next message; the server stays up">stop turns</button>
@@ -354,7 +368,7 @@ function GeneralSettings({ env, configView, soundOn, onToggleSound }) {
     <h3>Preferences</h3>
     <label class="keyer-row" style="align-items:center">
       <input type="checkbox" checked=${soundOn} onChange=${onToggleSound} />
-      <span>play a chime whenever a workflow needs you</span>
+      <span>play a chime whenever a workflow needs you — a softer one for stages that auto-approved</span>
     </label>
 
     <h3 style="margin-top:14px">Server</h3>
@@ -969,8 +983,10 @@ function App() {
         // "right now" signals and must not resurrect for stale events.
         const fresh = !isHistorical(ev);
         if (fresh && soundOnRef.current) {
-          if (ev.type === "workflow.question" || ev.type === "workflow.blocked") playChime([523, 415]); // C5 → G#4: "your move"
-          else if (ev.type === "workflow.ready") playChime(); // rising: "review time"
+          if (ev.type === "workflow.question" || ev.type === "workflow.blocked") playSignal("attention");
+          // A ready stage on an auto-approve workflow still needs approval —
+          // it just already got it. Same event, quieter sound.
+          else if (ev.type === "workflow.ready") playSignal(ev.payload?.auto ? "auto" : "approval");
         }
         const tone = fresh && ALERT_TYPES[ev.type];
         if (tone) {
@@ -1049,7 +1065,7 @@ function App() {
   const toggleSound = () => setSoundOn((v) => {
     const next = !v;
     localStorage.setItem("hal.sound", next ? "1" : "0");
-    if (next) playChime();
+    if (next) playSignal("approval");
     return next;
   });
 

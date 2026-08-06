@@ -15,7 +15,7 @@ repo (and a task list), not in the agent's memory — so it grinds on a task for
 | directory | what it is | platform | start here |
 |---|---|---|---|
 | **[`workshop/`](workshop/)** | **Workshop** — the loop as a mature app: a single Go binary with an embedded dashboard. One pipeline by default; scales to multiple simultaneous pipelines in git worktrees behind a gated merge queue, with per-task-type model/effort routing and agent-resolved merge conflicts. | Go binary (Windows / macOS / Linux) | [`workshop/README.md`](workshop/README.md) |
-| **[`hal/`](hal/)** | **Hal** — Workshop's operator-gated sibling: each unit of work is a live Claude Code conversation that moves through six fixed, human-approved stages (refine → research → design → plan → implement → validate), with reviewable stage artifacts committed alongside the work. | Go binary (Windows / macOS / Linux) | [`hal/README.md`](hal/README.md) |
+| **[`hal/`](hal/)** | **Hal** — Workshop's staged-workflow sibling: each unit of work is a live Claude Code conversation through refine → research → design → plan → implement, with a separate validation run. Ready stages auto-approve by default while questions and failures still pause for the operator. | Go binary (Windows / macOS / Linux) | [`hal/README.md`](hal/README.md) |
 | **[`ralph/`](ralph/)** | **Ralph loops + fleet orchestrator** — the original PowerShell scripts: the single loop, plus a fan-out that runs many loops in parallel worktrees behind a merge queue and a planner. | PowerShell (single loop also Bash) | [`ralph/README.md`](ralph/README.md) |
 | **[`cosmo-canyon/`](cosmo-canyon/)** | **Cosmo Canyon** — a Claude Code–orchestrated take on the loop: a per-tick `claude -p` cycle (opus planner + hybrid `agy`/Claude worker + deterministic gate/commit) that builds a fresh browser game from a Ready-Spec set you author in an Asset Browser. The generated game lives in its own nested repo and is not tracked here. | Node standalone app (`server.mjs`, :7788) | [`cosmo-canyon/AGENTS.md`](cosmo-canyon/AGENTS.md) |
 | **[`skills/`](skills/)** | **Agent skills** — self-contained guides an agent loads on demand (art direction, deep research, audit). Harness-agnostic drop-ins. | any agent harness | [Skills](#skills) below |
@@ -23,8 +23,8 @@ repo (and a task list), not in the agent's memory — so it grinds on a task for
 `workshop/` is the successor to ralph: `ralph/`'s fleet ideas (worktrees, merge
 queue, bisect-on-red) and the original solo Workshop are both built into one binary, configured per
 repo with a checked-in `.workshop/config.toml`. `hal/` is a fork of Workshop with the opposite
-philosophy — instead of an autonomous loop, a human approves every stage of every workflow from the
-dashboard. The `ralph/` scripts remain for reference and for
+philosophy — instead of an autonomous loop, workflows expose interruptible stage checkpoints in the
+dashboard; ready stages can auto-approve while questions always wait. The `ralph/` scripts remain for reference and for
 PowerShell-native workflows. `cosmo-canyon/` is a separate, self-contained take on the loop — building
 a browser game from a spec set rather than grinding a backlog. `skills/` is independent of all of them.
 
@@ -62,9 +62,10 @@ hal init      # optional — scaffolds .hal/ (config.toml + GOAL.md + .claude/ag
 hal           # dashboard opens; type what you want built and press Start
 ```
 
-- Forked from Workshop — same single-binary + embedded-dashboard shape, but **human-gated**: each
-  workflow is a live Claude Code conversation through six fixed stages (refine → research → design →
-  plan → implement → validate), and nothing advances until you approve (or skip) the stage.
+- Forked from Workshop — same single-binary + embedded-dashboard shape, but staged and
+  interruptible: each task workflow is a live Claude Code conversation through refine → research →
+  design → plan → implement, followed by a separate validation run. A default-on checkbox
+  auto-approves ready stages; clarification questions, blockers, failures, and red gates still pause.
 - Every stage produces a reviewable markdown artifact; approved artifacts are committed with the
   work, so the decision trail is project history.
 

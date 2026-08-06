@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/config"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/domain"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/prompt"
 )
 
 // First launch in a repo with no .hal/config.toml creates it with the
@@ -59,6 +61,73 @@ func TestEnsureRepoConfig(t *testing.T) {
 		ensureRepoConfig(ctx, dir)
 		if _, err := os.Stat(config.RepoConfigFile(dir)); !os.IsNotExist(err) {
 			t.Fatalf(".hal must not be created outside a git repo; stat err = %v", err)
+		}
+	})
+}
+
+// cmdInit seeds the built-in stage prompts into .hal/prompts/stages/ as this
+// repo's editable starting point: byte-identical copies on a fresh repo,
+// operator edits kept unless --force.
+func TestCmdInitSeedsStagePrompts(t *testing.T) {
+	stagePath := func(repo, name string) string {
+		return filepath.Join(config.PromptsDir(repo), "stages", name)
+	}
+
+	t.Run("seeds every built-in stage prompt verbatim", func(t *testing.T) {
+		repo := initTestRepo(t)
+		if code := cmdInit([]string{"--repo", repo}); code != 0 {
+			t.Fatalf("cmdInit = %d, want 0", code)
+		}
+		assets := prompt.StageAssets()
+		if len(assets) == 0 {
+			t.Fatal("no embedded stage assets")
+		}
+		for name, want := range assets {
+			got, err := os.ReadFile(stagePath(repo, name))
+			if err != nil {
+				t.Fatalf("%s should be seeded: %v", name, err)
+			}
+			if string(got) != want {
+				t.Fatalf("%s: seeded copy differs from the built-in asset", name)
+			}
+		}
+		// The seeded set must cover the whole ladder plus the shared contract.
+		for _, stage := range domain.StageOrder {
+			asset, err := prompt.StageAsset(stage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := assets[asset]; !ok {
+				t.Fatalf("stage %s asset %q is not seeded", stage, asset)
+			}
+		}
+		if _, ok := assets[prompt.ContractAsset]; !ok {
+			t.Fatalf("%s is not seeded", prompt.ContractAsset)
+		}
+	})
+
+	t.Run("keeps operator edits; --force restores the built-in", func(t *testing.T) {
+		repo := initTestRepo(t)
+		path := stagePath(repo, "05-implement.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mine := "# my repo's implement stage\n"
+		if err := os.WriteFile(path, []byte(mine), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code := cmdInit([]string{"--repo", repo}); code != 0 {
+			t.Fatalf("cmdInit = %d, want 0", code)
+		}
+		if b, err := os.ReadFile(path); err != nil || string(b) != mine {
+			t.Fatalf("edited stage prompt was overwritten: %q, %v", b, err)
+		}
+		if code := cmdInit([]string{"--repo", repo, "--force"}); code != 0 {
+			t.Fatalf("cmdInit --force = %d, want 0", code)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil || string(b) != prompt.StageAssets()["05-implement.md"] {
+			t.Fatalf("--force should restore the built-in asset: %v", err)
 		}
 	})
 }

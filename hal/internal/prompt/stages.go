@@ -107,9 +107,23 @@ func StageSpecFor(stage domain.WorkflowStage) (StageSpec, error) {
 	return spec, nil
 }
 
+// ContractAsset is the shared contract's filename inside a stage directory —
+// embedded, and the name `hal init` seeds it under.
+const ContractAsset = "workflow-contract.md"
+
 // WorkflowContract returns the embedded stage-shared contract.
 func WorkflowContract() string {
-	return mustAsset("stages/workflow-contract.md")
+	return mustAsset("stages/" + ContractAsset)
+}
+
+// StageAsset returns a stage's embedded instruction filename
+// ("05-implement.md") — the name repo overrides use.
+func StageAsset(stage domain.WorkflowStage) (string, error) {
+	spec, err := StageSpecFor(stage)
+	if err != nil {
+		return "", err
+	}
+	return spec.Asset, nil
 }
 
 // StageBody returns a stage's embedded instructions.
@@ -125,9 +139,20 @@ func StageBody(stage domain.WorkflowStage) (string, error) {
 // content) that `hal init` seeds into the target repo's .claude/agents/
 // — the locator/analyzer/pattern-finder roles the stage prompts call by
 // name.
-func AgentAssets() map[string]string {
+func AgentAssets() map[string]string { return assetDir("agents") }
+
+// StageAssets returns the embedded stage prompts (filename → content): the
+// shared workflow-contract.md plus one numbered file per stage
+// ("05-implement.md", …). `hal init` seeds these into the repo's
+// .hal/prompts/stages/, where they become that repo's editable stage
+// instructions — the built-in text is the starting point, not a ceiling.
+// A seeded file that is deleted (or emptied) falls back to the built-in one.
+func StageAssets() map[string]string { return assetDir("stages") }
+
+// assetDir returns one embedded asset directory as filename → content.
+func assetDir(dir string) map[string]string {
 	out := map[string]string{}
-	entries, err := fs.ReadDir(assets, "assets/agents")
+	entries, err := fs.ReadDir(assets, "assets/"+dir)
 	if err != nil {
 		return out
 	}
@@ -135,7 +160,7 @@ func AgentAssets() map[string]string {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		out[e.Name()] = mustAsset(path.Join("agents", e.Name()))
+		out[e.Name()] = mustAsset(path.Join(dir, e.Name()))
 	}
 	return out
 }

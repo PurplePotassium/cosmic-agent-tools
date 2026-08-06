@@ -18,7 +18,7 @@ or automatically when an implementation lands and the engine is idle.
 
 ```
 cd your-repo
-hal init      # optional — scaffolds .hal/ (config + GOAL + .claude/agents)
+hal init      # optional — scaffolds .hal/ (config + GOAL + stage prompts + .claude/agents)
 hal           # dashboard opens; type what you want built and press Start
 ```
 
@@ -56,7 +56,7 @@ Stage approvals commit the workflow's artifact folder as their own
 
 ```
 hal            start server + dashboard + workflow engine (default; Ctrl+C exits)
-hal init       scaffold .hal/ (config.toml + GOAL.md + .claude/agents)
+hal init       scaffold .hal/ (config.toml + GOAL.md + prompts/stages/ + .claude/agents)
 hal task       ideas inbox: add | list | rm
 hal status     one-shot snapshot: open ideas + live workflows (--json)
 hal stop       stop the running server gracefully (--force kills a hung engine)
@@ -249,15 +249,33 @@ warning — an old config never bricks the CLI.
 
 ## Prompts
 
-The stage contracts (conversation protocol, status-file discipline, artifact
-shapes) are **built into the binary** and improve with upgrades. Customize
-per repo with optional fragments under `.hal/prompts/`:
+**The stages are yours to change, per repo.** `hal init` seeds the built-in
+stage instructions into `.hal/prompts/stages/` as ordinary editable files —
+the binary's versions are the *starting point*, not a ceiling:
 
-- `project.md` — reading list, guardrails, conventions (injected into every
-  stage prompt; editable from the dashboard's goal tab)
-- `stages/<stage>.md` — replace one stage's instructions
-- `stages/workflow-contract.md` — replace the shared contract (you own the
-  consequences)
+```
+.hal/prompts/
+  project.md              # reading list, guardrails, conventions — injected
+                          # into EVERY stage prompt (dashboard's goal tab edits it)
+  stages/
+    workflow-contract.md  # the shared contract (protocol, status-file
+                          # discipline, artifact shape) — you own the consequences
+    01-refine.md  02-research.md  03-design.md
+    04-plan.md    05-implement.md  06-validate.md
+```
+
+Every turn composes from the file on disk when it exists, so an edit takes
+effect on the next turn — no restart. **Delete a file to fall back to the
+built-in version** (an empty file counts as absent), and `hal init --force`
+restores the built-ins over your edits. Existing files are never touched
+without `--force`; a hand-rolled `stages/<stage>.md` (bare stage name, the
+pre-seeding layout) still works, with the numbered file winning if both are
+present.
+
+The trade-off is the usual one for vendored defaults: seeded copies are
+pinned, so improvements shipped with a hal upgrade only reach the stages you
+have not customized (delete a file, or diff it against `hal init --force` in
+a scratch checkout, to pick them up).
 
 `hal init` also seeds `.claude/agents/` with the locator/analyzer
 sub-agent definitions the research/design prompts call by name.
@@ -288,7 +306,9 @@ while a turn runs) beside the **artifact pane** (stage tabs, sanitized
 markdown rendering with checkbox progress on the plan, raw/edit with
 conflict-checked save, the implement diffstat, and the approve / request
 changes / skip / abandon bar). The tab title badges `(N) Hal` and an
-optional chime fires when a workflow needs you.
+optional chime fires when a workflow needs you — a stage awaiting your
+approval rings a rising two-note chime, while one that auto-approved gets a
+softer, quicker falling tick you can ignore.
 
 The right column (when no workflow is open) holds the activity feed, recent
 commits, the **generate art** card (see `[art]` above), and **Ask why**.

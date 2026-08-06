@@ -988,7 +988,7 @@ func (m *Manager) settleTurn(ctx context.Context, id string, s *session, wf doma
 		}
 	}
 
-	m.setStatus(ctx, id, status, errDetail, report.Note)
+	m.setStatus(ctx, id, status, errDetail, report.Note, wf.AutoApprove)
 	// Auto-approval deliberately keys off the settled state, not prose: only
 	// a valid ready report with an artifact (and, for validate, a green gate)
 	// reaches AwaitingApproval. Asking, blocked, errors, and missing artifacts
@@ -1013,8 +1013,10 @@ func gateMessage(green bool, output string) string {
 }
 
 // setStatus persists + broadcasts a settled status with its chime-relevant
-// event flavor.
-func (m *Manager) setStatus(ctx context.Context, id string, status domain.WorkflowStatus, errDetail, note string) {
+// event flavor. auto reports whether this workflow auto-approves ready stages:
+// the ready event carries it so the dashboard can distinguish "your approval is
+// required" from "it was approved for you, here's what went by".
+func (m *Manager) setStatus(ctx context.Context, id string, status domain.WorkflowStatus, errDetail, note string, auto bool) {
 	detail := ""
 	if status == domain.WorkflowError {
 		detail = errDetail
@@ -1024,7 +1026,7 @@ func (m *Manager) setStatus(ctx context.Context, id string, status domain.Workfl
 	case domain.WorkflowAwaitingUser:
 		m.publish(ctx, "workflow.question", id, map[string]any{"note": note})
 	case domain.WorkflowAwaitingApproval:
-		m.publish(ctx, "workflow.ready", id, map[string]any{"note": note})
+		m.publish(ctx, "workflow.ready", id, map[string]any{"note": note, "auto": auto})
 	case domain.WorkflowBlocked:
 		m.publish(ctx, "workflow.blocked", id, map[string]any{"note": note})
 	case domain.WorkflowError:
@@ -1216,14 +1218,28 @@ func (m *Manager) openingPrompt(ctx context.Context, wf domain.Workflow, stages 
 		tail = prompt.ValidationOpenTail(len(targets), brief)
 	}
 	_, full, err := prompt.ComposeStage(stage, prompt.StageInputs{
-		Contract:        m.fragment("stages/workflow-contract.md"),
+		Contract:        m.fragment("stages/" + prompt.ContractAsset),
 		Mechanics:       mech,
 		Goal:            readTrim(m.cfg.GoalPath),
 		ProjectFragment: m.fragment("project.md"),
-		StageBody:       m.fragment("stages/" + string(stage) + ".md"),
+		StageBody:       m.stageFragment(stage),
 		Tail:            tail,
 	})
 	return full, err
+}
+
+// stageFragment reads this repo's stage-instruction override ("" when
+// absent — the composer then falls back to the built-in text). Two accepted
+// filenames under .hal/prompts/stages/: the numbered asset name `hal init`
+// seeds ("05-implement.md"), and the bare stage name ("implement.md") that
+// hand-rolled overrides predating the seeding used. Numbered wins.
+func (m *Manager) stageFragment(stage domain.WorkflowStage) string {
+	if asset, err := prompt.StageAsset(stage); err == nil {
+		if s := m.fragment("stages/" + asset); s != "" {
+			return s
+		}
+	}
+	return m.fragment("stages/" + string(stage) + ".md")
 }
 
 // fragment reads an operator prompt override ("" when absent).
@@ -1309,7 +1325,7 @@ func (m *Manager) recordBaseSHA(ctx context.Context, id string) {
 }
 
 func (m *Manager) failWorkflow(ctx context.Context, id, reason string) {
-	m.setStatus(ctx, id, domain.WorkflowError, reason, "")
+	m.setStatus(ctx, id, domain.WorkflowError, reason, "", false)
 }
 
 func (m *Manager) notice(ctx context.Context, id, text string) {
