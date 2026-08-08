@@ -38,10 +38,15 @@ an if-chain on an agent's name elsewhere.
 - Prompt over **stdin**; invocation `codex exec --model <id>` with
   `-c model_reasoning_effort="<level>"` when the installed CLI advertises
   `--config` support.
-- Output is **capturable and streamable** — the engine pipes stdout+stderr
-  to the pass log, dashboard, and auth scan.
+- Workflow turns use `codex exec --json` and recover Codex's runtime-minted
+  thread id from `thread.started`; later turns use
+  `codex exec resume <id> --json`. The JSONL is capturable and translated to
+  the same typed turn vocabulary as Claude. Codex does not emit token deltas,
+  so assistant text appears when its `agent_message` item settles.
 - Codex has no caller-minted session-transcript flag in `exec` mode, so the
-  driver does not claim the `Sessions` capability.
+  driver does not claim the `Sessions` capability. Stage rows record which
+  runtime minted a resume id; changing agents mid-stage starts a fresh
+  session instead of passing an alien id to the new CLI.
 - `[safety] skip_permissions = true` maps to Codex's documented
   `--dangerously-bypass-approvals-and-sandbox`; when disabled, Hal uses
   `--sandbox workspace-write` instead.
@@ -146,6 +151,7 @@ the e2e suite drives full workflows through the real binary.
   `taskkill /T /F` is the fallback), on Unix via negative-pgid SIGKILL. A
   wedged or interjected turn must not leak builds or test servers.
 - Model/effort resolution per turn: per-workflow dashboard ⚙ override >
-  `[workflow.stages.<stage>]` > defaults. The agent for workflow turns is
-  always claude (the interactive driver); `HAL_WORKFLOW_AGENT` is a
-  test-only seam.
+  `[workflow.stages.<stage>]` > defaults. Claude is the default interactive
+  driver; when the installed Codex CLI passes the JSONL/resume probe, the
+  dashboard can route a stage to Sol, Terra, or Luna. `HAL_WORKFLOW_AGENT`
+  remains a whole-engine test-only seam.

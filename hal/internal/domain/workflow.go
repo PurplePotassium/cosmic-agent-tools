@@ -140,8 +140,8 @@ type Workflow struct {
 	// implementation; zero until then. ValidatedBy is that run's workflow id.
 	Validated   time.Time
 	ValidatedBy string
-	// Bundle is the per-workflow model/effort override ("" fields = stage
-	// defaults). Agent is always the interactive driver.
+	// Bundle is the per-workflow agent/model/effort override ("" fields =
+	// stage defaults).
 	Bundle Bundle
 	// StageBundles overrides model/effort for individual stages, beating
 	// Bundle for that stage (which in turn beats the config's per-stage
@@ -157,7 +157,8 @@ type WorkflowStageState struct {
 	Stage      WorkflowStage
 	Status     string // pending | active | approved | skipped
 	// SessionID is the LATEST captured agent session id — the resume key.
-	SessionID string
+	SessionID    string
+	SessionAgent string // driver that minted SessionID; empty historical rows mean claude
 	// Artifact is the stage's artifact path, repo-relative.
 	Artifact     string
 	DecisionNote string

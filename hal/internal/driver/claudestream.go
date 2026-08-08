@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// This file parses the claude CLI's stream-json output (one NDJSON event per
-// line) into the small typed vocabulary the turn runner and dashboard need.
+// This file parses the interactive drivers' JSONL output (one event per line)
+// into the small typed vocabulary the turn runner and dashboard need.
 // The contract (probed v2.1.220, see docs/interactive-driver.md and
 // testdata/stream/): the CLI emits documented types (system/init,
 // stream_event, assistant, user, result) interleaved with undocumented
@@ -52,9 +52,9 @@ type TurnUsage struct {
 // StreamEvent is one parsed event.
 type StreamEvent struct {
 	Kind      StreamEventKind
-	SessionID string // set when the line carried one (init and result always do)
-	Text      string // delta fragment / assistant text / tool summary
-	ToolName  string // StreamToolUse only
+	SessionID string     // set when the line carried one (init and result always do)
+	Text      string     // delta fragment / assistant text / tool summary
+	ToolName  string     // StreamToolUse only
 	Result    *TurnUsage // StreamResult only
 }
 
@@ -71,8 +71,12 @@ func ParseStreamLine(line []byte) []StreamEvent {
 		Type      string          `json:"type"`
 		Subtype   string          `json:"subtype"`
 		SessionID string          `json:"session_id"`
+		ThreadID  string          `json:"thread_id"`
 		Event     json.RawMessage `json:"event"`
 		Message   json.RawMessage `json:"message"`
+		Item      json.RawMessage `json:"item"`
+		Usage     json.RawMessage `json:"usage"`
+		Error     json.RawMessage `json:"error"`
 
 		// result-event fields
 		IsError           bool              `json:"is_error"`
@@ -112,9 +116,86 @@ func ParseStreamLine(line []byte) []StreamEvent {
 				PermissionDenials: len(raw.PermissionDenials),
 			},
 		}}
+	case "thread.started":
+		return []StreamEvent{{Kind: StreamInit, SessionID: raw.ThreadID}}
+	case "item.started", "item.updated", "item.completed":
+		return parseCodexItem(raw.Type, raw.Item)
+	case "turn.completed":
+		return []StreamEvent{{
+			Kind:   StreamResult,
+			Result: &TurnUsage{Subtype: "success", NumTurns: 1},
+		}}
+	case "turn.failed", "error":
+		return []StreamEvent{{
+			Kind:   StreamResult,
+			Result: &TurnUsage{IsError: true, Subtype: raw.Type, ResultText: codexErrorText(raw.Error)},
+		}}
 	default:
 		return nil
 	}
+}
+
+// parseCodexItem maps Codex CLI `exec --json` item events. Agent messages are
+// settled (Codex does not currently emit token deltas here); command and MCP
+// items become the same compact tool feed used for Claude turns.
+func parseCodexItem(eventType string, item json.RawMessage) []StreamEvent {
+	if len(item) == 0 {
+		return nil
+	}
+	var it struct {
+		Type             string `json:"type"`
+		Text             string `json:"text"`
+		Command          string `json:"command"`
+		AggregatedOutput string `json:"aggregated_output"`
+		ExitCode         *int   `json:"exit_code"`
+		Server           string `json:"server"`
+		Tool             string `json:"tool"`
+		Status           string `json:"status"`
+	}
+	if json.Unmarshal(item, &it) != nil {
+		return nil
+	}
+	switch it.Type {
+	case "agent_message":
+		if eventType == "item.completed" && strings.TrimSpace(it.Text) != "" {
+			return []StreamEvent{{Kind: StreamAssistant, Text: it.Text}}
+		}
+	case "reasoning":
+		if (eventType == "item.updated" || eventType == "item.completed") && it.Text != "" {
+			return []StreamEvent{{Kind: StreamThinkingDelta, Text: it.Text}}
+		}
+	case "command_execution":
+		if eventType == "item.started" {
+			return []StreamEvent{{Kind: StreamToolUse, ToolName: "command", Text: "command " + clip(strings.ReplaceAll(it.Command, "\n", " "), 120)}}
+		}
+		if eventType == "item.completed" {
+			return []StreamEvent{{Kind: StreamToolResult, Text: clip(it.AggregatedOutput, 200)}}
+		}
+	case "mcp_tool_call":
+		name := strings.Trim(strings.Join([]string{it.Server, it.Tool}, "."), ".")
+		if eventType == "item.started" {
+			return []StreamEvent{{Kind: StreamToolUse, ToolName: name, Text: name}}
+		}
+		if eventType == "item.completed" {
+			return []StreamEvent{{Kind: StreamToolResult, Text: clip(it.Status, 200)}}
+		}
+	}
+	return nil
+}
+
+func codexErrorText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var obj struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(raw, &obj)
+	return obj.Message
 }
 
 // parseAPIEvent handles the stream_event wrapper around raw API events; only

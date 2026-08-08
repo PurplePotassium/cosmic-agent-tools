@@ -10,3 +10,8 @@ func ClaudePath() (string, error) { return findClaude() }
 // (HAL_AGY_BIN → PATH → known install dirs). Same status-surface use as
 // ClaudePath.
 func AgyPath() (string, error) { return findAgy() }
+
+// CodexPath resolves the Codex CLI exactly as the codex driver would spawn it
+// (HAL_CODEX_BIN override → PATH). The ChatGPT/Codex desktop install exposes
+// this executable, so status surfaces use it as the install signal.
+func CodexPath() (string, error) { return findCodex() }

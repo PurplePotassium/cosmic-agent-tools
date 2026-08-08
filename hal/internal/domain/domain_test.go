@@ -41,3 +41,15 @@ func TestAllowedArtClaudeModel(t *testing.T) {
 	}
 }
 
+func TestCodexModelFamily(t *testing.T) {
+	for _, model := range CodexModels {
+		if !KnownModel("codex", model) {
+			t.Errorf("KnownModel(codex, %q) = false", model)
+		}
+	}
+	for _, model := range []string{"gpt-5.6", "gpt-5.6-solar", "claude-sonnet-5"} {
+		if KnownModel("codex", model) {
+			t.Errorf("KnownModel(codex, %q) = true, want false", model)
+		}
+	}
+}

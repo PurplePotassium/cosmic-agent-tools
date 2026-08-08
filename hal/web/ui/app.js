@@ -170,16 +170,8 @@ const SETTINGS_TABS = [
 // SettingsModal is the ⚙ popup: art keyers, environment/tool status,
 // transcript export, and general info — the knobs and read-outs that used to
 // crowd (or never fit) the topbar.
-function SettingsModal({ art, extras, configView, wfDefaults, onWfDefaults, soundOn, onToggleSound, onApplyKeyers, onVerifyModels, onClose }) {
+function SettingsModal({ art, env, envLoading, onRefreshEnv, extras, codexAvailable, configView, wfDefaults, onWfDefaults, soundOn, onToggleSound, onApplyKeyers, onVerifyModels, onClose }) {
   const [tab, setTab] = useState("keyers");
-  const [env, setEnv] = useState(null);
-  const [envLoading, setEnvLoading] = useState(false);
-  const loadEnv = useCallback(async (fresh) => {
-    setEnvLoading(true);
-    try { setEnv(await api.env(fresh)); } catch { /* server briefly away */ }
-    setEnvLoading(false);
-  }, []);
-  useEffect(() => { loadEnv(false); }, []);
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -197,9 +189,9 @@ function SettingsModal({ art, extras, configView, wfDefaults, onWfDefaults, soun
       </div>
       <div class="modal-body">
         ${tab === "keyers" && html`<${KeyerSettings} art=${art} onApply=${onApplyKeyers} onVerify=${onVerifyModels} />`}
-        ${tab === "tools" && html`<${ToolsSettings} env=${env} extras=${extras}
+        ${tab === "tools" && html`<${ToolsSettings} env=${env} extras=${extras} codexAvailable=${codexAvailable}
           stageCfg=${configView?.effective?.Workflow?.Stages} wfDefaults=${wfDefaults} onWfDefaults=${onWfDefaults}
-          loading=${envLoading} onRefresh=${() => loadEnv(true)} />`}
+          loading=${envLoading} onRefresh=${() => onRefreshEnv(true)} />`}
         ${tab === "export" && html`<${ExportSettings} env=${env} />`}
         ${tab === "general" && html`<${GeneralSettings} env=${env} configView=${configView} soundOn=${soundOn} onToggleSound=${onToggleSound} />`}
       </div>
@@ -281,7 +273,7 @@ function KeyerSettings({ art, onApply, onVerify }) {
 // ToolsSettings reads out every external dependency (installed where, what
 // version answered, the best headless login signal we have) and edits the
 // persisted workflow model/effort defaults.
-function ToolsSettings({ env, extras, stageCfg, wfDefaults, onWfDefaults, loading, onRefresh }) {
+function ToolsSettings({ env, extras, codexAvailable, stageCfg, wfDefaults, onWfDefaults, loading, onRefresh }) {
   return html`<div>
     <h3>Workflow defaults</h3>
     <div class="note">The model/effort every new workflow starts with — an all-stages
@@ -290,12 +282,12 @@ function ToolsSettings({ env, extras, stageCfg, wfDefaults, onWfDefaults, loadin
       form's advanced row — changing either place updates both, and the choice is saved
       in this browser. Blank options show what that pick actually inherits.</div>
     <div class="bundle-editor">
-      <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg}
+      <${WfBundlePicker} extras=${extras} codexAvailable=${codexAvailable} stageCfg=${stageCfg}
         model=${(wfDefaults && wfDefaults.model) || ""} effort=${(wfDefaults && wfDefaults.effort) || ""}
         onModel=${(m) => onWfDefaults({ ...wfDefaults, model: m })}
         onEffort=${(ef) => onWfDefaults({ ...wfDefaults, effort: ef })} />
     </div>
-    <${WfStageMatrix} extras=${extras} stageCfg=${stageCfg}
+    <${WfStageMatrix} extras=${extras} codexAvailable=${codexAvailable} stageCfg=${stageCfg}
       baseModel=${(wfDefaults && wfDefaults.model) || ""} baseEffort=${(wfDefaults && wfDefaults.effort) || ""}
       stages=${(wfDefaults && wfDefaults.stages) || {}}
       onChange=${(stages) => onWfDefaults({ ...wfDefaults, stages })} />
@@ -894,6 +886,10 @@ function App() {
   // extraModels: per-agent [agents.<agent>] extra_models from the config, so
   // the model dropdowns list the user's own additions next to the curated ids.
   const [extraModels, setExtraModels] = useState({});
+  // env is loaded at page start because installed Codex/ChatGPT determines
+  // whether workflow pickers may expose Sol, Terra, and Luna.
+  const [env, setEnv] = useState(null);
+  const [envLoading, setEnvLoading] = useState(false);
   // configView: the whole /api/v1/config payload (effective values +
   // provenance) for the settings panel's read-outs.
   const [configView, setConfigView] = useState(null);
@@ -925,6 +921,12 @@ function App() {
   useEffect(() => { soundOnRef.current = soundOn; }, [soundOn]);
   const refreshTimer = useRef(null);
 
+  const loadEnv = useCallback(async (fresh) => {
+    setEnvLoading(true);
+    try { setEnv(await api.env(fresh)); } catch { /* server briefly away */ }
+    setEnvLoading(false);
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const [st, wfs, ts, inqs, artSt, val] = await Promise.all([
@@ -950,6 +952,7 @@ function App() {
 
   useEffect(() => {
     refresh();
+    loadEnv(false);
     api.goal().then((g) => setGoal(g.goal)).catch(() => {});
     // Config is fetched once: extra_models only changes with a config edit,
     // which means a server restart anyway.
@@ -1048,6 +1051,7 @@ function App() {
   }, [attention.length]);
 
   const turnsRunning = workflows.filter((w) => w.Status === "turn-running").length;
+  const codexAvailable = !!env?.tools?.some((t) => t.name === "codex" && t.present);
 
   // act wraps a mutation: surface failure, refetch either way. Returns whether
   // the mutation succeeded so callers with local state to clear (forms) can
@@ -1120,7 +1124,8 @@ function App() {
       onHalt=${() => act(() => api.haltServer())}
       onShutdown=${() => act(() => api.stopServer())}
       onToggleSound=${toggleSound} />
-    ${showSettings && html`<${SettingsModal} art=${art} extras=${extraModels} configView=${configView}
+    ${showSettings && html`<${SettingsModal} art=${art} env=${env} envLoading=${envLoading} onRefreshEnv=${loadEnv}
+      extras=${extraModels} codexAvailable=${codexAvailable} configView=${configView}
       wfDefaults=${wfDefaults} onWfDefaults=${setWfDefaults}
       soundOn=${soundOn} onToggleSound=${toggleSound}
       onApplyKeyers=${(keyers) => act(async () => setArt(await api.setArtKeyers(keyers)))}
@@ -1140,7 +1145,7 @@ function App() {
           </button>`)}
         </div>
         ${leftTab === "workflows" && html`<div>
-          <${WorkflowIntake} extras=${extraModels} stageCfg=${configView?.effective?.Workflow?.Stages}
+          <${WorkflowIntake} extras=${extraModels} codexAvailable=${codexAvailable} stageCfg=${configView?.effective?.Workflow?.Stages}
             defaults=${wfDefaults} onDefaults=${setWfDefaults}
             onCreated=${async (wf) => { setSelected(wf.ID); await refresh(); }} />
           <${ValidationCard} validation=${validation}
@@ -1169,7 +1174,7 @@ function App() {
       </div>
       <div>
         ${selected
-          ? html`<${WorkflowDetail} id=${selected} extras=${extraModels}
+          ? html`<${WorkflowDetail} id=${selected} extras=${extraModels} codexAvailable=${codexAvailable}
               stageCfg=${configView?.effective?.Workflow?.Stages} live=${wfLive}
               onClose=${() => setSelected(null)} />`
           : html`<div>

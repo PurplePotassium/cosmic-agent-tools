@@ -112,3 +112,29 @@ func TestParseStreamGarbage(t *testing.T) {
 		t.Fatalf("error result: %+v", events[0])
 	}
 }
+
+func TestParseCodexJSONLTurn(t *testing.T) {
+	lines := []string{
+		`{"type":"thread.started","thread_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`,
+		`{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"rg -n TODO"}}`,
+		`{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"rg -n TODO","aggregated_output":"clean\\n","exit_code":0,"status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Research saved."}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":4}}`,
+	}
+	var events []StreamEvent
+	for _, line := range lines {
+		events = append(events, ParseStreamLine([]byte(line))...)
+	}
+	if got := kinds(events, StreamInit); len(got) != 1 || got[0].SessionID != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Fatalf("init: %+v", got)
+	}
+	if got := kinds(events, StreamToolUse); len(got) != 1 || !strings.Contains(got[0].Text, "rg -n TODO") {
+		t.Fatalf("tool: %+v", got)
+	}
+	if got := kinds(events, StreamAssistant); len(got) != 1 || got[0].Text != "Research saved." {
+		t.Fatalf("assistant: %+v", got)
+	}
+	if got := kinds(events, StreamResult); len(got) != 1 || got[0].Result == nil || got[0].Result.IsError {
+		t.Fatalf("result: %+v", got)
+	}
+}

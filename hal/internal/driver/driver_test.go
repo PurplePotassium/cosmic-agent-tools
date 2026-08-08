@@ -182,6 +182,55 @@ func TestClaudeInteractivePlan(t *testing.T) {
 	}
 }
 
+func TestCodexInteractivePlan(t *testing.T) {
+	c := &Codex{
+		exe: "codex-stub", probed: true,
+		caps: Capabilities{PromptVia: PromptStdin, Capture: CaptureStreaming, Interactive: true, Effort: true},
+	}
+	plan, err := c.Plan(InvokeSpec{
+		Interactive: true, Model: "gpt-5.6-sol", Effort: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"exec", "--model", "gpt-5.6-sol", "--config", `model_reasoning_effort="high"`,
+		"--sandbox", "workspace-write", "--json", "-",
+	}
+	if !slices.Equal(plan.Args, want) {
+		t.Fatalf("fresh args: %v, want %v", plan.Args, want)
+	}
+	if !plan.StdinPrompt || plan.Mode != proc.Piped {
+		t.Fatalf("plan: %+v", plan)
+	}
+
+	const resume = "11111111-2222-3333-4444-555555555555"
+	plan, err = c.Plan(InvokeSpec{
+		Interactive: true, ResumeSessionID: resume, Model: "gpt-5.6-luna", SkipPermissions: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []string{
+		"exec", "resume", "--model", "gpt-5.6-luna",
+		"--dangerously-bypass-approvals-and-sandbox", "--json", resume, "-",
+	}
+	if !slices.Equal(plan.Args, want) {
+		t.Fatalf("resume args: %v, want %v", plan.Args, want)
+	}
+	if slices.Contains(plan.Args, "--sandbox") {
+		t.Fatalf("resume must not pass its unsupported --sandbox flag: %v", plan.Args)
+	}
+
+	plan, err = c.Plan(InvokeSpec{Interactive: true, ResumeSessionID: resume})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(plan.Args, `sandbox_mode="workspace-write"`) {
+		t.Fatalf("safe resume must set sandbox_mode through --config: %v", plan.Args)
+	}
+}
+
 func TestNonInteractiveDriversRefuseTurns(t *testing.T) {
 	a := &Agy{exe: `C:\bin\agy.exe`, probed: true}
 	if _, err := a.Plan(InvokeSpec{Interactive: true, Prompt: "x"}); err == nil {

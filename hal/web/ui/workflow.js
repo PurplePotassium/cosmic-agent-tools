@@ -57,16 +57,36 @@ export function StatusBadge({ status }) {
   return html`<span class=${"status-badge " + meta.cls}>${meta.label}</span>`;
 }
 
-// CLAUDE_MODELS: one representative id per claude family (workflows always
-// run the interactive claude driver). Extended by [agents.claude]
-// extra_models via the extras prop.
+// CLAUDE_MODELS: one representative id per Claude family. Extended by
+// [agents.claude] extra_models via the extras prop.
 export const CLAUDE_MODELS = [
   "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5-20251001",
 ];
+export const CODEX_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
 export const WF_EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];
 
 const claudeModels = (extras) =>
   [...new Set([...CLAUDE_MODELS, ...((extras || {}).claude || [])])];
+const codexModels = (extras) =>
+  [...new Set([...CODEX_MODELS, ...((extras || {}).codex || [])])];
+const workflowModels = (extras, codexAvailable) => [
+  ...claudeModels(extras), ...(codexAvailable ? codexModels(extras) : []),
+];
+const workflowModelAgent = (model, extras) =>
+  codexModels(extras).includes(model) ? "codex" : "claude";
+const availableWorkflowModel = (model, extras, codexAvailable) =>
+  model && workflowModelAgent(model, extras) === "codex" && !codexAvailable ? "" : model;
+
+function WorkflowModelOptions({ extras, codexAvailable }) {
+  return html`<${Fragment}>
+    <optgroup label="Claude">
+      ${claudeModels(extras).map((m) => html`<option value=${m}>${m}</option>`)}
+    </optgroup>
+    ${codexAvailable && html`<optgroup label="ChatGPT">
+      ${codexModels(extras).map((m) => html`<option value=${m}>${shortModel(m)}</option>`)}
+    </optgroup>`}
+  <//>`;
+}
 
 // DEFAULT_CLAUDE_MODEL mirrors internal/driver.DefaultClaudeModel — what a
 // stage runs when neither the workflow's bundle nor [workflow.stages.<stage>]
@@ -75,7 +95,10 @@ export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-5";
 
 // shortModel compresses a model id for labels: "claude-sonnet-5" →
 // "sonnet-5", "claude-haiku-4-5-20251001" → "haiku-4-5".
-export const shortModel = (id) => (id || "").replace(/^claude-/, "").replace(/-\d{8}$/, "");
+export const shortModel = (id) => (id || "")
+  .replace(/^claude-/, "")
+  .replace(/^gpt-5\.6-/, "")
+  .replace(/-\d{8}$/, "");
 
 // stageDefaultInfo names what the blank model option ("stage default")
 // actually evaluates to: one short name when all six stages agree, "varies"
@@ -99,12 +122,13 @@ export function stageDefaultInfo(stageCfg) {
 
 // cleanStageBundles keeps only per-stage entries with something actually set
 // — the shape sent to the server and counted for the intake chip.
-export function cleanStageBundles(stages) {
+export function cleanStageBundles(stages, extras, codexAvailable = false) {
   const out = {};
   for (const [s, b] of Object.entries(stages || {})) {
-    const model = (b && b.model) || "";
+    const model = availableWorkflowModel((b && b.model) || "", extras, codexAvailable);
     const effort = (b && b.effort) || "";
-    if (model || effort) out[s] = { model, effort };
+    const agent = (b && b.agent) || (model ? workflowModelAgent(model, extras) : "");
+    if (model || effort) out[s] = { agent, model, effort };
   }
   return out;
 }
@@ -114,8 +138,8 @@ export function cleanStageBundles(stages) {
 // name what the stage inherits (the base pick, else the [workflow.stages]
 // config default). ladder defaults to the task stages; a validation run's
 // popover passes ["validate"].
-export function WfStageMatrix({ extras, stageCfg, ladder, baseModel, baseEffort, stages, onChange }) {
-  const models = claudeModels(extras);
+export function WfStageMatrix({ extras, codexAvailable, stageCfg, ladder, baseModel, baseEffort, stages, onChange }) {
+  const models = workflowModels(extras, codexAvailable);
   const set = (stage, patch) => {
     const cur = (stages || {})[stage] || { model: "", effort: "" };
     onChange({ ...(stages || {}), [stage]: { ...cur, ...patch } });
@@ -124,17 +148,21 @@ export function WfStageMatrix({ extras, stageCfg, ladder, baseModel, baseEffort,
     ${(ladder || STAGES).map((s) => {
       const b = (stages || {})[s] || {};
       const cfg = (stageCfg || {})[s] || {};
-      const inheritModel = baseModel || cfg.Model || DEFAULT_CLAUDE_MODEL;
+      const selectedModel = availableWorkflowModel(b.model || "", extras, codexAvailable);
+      const inheritModel = availableWorkflowModel(baseModel, extras, codexAvailable) || cfg.Model || DEFAULT_CLAUDE_MODEL;
       const inheritEffort = baseEffort || cfg.Effort || "";
-      const offList = b.model && !models.includes(b.model);
+      const offList = selectedModel && !models.includes(selectedModel);
       return html`<div class="stage-matrix-row" key=${s}>
         <span class="stage-matrix-name">${s}</span>
-        <select class="model" value=${b.model || ""}
+        <select class="model" value=${selectedModel}
           title=${`model for the ${s} stage ('' = inherit ${inheritModel})`}
-          onChange=${(e) => set(s, { model: e.target.value })}>
+          onChange=${(e) => set(s, {
+            model: e.target.value,
+            agent: e.target.value ? workflowModelAgent(e.target.value, extras) : "",
+          })}>
           <option value="">model (${shortModel(inheritModel)})</option>
-          ${offList && html`<option value=${b.model}>${b.model}</option>`}
-          ${models.map((m) => html`<option value=${m}>${m}</option>`)}
+          ${offList && html`<option value=${selectedModel}>${selectedModel}</option>`}
+          <${WorkflowModelOptions} extras=${extras} codexAvailable=${codexAvailable} />
         </select>
         <select value=${b.effort || ""}
           title=${`effort for the ${s} stage ('' = inherit ${inheritEffort || "default"})`}
@@ -147,20 +175,22 @@ export function WfStageMatrix({ extras, stageCfg, ladder, baseModel, baseEffort,
   </div>`;
 }
 
-// WfBundlePicker is the claude model/effort pair every workflow surface
-// shares (intake advanced row, per-workflow override popover, settings).
-export function WfBundlePicker({ extras, stageCfg, model, effort, onModel, onEffort }) {
-  const models = claudeModels(extras);
+// WfBundlePicker is the model/effort pair every workflow surface shares.
+// ChatGPT models appear only when the environment probe found a usable Codex
+// executable; the selected model carries its owning agent at save time.
+export function WfBundlePicker({ extras, codexAvailable, stageCfg, model, effort, onModel, onEffort }) {
+  const models = workflowModels(extras, codexAvailable);
+  const selectedModel = availableWorkflowModel(model, extras, codexAvailable);
   const def = stageDefaultInfo(stageCfg);
   // A persisted pick can name an off-list model (extra_models edited since
   // it was saved) — keep it selectable instead of snapping to the default
   // (same discipline as ModelSelect).
-  const offList = model && !models.includes(model);
+  const offList = selectedModel && !models.includes(selectedModel);
   return html`<${Fragment}>
-    <select class="model" value=${model} onChange=${(e) => onModel(e.target.value)} title=${def.title}>
+    <select class="model" value=${selectedModel} onChange=${(e) => onModel(e.target.value)} title=${def.title}>
       <option value="">${def.label}</option>
-      ${offList && html`<option value=${model}>${model}</option>`}
-      ${models.map((m) => html`<option value=${m}>${m}</option>`)}
+      ${offList && html`<option value=${selectedModel}>${selectedModel}</option>`}
+      <${WorkflowModelOptions} extras=${extras} codexAvailable=${codexAvailable} />
     </select>
     <select value=${effort} onChange=${(e) => onEffort(e.target.value)} title="effort ('' = stage defaults)">
       ${WF_EFFORTS.map((ef) => html`<option value=${ef}>${ef || "effort (default)"}</option>`)}
@@ -195,15 +225,15 @@ export function StageStepper({ stage, stages, names }) {
 // tools & models) — picking here saves the choice for next time. The ladder
 // ends at implement; validation happens in cross-workflow validation runs
 // (see ValidationCard).
-export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreated }) {
+export function WorkflowIntake({ extras, codexAvailable, stageCfg, defaults, onDefaults, onCreated }) {
   const [text, setText] = useState("");
   const [adv, setAdv] = useState(false);
   const [startStage, setStartStage] = useState("");
   const [autoApprove, setAutoApprove] = useState(true);
   const [busy, setBusy] = useState(false);
-  const model = (defaults && defaults.model) || "";
+  const model = availableWorkflowModel((defaults && defaults.model) || "", extras, codexAvailable);
   const effort = (defaults && defaults.effort) || "";
-  const stageBundles = cleanStageBundles(defaults && defaults.stages);
+  const stageBundles = cleanStageBundles(defaults && defaults.stages, extras, codexAvailable);
   const overrideCount = Object.keys(stageBundles).length;
 
   const start = async () => {
@@ -212,7 +242,11 @@ export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreat
     try {
       const body = { text: text.trim(), autoApprove };
       if (startStage) body.startStage = startStage;
-      if (model || effort) body.bundle = { agent: "claude", model: model || undefined, effort: effort || undefined };
+      if (model || effort) body.bundle = {
+        agent: model ? workflowModelAgent(model, extras) : undefined,
+        model: model || undefined,
+        effort: effort || undefined,
+      };
       if (overrideCount > 0) body.stageBundles = stageBundles;
       const wf = await api.createWorkflow(body);
       setText(""); setStartStage(""); setAutoApprove(true);
@@ -248,11 +282,11 @@ export function WorkflowIntake({ extras, stageCfg, defaults, onDefaults, onCreat
           <option value="">start at refine</option>
           ${STAGES.map((s) => html`<option value=${s}>start at ${s}</option>`)}
         </select>
-        <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg} model=${model} effort=${effort}
+        <${WfBundlePicker} extras=${extras} codexAvailable=${codexAvailable} stageCfg=${stageCfg} model=${model} effort=${effort}
           onModel=${(m) => onDefaults && onDefaults({ ...defaults, model: m })}
           onEffort=${(ef) => onDefaults && onDefaults({ ...defaults, effort: ef })} />
       </div>
-      <${WfStageMatrix} extras=${extras} stageCfg=${stageCfg}
+      <${WfStageMatrix} extras=${extras} codexAvailable=${codexAvailable} stageCfg=${stageCfg}
         baseModel=${model} baseEffort=${effort} stages=${(defaults && defaults.stages) || {}}
         onChange=${(stages) => onDefaults && onDefaults({ ...defaults, stages })} />
     </div>`}
@@ -547,20 +581,25 @@ function ArtifactPane({ id, wf, stages, refreshTick, onApprove, onReject, onSkip
   </div>`;
 }
 
-// BundlePopover: the per-workflow model/effort override (agent is always the
-// interactive claude driver) — the all-stages base pair plus per-stage rows
-// that beat it for their stage.
-function BundlePopover({ wf, extras, stageCfg, onClose }) {
+// BundlePopover: the per-workflow model/effort override — the all-stages base
+// pair plus per-stage rows that beat it for their stage.
+function BundlePopover({ wf, extras, codexAvailable, stageCfg, onClose }) {
   const b = wf.Bundle || {};
   const [model, setModel] = useState(b.model || "");
   const [effort, setEffort] = useState(b.effort || "");
   const [stages, setStages] = useState(() => ({ ...(wf.StageBundles || {}) }));
   const apply = async () => {
     try {
-      const clean = cleanStageBundles(stages);
-      const any = model || effort || Object.keys(clean).length > 0;
+      const clean = cleanStageBundles(stages, extras, codexAvailable);
+      const availableModel = availableWorkflowModel(model, extras, codexAvailable);
+      const any = availableModel || effort || Object.keys(clean).length > 0;
       const body = any
-        ? { agent: "claude", model: model || undefined, effort: effort || undefined, stages: clean }
+        ? {
+            agent: availableModel ? workflowModelAgent(availableModel, extras) : undefined,
+            model: availableModel || undefined,
+            effort: effort || undefined,
+            stages: clean,
+          }
         : {};
       await api.setWorkflowBundle(wf.ID, body);
       onClose(true);
@@ -570,12 +609,12 @@ function BundlePopover({ wf, extras, stageCfg, onClose }) {
   };
   return html`<div>
     <div class="bundle-editor">
-      <${WfBundlePicker} extras=${extras} stageCfg=${stageCfg} model=${model} effort=${effort}
+      <${WfBundlePicker} extras=${extras} codexAvailable=${codexAvailable} stageCfg=${stageCfg} model=${model} effort=${effort}
         onModel=${setModel} onEffort=${setEffort} />
       <button class="primary" onClick=${apply}>apply</button>
       <button onClick=${() => onClose(false)}>✕</button>
     </div>
-    <${WfStageMatrix} extras=${extras} stageCfg=${stageCfg} ladder=${stagesFor(wf)}
+    <${WfStageMatrix} extras=${extras} codexAvailable=${codexAvailable} stageCfg=${stageCfg} ladder=${stagesFor(wf)}
       baseModel=${model} baseEffort=${effort} stages=${stages} onChange=${setStages} />
   </div>`;
 }
@@ -583,7 +622,7 @@ function BundlePopover({ wf, extras, stageCfg, onClose }) {
 // WorkflowDetail: header + chat pane + artifact pane for one workflow.
 // `live` is the app's last workflow SSE event, wrapped {n, ev} so every
 // event (including ephemeral deltas) changes the prop identity.
-export function WorkflowDetail({ id, extras, stageCfg, live, onClose }) {
+export function WorkflowDetail({ id, extras, codexAvailable, stageCfg, live, onClose }) {
   const [detail, setDetail] = useState(null);
   const [messages, setMessages] = useState([]);
   const [typing, setTyping] = useState("");
@@ -684,7 +723,7 @@ export function WorkflowDetail({ id, extras, stageCfg, live, onClose }) {
       <span class="spacer"></span>
       <button title="per-workflow model/effort override" onClick=${() => setEditBundle((v) => !v)}>⚙</button>
     </div>
-    ${editBundle && html`<${BundlePopover} wf=${wf} extras=${extras} stageCfg=${stageCfg}
+    ${editBundle && html`<${BundlePopover} wf=${wf} extras=${extras} codexAvailable=${codexAvailable} stageCfg=${stageCfg}
       onClose=${(applied) => { setEditBundle(false); if (applied) scheduleRefetch(); }} />`}
     <div class="wf-panes">
       <${ChatPanel} wf=${wf} messages=${messages} typing=${typing} tools=${tools} banner=${banner}

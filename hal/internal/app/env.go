@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/artjob"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/chroma"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/driver"
-	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/artjob"
 )
 
 // ToolInfo is one external dependency's status line for the settings panel:
@@ -145,6 +145,10 @@ func (a *App) refreshEnvLive(ctx context.Context, info EnvInfo) EnvInfo {
 			if tools[i].Present {
 				tools[i].Auth = "no auth failure observed (verified per turn from agent output)"
 			}
+		case "codex":
+			if tools[i].Present {
+				tools[i].Auth = "no auth failure observed (verified per turn from agent output)"
+			}
 		case "agy":
 			if tools[i].Present {
 				tools[i].Auth = a.agyAuthSignal(ctx)
@@ -158,7 +162,7 @@ func (a *App) refreshEnvLive(ctx context.Context, info EnvInfo) EnvInfo {
 // probeTools spawns the version probes. Slow path — cached by EnvStatus.
 func (a *App) probeTools(ctx context.Context) []ToolInfo {
 	res := a.Res()
-	tools := make([]ToolInfo, 0, 6)
+	tools := make([]ToolInfo, 0, 7)
 
 	// claude — capturable CLI: version and capabilities are probeable.
 	claude := ToolInfo{Name: "claude"}
@@ -177,6 +181,34 @@ func (a *App) probeTools(ctx context.Context) []ToolInfo {
 		}
 	}
 	tools = append(tools, claude)
+
+	// codex — the CLI installed with ChatGPT/Codex desktop. JSONL output and
+	// resume support are required before its models can drive workflow turns.
+	codex := ToolInfo{Name: "codex"}
+	if path, err := driver.CodexPath(); err != nil {
+		codex.Fix = "install ChatGPT/Codex, or set HAL_CODEX_BIN"
+	} else {
+		codex.Present = true
+		codex.Path = path
+		codex.Version = probeVersion(ctx, path, "--version")
+		if caps, err := driver.NewCodex().Probe(ctx); err == nil {
+			switch {
+			case !caps.Interactive:
+				codex.Detail = "installed, but too old for JSONL resume workflow turns"
+				codex.Present = false
+				codex.Fix = "update ChatGPT/Codex"
+			case caps.Effort:
+				codex.Detail = "streams JSONL; supports resumable turns and effort levels"
+			default:
+				codex.Detail = "streams JSONL; supports resumable turns; configured efforts are ignored"
+			}
+		} else {
+			codex.Present = false
+			codex.Detail = "installed, but its workflow capabilities could not be probed"
+			codex.Fix = "update ChatGPT/Codex, or check HAL_CODEX_BIN"
+		}
+	}
+	tools = append(tools, codex)
 
 	// agy — blind CLI: NEVER spawned with piped stdio (it drops output and
 	// can hang — AGENTS.md), so there is no headless version probe. Presence

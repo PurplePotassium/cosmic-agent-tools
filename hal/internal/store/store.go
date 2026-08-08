@@ -168,6 +168,7 @@ var schema = []string{
 		stage         TEXT NOT NULL,
 		status        TEXT NOT NULL DEFAULT 'pending',
 		session_id    TEXT NOT NULL DEFAULT '',
+		session_agent TEXT NOT NULL DEFAULT '',
 		artifact      TEXT NOT NULL DEFAULT '',
 		decision_note TEXT NOT NULL DEFAULT '',
 		started       INTEGER NOT NULL DEFAULT 0,
@@ -262,6 +263,12 @@ func (s *Store) migrate() error {
 	// per-flow successor of the single bundle_* columns, which stay as the
 	// all-stages base.
 	if err := s.ensureColumn("workflows", "stage_bundles", `TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		return err
+	}
+	// A session id is runtime-specific. Recording its owner lets a workflow
+	// switch between Claude and Codex mid-stage without handing either CLI the
+	// other runtime's resume key. Empty historical rows are treated as Claude.
+	if err := s.ensureColumn("wf_stages", "session_agent", `TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	// DO UPDATE, not DO NOTHING: the stored version must track the binary

@@ -81,11 +81,13 @@ type Config struct {
 // Manager drives every live workflow: one goroutine-with-inbox per active
 // workflow, event-driven, idle while the human thinks.
 type Manager struct {
-	st     *store.Store
-	bus    *bus.Bus
-	drv    driver.Driver
-	runner turns.Runner
-	cfg    Config
+	st       *store.Store
+	bus      *bus.Bus
+	drv      driver.Driver
+	runner   turns.Runner
+	cfg      Config
+	driverMu sync.Mutex
+	drivers  map[string]driver.Driver
 
 	implementMu sync.Mutex // serializes tree-mutating turns (implement/validate)
 	sem         *semaphore.Weighted
@@ -123,11 +125,16 @@ func New(st *store.Store, b *bus.Bus, drv driver.Driver, runner turns.Runner, cf
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 2
 	}
+	drivers := map[string]driver.Driver{}
+	if drv != nil {
+		drivers[drv.Name()] = drv
+	}
 	return &Manager{
 		st: st, bus: b, drv: drv, runner: runner, cfg: cfg,
 		sem:       semaphore.NewWeighted(cfg.MaxConcurrent),
 		sessions:  map[string]*session{},
 		corrected: map[string]bool{},
+		drivers:   drivers,
 		ready:     make(chan struct{}),
 	}
 }
@@ -831,10 +838,17 @@ func (m *Manager) runTurn(ctx context.Context, id string, s *session, req turnRe
 	if err != nil {
 		return
 	}
+	bundle := m.bundleFor(wf, stage)
 	resume := ""
 	for _, st := range stages {
 		if st.Stage == stage {
-			resume = st.SessionID
+			sessionAgent := st.SessionAgent
+			if sessionAgent == "" && st.SessionID != "" {
+				sessionAgent = "claude" // rows created before session_agent existed
+			}
+			if sessionAgent == bundle.Agent {
+				resume = st.SessionID
+			}
 		}
 	}
 
@@ -919,29 +933,36 @@ func (m *Manager) runTurn(ctx context.Context, id string, s *session, req turnRe
 
 	preDirty := m.dirtySet(ctx)
 
+	turnDriver, driverErr := m.driverFor(bundle.Agent)
 	var savedMsgs atomic.Int32
-	res, runErr := m.runner.Run(turnCtx, m.drv, turns.TurnSpec{
-		Prompt:          turnPrompt,
-		Model:           m.bundleFor(wf, stage).Model,
-		Effort:          m.bundleFor(wf, stage).Effort,
-		SessionID:       minted,
-		Resume:          resume,
-		SkipPermissions: spec.FullAccess && m.cfg.SkipPermissions,
-		PermissionMode:  m.permissionMode(spec),
-		AllowedTools:    spec.AllowedTools,
-		DisallowedTools: spec.DisallowedTools,
-		WorkDir:         m.cfg.RepoDir,
-		LogPath:         logPath,
-		Timeout:         m.cfg.TurnTimeout,
-		ExtraEnv: []string{
-			"HAL_WORKFLOW_ID=" + id,
-			"HAL_WORKFLOW_STAGE=" + string(stage),
-			"HAL_WORKFLOW_STATUS_FILE=" + statusPath,
-			"HAL_WORKFLOW_ARTIFACT=" + filepath.Join(m.cfg.RepoDir, filepath.FromSlash(m.artifactRel(id, spec.Artifact))),
-		},
-	}, m.turnSink(ctx, id, stage, turnID, &savedMsgs))
+	res := turns.TurnResult{State: turns.TurnFailed, ExitCode: -1}
+	var runErr error
+	if driverErr != nil {
+		runErr = driverErr
+	} else {
+		res, runErr = m.runner.Run(turnCtx, turnDriver, turns.TurnSpec{
+			Prompt:          turnPrompt,
+			Model:           bundle.Model,
+			Effort:          bundle.Effort,
+			SessionID:       minted,
+			Resume:          resume,
+			SkipPermissions: spec.FullAccess && m.cfg.SkipPermissions,
+			PermissionMode:  m.permissionMode(spec),
+			AllowedTools:    spec.AllowedTools,
+			DisallowedTools: spec.DisallowedTools,
+			WorkDir:         m.cfg.RepoDir,
+			LogPath:         logPath,
+			Timeout:         m.cfg.TurnTimeout,
+			ExtraEnv: []string{
+				"HAL_WORKFLOW_ID=" + id,
+				"HAL_WORKFLOW_STAGE=" + string(stage),
+				"HAL_WORKFLOW_STATUS_FILE=" + statusPath,
+				"HAL_WORKFLOW_ARTIFACT=" + filepath.Join(m.cfg.RepoDir, filepath.FromSlash(m.artifactRel(id, spec.Artifact))),
+			},
+		}, m.turnSink(ctx, id, stage, turnID, &savedMsgs))
+	}
 
-	m.settleTurn(ctx, id, s, wf, spec, turnID, res, runErr, preDirty, savedMsgs.Load())
+	m.settleTurn(ctx, id, s, wf, spec, turnID, bundle.Agent, res, runErr, preDirty, savedMsgs.Load())
 	m.exportTurn(ctx, id, logPath)
 }
 
@@ -954,7 +975,7 @@ func (m *Manager) permissionMode(spec prompt.StageSpec) string {
 	return ""
 }
 
-func (m *Manager) settleTurn(ctx context.Context, id string, s *session, wf domain.Workflow, spec prompt.StageSpec, turnID int64, res turns.TurnResult, runErr error, preDirty map[string]bool, savedMsgs int32) {
+func (m *Manager) settleTurn(ctx context.Context, id string, s *session, wf domain.Workflow, spec prompt.StageSpec, turnID int64, turnAgent string, res turns.TurnResult, runErr error, preDirty map[string]bool, savedMsgs int32) {
 	stage := wf.Stage
 	errDetail := ""
 	if runErr != nil {
@@ -976,7 +997,7 @@ func (m *Manager) settleTurn(ctx context.Context, id string, s *session, wf doma
 	}
 	_ = m.st.FinishTurn(ctx, turnID, string(res.State), res.ExitCode, errDetail, res.SessionID, cost, numTurns)
 	if res.SessionID != "" {
-		_ = m.st.SetStageSession(ctx, id, stage, res.SessionID)
+		_ = m.st.SetStageSession(ctx, id, stage, res.SessionID, turnAgent)
 	}
 	// The sink already persisted each settled assistant message; FinalText
 	// is only the fallback for turns killed/failed before one landed (their
@@ -1323,6 +1344,9 @@ func (m *Manager) fragment(rel string) string {
 // per-stage override for exactly this stage.
 func (m *Manager) bundleFor(wf domain.Workflow, stage domain.WorkflowStage) domain.Bundle {
 	b := m.cfg.StageBundles[stage]
+	if b.Agent == "" {
+		b.Agent = m.cfg.DefaultBundle.Agent
+	}
 	if b.Model == "" {
 		b.Model = m.cfg.DefaultBundle.Model
 	}
@@ -1332,10 +1356,16 @@ func (m *Manager) bundleFor(wf domain.Workflow, stage domain.WorkflowStage) doma
 	if wf.Bundle.Model != "" {
 		b.Model = wf.Bundle.Model
 	}
+	if wf.Bundle.Agent != "" {
+		b.Agent = wf.Bundle.Agent
+	}
 	if wf.Bundle.Effort != "" {
 		b.Effort = wf.Bundle.Effort
 	}
 	if sb, ok := wf.StageBundles[stage]; ok {
+		if sb.Agent != "" {
+			b.Agent = sb.Agent
+		}
 		if sb.Model != "" {
 			b.Model = sb.Model
 		}
@@ -1343,7 +1373,32 @@ func (m *Manager) bundleFor(wf domain.Workflow, stage domain.WorkflowStage) doma
 			b.Effort = sb.Effort
 		}
 	}
+	if b.Agent == "" {
+		b.Agent = "claude"
+	}
 	return b
+}
+
+// driverFor resolves the selected stage agent while preserving
+// HAL_WORKFLOW_AGENT and injected test drivers as whole-engine seams.
+func (m *Manager) driverFor(agent string) (driver.Driver, error) {
+	if m.drv == nil {
+		return nil, fmt.Errorf("workflow: no default driver configured")
+	}
+	if agent == "" || agent == m.drv.Name() || m.drv.Name() != "claude" {
+		return m.drv, nil
+	}
+	m.driverMu.Lock()
+	defer m.driverMu.Unlock()
+	if d := m.drivers[agent]; d != nil {
+		return d, nil
+	}
+	d, err := driver.New(agent)
+	if err != nil {
+		return nil, err
+	}
+	m.drivers[agent] = d
+	return d, nil
 }
 
 func (m *Manager) artifactDirRel(id string) string { return path.Join(m.cfg.ArtifactRoot, id) }

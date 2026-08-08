@@ -51,9 +51,9 @@ func (a *App) SetWorkflowManager(m *workflow.Manager) {
 
 func (a *App) workflowConfig() workflow.Config {
 	cfg := a.Res().Config
-	// Per-stage model/effort overrides from [workflow.stages.<stage>]; the
-	// agent is always claude (the interactive driver). Load validated the
-	// stage names.
+	// Per-stage model/effort defaults from [workflow.stages.<stage>] are
+	// Claude-backed. Per-workflow dashboard overrides may select Codex for a
+	// stage. Load validated the stage names.
 	stages := make(map[domain.WorkflowStage]domain.Bundle, len(cfg.Workflow.Stages))
 	for name, b := range cfg.Workflow.Stages {
 		stages[domain.WorkflowStage(name)] = domain.Bundle{Agent: "claude", Model: b.Model, Effort: b.Effort}
@@ -129,10 +129,10 @@ func (a *App) RunWorkflows(ctx context.Context) error {
 
 // WorkflowDetail is the dashboard's per-workflow view model.
 type WorkflowDetail struct {
-	Workflow domain.Workflow             `json:"workflow"`
-	Stages   []WorkflowStageDetail       `json:"stages"`
-	Turns    []domain.WorkflowTurn       `json:"turns,omitempty"`
-	Messages []domain.WorkflowMessage    `json:"messages,omitempty"`
+	Workflow domain.Workflow          `json:"workflow"`
+	Stages   []WorkflowStageDetail    `json:"stages"`
+	Turns    []domain.WorkflowTurn    `json:"turns,omitempty"`
+	Messages []domain.WorkflowMessage `json:"messages,omitempty"`
 }
 
 // WorkflowStageDetail decorates a stage row with artifact existence (the

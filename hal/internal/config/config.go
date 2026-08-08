@@ -43,8 +43,9 @@ type WorkflowConfig struct {
 	// human (default 20).
 	TurnMinutes int `toml:"turn_minutes"`
 	// Stages optionally overrides model/effort per stage, keyed by the fixed
-	// stage names (refine/research/design/plan/implement/validate). The agent
-	// is always claude — the interactive driver.
+	// stage names (refine/research/design/plan/implement/validate). Config-file
+	// defaults are Claude-backed; dashboard workflow overrides can select
+	// another interactive driver such as Codex.
 	Stages map[string]StageBundle `toml:"stages"`
 }
 
@@ -129,7 +130,7 @@ type SafetyConfig struct {
 	SkipPermissions bool `toml:"skip_permissions"`
 	// WedgeMinutes bounds one art-job orchestrator invocation; must exceed
 	// agy's 30m --print-timeout or default config kills healthy agy runs.
-	WedgeMinutes int `toml:"wedge_minutes"`
+	WedgeMinutes  int `toml:"wedge_minutes"`
 	MaxConcurrent int `toml:"max_concurrent"` // simultaneous agent turn processes
 
 	// Deprecated pass-loop knobs — parsed tolerantly, ignored (see load.go).

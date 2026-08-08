@@ -72,6 +72,13 @@ func TestWorkflowCRUDAndStageLadder(t *testing.T) {
 			t.Fatalf("stage %s status %q, want %q", st.Stage, st.Status, want)
 		}
 	}
+	if err := s.SetStageSession(ctx, wf.ID, domain.StageRefine, "thread-1", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	stages, err = s.WorkflowStages(ctx, wf.ID)
+	if err != nil || stages[0].SessionID != "thread-1" || stages[0].SessionAgent != "codex" {
+		t.Fatalf("session owner round trip: %+v, %v", stages[0], err)
+	}
 
 	// Approve refine, advance to research.
 	if err := s.SetStageArtifact(ctx, wf.ID, domain.StageRefine, ".hal/workflows/x/01-question.md"); err != nil {

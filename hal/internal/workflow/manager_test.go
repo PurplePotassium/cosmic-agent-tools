@@ -978,20 +978,20 @@ func TestBundleForPerStagePrecedence(t *testing.T) {
 		DefaultBundle: domain.Bundle{Model: "cfg-default", Effort: "medium"},
 	})
 	wf := domain.Workflow{
-		Bundle: domain.Bundle{Model: "wf-base"},
+		Bundle: domain.Bundle{Agent: "codex", Model: "wf-base"},
 		StageBundles: map[domain.WorkflowStage]domain.Bundle{
-			domain.StageResearch: {Model: "wf-research"},
+			domain.StageResearch: {Agent: "claude", Model: "wf-research"},
 			domain.StagePlan:     {Effort: "max"},
 		},
 	}
 	// research: the per-stage model wins; effort has no override anywhere on
 	// the workflow, so the config default holds.
-	if b := m.bundleFor(wf, domain.StageResearch); b.Model != "wf-research" || b.Effort != "medium" {
+	if b := m.bundleFor(wf, domain.StageResearch); b.Agent != "claude" || b.Model != "wf-research" || b.Effort != "medium" {
 		t.Fatalf("research: %+v", b)
 	}
 	// plan: the workflow base model beats the config stage entry; the
 	// per-stage effort beats everything.
-	if b := m.bundleFor(wf, domain.StagePlan); b.Model != "wf-base" || b.Effort != "max" {
+	if b := m.bundleFor(wf, domain.StagePlan); b.Agent != "codex" || b.Model != "wf-base" || b.Effort != "max" {
 		t.Fatalf("plan: %+v", b)
 	}
 	// implement: untouched by per-stage overrides — base model, default effort.

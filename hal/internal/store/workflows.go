@@ -302,7 +302,7 @@ func (s *Store) MarkValidated(ctx context.Context, id, runID string) error {
 // WorkflowStages returns the six stage rows in ladder order.
 func (s *Store) WorkflowStages(ctx context.Context, id string) ([]domain.WorkflowStageState, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT workflow_id, stage, status, session_id, artifact, decision_note,
+		SELECT workflow_id, stage, status, session_id, session_agent, artifact, decision_note,
 			started, ended, decided
 		FROM wf_stages WHERE workflow_id = ?`, id)
 	if err != nil {
@@ -314,7 +314,7 @@ func (s *Store) WorkflowStages(ctx context.Context, id string) ([]domain.Workflo
 		var st domain.WorkflowStageState
 		var stage string
 		var started, ended, decided int64
-		if err := rows.Scan(&st.WorkflowID, &stage, &st.Status, &st.SessionID,
+		if err := rows.Scan(&st.WorkflowID, &stage, &st.Status, &st.SessionID, &st.SessionAgent,
 			&st.Artifact, &st.DecisionNote, &started, &ended, &decided); err != nil {
 			return nil, err
 		}
@@ -334,11 +334,12 @@ func (s *Store) WorkflowStages(ctx context.Context, id string) ([]domain.Workflo
 	return out, nil
 }
 
-// SetStageSession records the latest captured session id (the resume key).
-func (s *Store) SetStageSession(ctx context.Context, id string, stage domain.WorkflowStage, sessionID string) error {
+// SetStageSession records the latest captured session id and the runtime that
+// minted it. Resume keys are not portable between agent CLIs.
+func (s *Store) SetStageSession(ctx context.Context, id string, stage domain.WorkflowStage, sessionID, agent string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE wf_stages SET session_id = ? WHERE workflow_id = ? AND stage = ?`,
-		sessionID, id, string(stage))
+		`UPDATE wf_stages SET session_id = ?, session_agent = ? WHERE workflow_id = ? AND stage = ?`,
+		sessionID, agent, id, string(stage))
 	return oneRow(res, err)
 }
 

@@ -159,8 +159,9 @@ verify = "npm test"          # THE GATE. exit 0 = pass. validation-run approval 
 
 [safety]
 skip_permissions = true      # implement/validate turns bypass the agent CLI's
-                             # permission prompts (see ⚠️ below); false = Claude's
-                             # acceptEdits mode + explicit tool allowlist
+                             # permission prompts (see ⚠️ below); false =
+                             # the driver's workspace-write mode plus Hal's
+                             # post-turn tree enforcement
 max_concurrent   = 2         # simultaneous agent turn processes across workflows
 wedge_minutes    = 35        # bounds one ART JOB invocation; keep above agy's
                              # 30m --print-timeout (workflow turns use turn_minutes)
@@ -168,8 +169,9 @@ wedge_minutes    = 35        # bounds one ART JOB invocation; keep above agy's
 [workflow]
 turn_minutes = 20            # per-turn ceiling — never counts waiting on you
 artifact_dir = ".hal/workflows"   # repo-relative artifact root
-# Per-stage model/effort (the agent is always claude); a per-workflow ⚙
-# override from the dashboard beats these.
+# Per-stage config defaults are Claude model/effort pairs; a per-workflow ⚙
+# override from the dashboard beats these and can route any stage through
+# ChatGPT/Codex Sol, Terra, or Luna when Codex is installed.
 # [workflow.stages.research]
 # model  = "claude-opus-4-8"
 # effort = "high"
@@ -292,7 +294,8 @@ playthrough. An existing toolkit config is never touched (even with
 session token baked into the URL it opens). Left column tabs:
 
 - **workflows** — the intake box ("What should we build / fix / understand?",
-  with an advanced row for start-stage and model/effort) and the live
+  with an advanced row for start-stage and model/effort; Sol, Terra, and Luna
+  appear under ChatGPT only when the Codex executable is installed) and the live
   workflow list: per-card stage stepper (✓ approved · ● active · ○ pending ·
   ⊘ skipped), status badge, and a "waiting Xm" age while a workflow sits on
   your move.

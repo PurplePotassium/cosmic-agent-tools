@@ -82,6 +82,11 @@ var ClaudeModels = []string{"claude-sonnet", "claude-fable", "claude-opus", "cla
 // produces a warning, never blocks.
 var AgyModels = []string{"gemini"}
 
+// CodexModels are the curated GPT model ids available through the Codex CLI.
+// Keep these as full ids rather than a broad "gpt" prefix: Hal should offer
+// only the supported Sol, Terra, and Luna variants by default.
+var CodexModels = []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+
 // Art-generation task types. Both run on the claude driver pinned to a
 // frontier model (see ArtClaudeModels): the claude pass ORCHESTRATES — it
 // invokes the Antigravity CLI (agy, the Gemini image model) to do the actual
@@ -148,15 +153,17 @@ func ModelFamilies(agent string) []string {
 		return ClaudeModels
 	case "agy":
 		return AgyModels
+	case "codex":
+		return CodexModels
 	default:
 		return nil
 	}
 }
 
 // KnownModel reports whether model is empty, agent has no curated family list,
-// or model matches one of agent's curated prefixes. The prefix match is
-// case-insensitive: agy model ids are display labels ("Gemini 3.1 Pro (High)")
-// while the curated families are lowercase.
+// or model matches the agent's curated policy. Claude and agy use
+// case-insensitive family prefixes; Codex uses exact ids so a lookalike such
+// as gpt-5.6-solar is not accidentally accepted as Sol.
 func KnownModel(agent, model string) bool {
 	if model == "" {
 		return true
@@ -167,6 +174,12 @@ func KnownModel(agent, model string) bool {
 	}
 	lower := strings.ToLower(model)
 	for _, fam := range families {
+		if agent == "codex" && lower == strings.ToLower(fam) {
+			return true
+		}
+		if agent == "codex" {
+			continue
+		}
 		if strings.HasPrefix(lower, fam) {
 			return true
 		}
