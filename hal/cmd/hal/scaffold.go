@@ -237,7 +237,7 @@ name = "` + name + `"
 #
 # Per-stage model/effort overrides (the agent is always claude):
 # [workflow.stages.design]
-# model  = "claude-opus-4-8"
+# model  = "claude-opus-5"
 # effort = "high"
 `)
 	if game {

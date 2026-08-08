@@ -6,6 +6,8 @@ package config
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/chroma"
@@ -186,6 +188,44 @@ func (c *Config) KnownOrExtraModel(agent, model string) bool {
 		}
 	}
 	return false
+}
+
+// ModelRef is one configured model id plus the config key that named it, so a
+// verification failure can point at the line to edit.
+type ModelRef struct {
+	Where string // "types.code", "workflow.stages.design"
+	Agent string
+	Model string
+}
+
+// ClaudeModelRefs lists every non-empty claude model id this config names —
+// [types.*] entries routed to claude plus [workflow.stages.*], which is always
+// claude. Deduped by id (one probe per id, not per mention) and ordered so the
+// caller's output is stable.
+//
+// Claude only: verifying an id means asking the agent's own CLI whether it can
+// run it, and claude is the driver that answers headless. agy labels are
+// enumerated instead (driver.(*Agy).ListModels); codex ids are exact-matched
+// against a curated list (domain.CodexModels).
+func (c *Config) ClaudeModelRefs() []ModelRef {
+	seen := map[string]bool{}
+	var out []ModelRef
+	add := func(where, model string) {
+		if model == "" || seen[model] {
+			return
+		}
+		seen[model] = true
+		out = append(out, ModelRef{Where: where, Agent: "claude", Model: model})
+	}
+	for _, t := range slices.Sorted(maps.Keys(c.Types)) {
+		if b := c.Types[t]; b.Agent == "claude" {
+			add("types."+t, b.Model)
+		}
+	}
+	for _, s := range slices.Sorted(maps.Keys(c.Workflow.Stages)) {
+		add("workflow.stages."+s, c.Workflow.Stages[s].Model)
+	}
+	return out
 }
 
 // checkModel warns when model doesn't match agent's curated family list —

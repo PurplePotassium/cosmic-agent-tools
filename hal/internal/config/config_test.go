@@ -182,7 +182,7 @@ artifact_dir = ".hal/wf"
 turn_minutes = 30
 
 [workflow.stages.design]
-model  = "claude-opus-4-8"
+model  = "claude-opus-5"
 effort = "high"
 
 [safety]
@@ -200,7 +200,7 @@ max_concurrent   = 2
 		t.Fatalf("workflow section lost: %+v", res.Config.Workflow)
 	}
 	st, ok := res.Config.Workflow.Stages["design"]
-	if !ok || st.Model != "claude-opus-4-8" || st.Effort != "high" {
+	if !ok || st.Model != "claude-opus-5" || st.Effort != "high" {
 		t.Fatalf("stage override lost: %+v", res.Config.Workflow.Stages)
 	}
 }
@@ -254,7 +254,7 @@ func TestValidateBlocksUnsafeConfig(t *testing.T) {
 		"port out of range":     "[server]\nport = 999999",
 		"zero turn minutes":     "[workflow]\nturn_minutes = 0",
 		"empty artifact dir":    "[workflow]\nartifact_dir = \"  \"",
-		"unknown stage":         "[workflow.stages.polish]\nmodel = \"claude-opus-4-8\"",
+		"unknown stage":         "[workflow.stages.polish]\nmodel = \"claude-opus-5\"",
 		"bad stage effort":      "[workflow.stages.design]\neffort = \"gigantic\"",
 		"bad type effort":       "[types.inquiry]\nagent = \"claude\"\neffort = \"gigantic\"",
 		"bad art remover":       "[art]\nremover = \"photoshop\"",

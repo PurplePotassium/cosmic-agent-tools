@@ -60,7 +60,7 @@ export function StatusBadge({ status }) {
 // CLAUDE_MODELS: one representative id per Claude family. Extended by
 // [agents.claude] extra_models via the extras prop.
 export const CLAUDE_MODELS = [
-  "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5-20251001",
+  "claude-sonnet-5", "claude-fable-5", "claude-opus-5", "claude-haiku-4-5-20251001",
 ];
 export const CODEX_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
 export const WF_EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];

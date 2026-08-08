@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/config"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/driver"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/modelcheck"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/server"
 )
 
@@ -48,7 +50,18 @@ func cmdDoctor(args []string) int {
 
 	a, err := app.Open(ctx, *repo)
 	if err != nil {
-		add("repository", "FAIL", err.Error(), "run inside a git repo, or pass --repo")
+		// A rejected model id blocks Open, which would otherwise surface here
+		// as a confusing "repository" failure — report it as what it is, since
+		// diagnosing exactly this is what doctor is for.
+		var badModel *modelcheck.InvalidModelError
+		if errors.As(err, &badModel) {
+			for _, r := range badModel.Results {
+				add("model", "FAIL", fmt.Sprintf("%s = %q is not runnable by the installed Claude Code", r.Ref.Where, r.Ref.Model),
+					"correct the id in .hal/config.toml, or set HAL_SKIP_MODEL_VERIFY=1 to start without verifying")
+			}
+		} else {
+			add("repository", "FAIL", err.Error(), "run inside a git repo, or pass --repo")
+		}
 		return doctorReport(checks, *asJSON)
 	}
 	defer a.Close()
@@ -62,8 +75,11 @@ func cmdDoctor(args []string) int {
 	}
 
 	// claude — the interactive workflow engine (and the art-job orchestrator)
-	// runs on it.
-	if caps, err := driver.NewClaude().Probe(ctx); err != nil {
+	// runs on it. One driver for both this check and the model check below:
+	// Probe caches its `--help` result per instance, so a second instance
+	// would re-spawn claude for an answer we already have.
+	claudeDrv := driver.NewClaude()
+	if caps, err := claudeDrv.Probe(ctx); err != nil {
 		add("agent:claude", "FAIL", err.Error(), "install Claude Code, or set HAL_CLAUDE_BIN")
 	} else {
 		detail := "found"
@@ -73,6 +89,28 @@ func cmdDoctor(args []string) int {
 			detail += ", no effort flag (configured efforts will be ignored)"
 		}
 		add("agent:claude", "PASS", detail, "")
+	}
+
+	// Configured claude model ids. app.Open already blocked on any definitive
+	// rejection to get here, so this re-run is served from the cache and only
+	// reports — but it still names the unknowns Open could only warn about.
+	if refs := a.Res().Config.ClaudeModelRefs(); len(refs) == 0 {
+		add("model", "PASS", fmt.Sprintf("no model overrides configured (engine default %s)", driver.DefaultClaudeModel), "")
+	} else if modelcheck.Skip(os.Getenv) {
+		add("model", "WARN", "model verification is disabled (HAL_SKIP_MODEL_VERIFY / HAL_FAKE_BIN)", "unset it to verify configured ids against Claude Code")
+	} else {
+		for _, r := range modelcheck.Verify(ctx, claudeDrv, a.StateDir, refs) {
+			switch {
+			case r.Unknown:
+				add("model", "WARN", fmt.Sprintf("%s = %q could not be verified: %s", r.Ref.Where, r.Ref.Model, r.Detail),
+					"check that claude runs and is logged in, then re-run hal doctor")
+			case !r.OK:
+				add("model", "FAIL", fmt.Sprintf("%s = %q is not runnable by the installed Claude Code", r.Ref.Where, r.Ref.Model),
+					"fix the id in .hal/config.toml, or set HAL_SKIP_MODEL_VERIFY=1")
+			default:
+				add("model", "PASS", fmt.Sprintf("%s = %s", r.Ref.Where, r.Ref.Model), "")
+			}
+		}
 	}
 
 	// .claude/agents — the workflow stage prompts call these sub-agents by

@@ -31,6 +31,26 @@ an if-chain on an agent's name elsewhere.
 - Auth failures are detectable from output (`AuthProbe=true`): the engine
   scans failed turns for auth keywords and marks the failure `auth:` — an
   expired login never self-heals and must not burn retries.
+- **Model ids are verified against the CLI, one at a time — there is no way to
+  enumerate them.** Probed v2.1.225: `claude` has no `models` subcommand, and
+  unlike agy an invalid `--model` prints **no** "Available models:" list, so
+  the agy enumeration trick does not transfer. What it does print is
+  `There's an issue with the selected model (<id>)` — before the prompt
+  reaches the API and with no response after it, so **probing a bad id is
+  quota-free while a good one costs one minimal turn**. `VerifyModel`
+  (`internal/driver/claude_verify.go`) keys on exactly that marker.
+  - The marker is an English UI string, same fragility class as agy's
+    "Available models:" dump. It fails in the safe direction: a reworded
+    marker makes every id read as **valid**, degrading to the old
+    warn-only behavior rather than inventing failures for working models.
+  - Do NOT scrape model ids out of the `claude` binary. Its embedded table
+    lists ids it merely *recognizes* — `claude-opus-4-6-fast`,
+    `claude-opus-4-1`, `claude-mythos-preview` are all in there and none of
+    them run. Recognition ≠ access.
+  - Verdicts are cached per CLI version in `<state dir>/claude-models.json`
+    (`internal/modelcheck`), so steady-state startup spawns nothing. Delete
+    that file to force a re-probe. A probe that *fails* (offline, dead auth)
+    is never cached and never blocks — only a definitive rejection does.
 - Binary discovery: `HAL_CLAUDE_BIN` env override → PATH.
 
 ## codex (OpenAI Codex CLI)

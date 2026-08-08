@@ -22,6 +22,7 @@ import (
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/domain"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/driver"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/gitx"
+	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/modelcheck"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/proc"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/statedir"
 	"github.com/PurplePotassium/cosmic-agent-tools/hal/internal/store"
@@ -138,6 +139,25 @@ func Open(ctx context.Context, repoOverride string) (*App, error) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
 				"no hal state for this repo path yet, but state exists for another repo named %q — if you moved the repo, copy %s to %s to keep its backlog and history",
 				filepath.Base(root), strings.Join(twins, " or "), stateDir))
+		}
+	}
+
+	// Configured claude model ids are checked against the installed CLI before
+	// anything can spawn a turn with one. config.Validate only prefix-matches
+	// the family and warns, so without this a typo'd or inaccessible id fails
+	// later, mid workflow stage, as a burnt turn. Verdicts are cached per CLI
+	// version, so this is normally free (see internal/modelcheck).
+	if !modelcheck.Skip(os.Getenv) {
+		results := modelcheck.Verify(ctx, driver.NewClaude(), stateDir, res.Config.ClaudeModelRefs())
+		for _, r := range results {
+			if r.Unknown {
+				// The probe could not run — never a reason to refuse to start.
+				res.Warnings = append(res.Warnings, fmt.Sprintf(
+					"%s: could not verify model %q against Claude Code (%s)", r.Ref.Where, r.Ref.Model, r.Detail))
+			}
+		}
+		if bad := modelcheck.Invalid(results); len(bad) > 0 {
+			return nil, &modelcheck.InvalidModelError{Results: bad}
 		}
 	}
 

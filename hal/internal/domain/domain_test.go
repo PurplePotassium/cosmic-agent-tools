@@ -26,7 +26,7 @@ func TestNormalizeType(t *testing.T) {
 // (prefix match, case-insensitive), weaker families and other agents' ids
 // never do.
 func TestAllowedArtClaudeModel(t *testing.T) {
-	for _, m := range []string{"claude-fable-5", "claude-fable-6", "Claude-Opus-4-8", ArtClaudeDefault} {
+	for _, m := range []string{"claude-fable-5", "claude-fable-6", "Claude-Opus-5", ArtClaudeDefault} {
 		if !AllowedArtClaudeModel(m) {
 			t.Errorf("AllowedArtClaudeModel(%q) = false, want true", m)
 		}

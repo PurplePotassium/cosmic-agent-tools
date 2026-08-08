@@ -66,7 +66,7 @@ func TestAgyModelFamilyCaseInsensitive(t *testing.T) {
 	if err := c.checkModel("types.art-gen", "agy", "Gemini 3.1 Pro (High)"); err != nil {
 		t.Fatalf("display-cased gemini label should be known: %v", err)
 	}
-	if err := c.checkModel("types.art-gen", "agy", "claude-opus-4-8"); err == nil {
+	if err := c.checkModel("types.art-gen", "agy", "claude-opus-5"); err == nil {
 		t.Fatal("a claude id on agy should warn")
 	}
 	if !domain.AllowedArtModel("gemini 3.1 pro (high)") || domain.AllowedArtModel("gemini 3 pro") {

@@ -58,7 +58,7 @@ func TestPinWarnsUnknownModel(t *testing.T) {
 	}
 
 	// A curated claude model id must NOT warn.
-	if code := postTaskPin(t, s, `{"agent":"claude","model":"claude-opus-4-8"}`); code != 200 {
+	if code := postTaskPin(t, s, `{"agent":"claude","model":"claude-opus-5"}`); code != 200 {
 		t.Fatalf("curated pin model: got %d, want 200", code)
 	}
 	if drainHasEvent(events, "driver.model_unknown") {

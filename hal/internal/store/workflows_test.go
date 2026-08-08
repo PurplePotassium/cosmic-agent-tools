@@ -312,12 +312,12 @@ func TestWorkflowStageBundlesRoundTrip(t *testing.T) {
 
 	// SetWorkflowBundle replaces both the base and the per-stage map.
 	if err := s.SetWorkflowBundle(ctx, wf.ID, domain.Bundle{Model: "claude-sonnet-5"},
-		map[domain.WorkflowStage]domain.Bundle{domain.StageImplement: {Model: "claude-opus-4-8"}}); err != nil {
+		map[domain.WorkflowStage]domain.Bundle{domain.StageImplement: {Model: "claude-opus-5"}}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetWorkflow(ctx, wf.ID)
 	if got.Bundle.Model != "claude-sonnet-5" || len(got.StageBundles) != 1 ||
-		got.StageBundles[domain.StageImplement].Model != "claude-opus-4-8" {
+		got.StageBundles[domain.StageImplement].Model != "claude-opus-5" {
 		t.Fatalf("after set: %+v", got)
 	}
 

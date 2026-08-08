@@ -173,7 +173,7 @@ artifact_dir = ".hal/workflows"   # repo-relative artifact root
 # override from the dashboard beats these and can route any stage through
 # ChatGPT/Codex Sol, Terra, or Luna when Codex is installed.
 # [workflow.stages.research]
-# model  = "claude-opus-4-8"
+# model  = "claude-opus-5"
 # effort = "high"
 # [workflow.stages.implement]
 # effort = "max"
@@ -238,10 +238,18 @@ human_readable = false       # true also renders each transcript as markdown
 # mismatch. Off-list on purpose (a proxy alias, a brand-new id)? Whitelist it:
 # [agents.claude]
 # extra_models = ["my-internal-proxy-model"]
+#
+# Claude model ids are ALSO checked against the installed Claude Code before
+# anything can spend a turn on one: a typo'd id, or a real id your account
+# can't reach, blocks startup naming the config key to fix instead of failing
+# later mid-stage. Verdicts are cached per CLI version in the state dir
+# (claude-models.json), so this is normally free — delete that file to
+# re-check, or set HAL_SKIP_MODEL_VERIFY=1 to skip it entirely. A check that
+# can't run (offline, agent logged out) only warns; it never blocks.
 
 # The self-evaluator's route (see "Ask why" below):
 # [types.inquiry]
-# model  = "claude-opus-4-8"
+# model  = "claude-opus-5"
 # effort = "xhigh"
 ```
 

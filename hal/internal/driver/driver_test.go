@@ -34,11 +34,11 @@ func TestClaudePlanArgs(t *testing.T) {
 		t.Fatalf("caps: %+v", caps)
 	}
 
-	plan, err := c.Plan(InvokeSpec{Model: "claude-opus-4-8", SkipPermissions: true, ExtraArgs: []string{"--verbose"}})
+	plan, err := c.Plan(InvokeSpec{Model: "claude-opus-5", SkipPermissions: true, ExtraArgs: []string{"--verbose"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"-p", "--model", "claude-opus-4-8", "--dangerously-skip-permissions", "--verbose"}
+	want := []string{"-p", "--model", "claude-opus-5", "--dangerously-skip-permissions", "--verbose"}
 	if !slices.Equal(plan.Args, want) {
 		t.Fatalf("args: %v, want %v", plan.Args, want)
 	}
