@@ -93,6 +93,7 @@ directory to make it available:
 | [`2d-game-art-direction`](skills/2d-game-art-direction) | Art-direction decision guide for 2D games — palette, value/contrast, composition, lighting, detail hierarchy, shape language, and the sketch→polish workflow. |
 | [`giga-research`](skills/giga-research) | Multi-perspective deep research (STORM-inspired) — expert personas, question dedup, retrieval, cited synthesis. |
 | [`giga-audit`](skills/giga-audit) | Multi-perspective audit of a plan, PR, or codebase — reviewer personas raise risks, each verified against the code, confirmed issues land in a severity-grouped report. |
+| [`imagegen-transparency`](skills/imagegen-transparency) | Generate, inspect, and troubleshoot transparent raster assets — validate real alpha, holes, edges, and translucent materials before acceptance. |
 | [`spark-research`](skills/spark-research) | Systematic framework for researching, verifying, backtesting, and vetting non-ML stock trading strategies for retail execution. |
 
 Install (Claude Code example — adjust the path for your harness):

@@ -1,0 +1,6 @@
+interface:
+  display_name: "ImageGen Transparency"
+  short_description: "Generate and verify genuinely transparent assets"
+  default_prompt: "Use $imagegen-transparency to generate or inspect this asset with real background and material transparency."
+policy:
+  allow_implicit_invocation: true
